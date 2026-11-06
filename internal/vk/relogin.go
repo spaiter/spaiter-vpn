@@ -126,6 +126,9 @@ type ReloginConfig struct {
 	TokenWait    time.Duration // how long to wait for the token to appear in the capture
 	CaptureSecs  int           // how long the frida attach runs
 
+	DebugPort   int           // QtWebEngine remote-debugging port for the captcha solver
+	CaptchaWait time.Duration // how long the CDP captcha solver waits for a success_token
+
 	Coords ReloginCoords
 }
 
@@ -167,6 +170,8 @@ func DefaultReloginConfig() ReloginConfig {
 		CodeWait:        300 * time.Second,
 		TokenWait:       40 * time.Second,
 		CaptureSecs:     600,
+		DebugPort:       9222,
+		CaptchaWait:     12 * time.Second,
 		Coords:          DefaultCoords(),
 	}
 }
@@ -182,7 +187,21 @@ type Relogin struct {
 	Notify func(ctx context.Context, msg string)
 	Now    func() time.Time
 	sleep  func(time.Duration) // injectable so tests run without real waits
+	// solveRobot handles the "I'm not a robot" step. It defaults to the CDP
+	// solver (cdpSolveRobot); tests inject a fake. It never returns an error:
+	// an unreachable browser is reported as robotUnavailable so the caller
+	// falls back to the legacy blind click rather than failing the relogin.
+	solveRobot func(ctx context.Context) robotOutcome
 }
+
+// robotOutcome is what the captcha step decided.
+type robotOutcome int
+
+const (
+	robotProceed     robotOutcome = iota // checkbox passed, or no captcha shown: go on to the code
+	robotSlider                          // VK escalated to a slider/image captcha: only a human can finish
+	robotUnavailable                     // the CDP browser could not be driven: do the blind click instead
+)
 
 // reloginError wraps a failure with the short reason recorded in the status file
 // and sent to the admin, so an operator sees where the flow stopped.
@@ -279,7 +298,20 @@ func (r *Relogin) Run(ctx context.Context) (err error) {
 // init fills in the real defaults for anything the caller left nil.
 func (r *Relogin) init() {
 	if r.Sh == nil {
+		// Production path: make the app's embedded QtWebEngine expose a CDP
+		// endpoint so the captcha solver can drive the VK ID checkbox. The app
+		// honours QTWEBENGINE_CHROMIUM_FLAGS (already used here for --disable-quic),
+		// and NewHostShell snapshots the environment, so set it before building
+		// the shell and preserve any flags already present.
+		if r.Cfg.DebugPort > 0 {
+			merged := mergeChromiumFlags(os.Getenv("QTWEBENGINE_CHROMIUM_FLAGS"),
+				"--remote-debugging-port="+strconv.Itoa(r.Cfg.DebugPort))
+			_ = os.Setenv("QTWEBENGINE_CHROMIUM_FLAGS", merged)
+		}
 		r.Sh = NewHostShell(r.Cfg.Display)
+	}
+	if r.solveRobot == nil {
+		r.solveRobot = r.cdpSolveRobot
 	}
 	if r.Mint == nil {
 		r.Mint = &Client{}
@@ -407,8 +439,22 @@ func (r *Relogin) fullLogin(ctx context.Context) error {
 	r.sleep(500 * time.Millisecond)
 	r.click(ctx, c.ContinueEmail)
 	r.sleep(6 * time.Second)
-	r.click(ctx, c.Robot)
-	r.sleep(5 * time.Second)
+
+	// Pass the "I'm not a robot" checkbox. The CDP solver clicks it precisely in
+	// the app's embedded browser and confirms the pass; on a slider/image
+	// escalation it bails at once so the admin is called to VNC now, instead of
+	// waiting out the whole code timeout on a login that cannot proceed.
+	switch r.solveRobot(ctx) {
+	case robotSlider:
+		r.Notify(ctx, "🧩 *VK показал слайдер-капчу* — авто-решатель не берёт её. Зайди по VNC и пройди капчу вручную.")
+		return &reloginError{"captcha-slider", errors.New("VK escalated to a slider/image captcha")}
+	case robotUnavailable:
+		r.Log.Warn("captcha CDP solver unavailable; falling back to a blind checkbox click")
+		r.click(ctx, c.Robot)
+		r.sleep(5 * time.Second)
+	case robotProceed:
+		// Checkbox passed, or no captcha was shown: continue to the code step.
+	}
 
 	r.status("awaiting-code")
 	r.Notify(ctx, "🔑 *Введи код VK*: пришли сюда 6 цифр из звонка (просто 6 цифр или `/vkcode 123456`).")

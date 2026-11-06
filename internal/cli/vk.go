@@ -181,6 +181,8 @@ func runVKRelogin(ctx context.Context, out io.Writer, args []string) error {
 	fs.StringVar(&cfg.PassAccessToken, "pass-entry", cfg.PassAccessToken, "pass entry to write the fresh token to")
 	fs.StringVar(&cfg.HolderService, "holder-service", cfg.HolderService, "holder unit to restart on success")
 	fs.DurationVar(&cfg.CodeWait, "code-wait", cfg.CodeWait, "how long to wait for the admin's 6-digit code")
+	fs.IntVar(&cfg.DebugPort, "debug-port", cfg.DebugPort, "QtWebEngine remote-debugging port for the captcha solver; 0 disables it and clicks the checkbox blindly")
+	fs.DurationVar(&cfg.CaptchaWait, "captcha-wait", cfg.CaptchaWait, "how long the captcha solver waits to confirm the checkbox pass")
 	fs.Usage = func() {
 		fmt.Fprintf(out, "usage: spaiter-vpn vk relogin [flags]\n\n")
 		fmt.Fprintf(out, "Refreshes the one-year VK Calls access token by driving the app sign-in once,\n")
