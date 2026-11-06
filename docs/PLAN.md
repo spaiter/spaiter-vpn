@@ -513,6 +513,26 @@ installer's true footprint, the pcap corpus's actual home and resolved status).
    `description`, `short_description`, `commands`, `help`. Verified live via
    `getMyCommands` in both scopes. A Mini App for the web UI stays out until
    the web UI is reachable over public HTTPS.
+   Published as the snapshot `29b57a6` on GitHub and release v0.1.2 (signed,
+   with source tarball). Forgejo remains the working repository; its history
+   carries deployment data in old commits and is never pushed to GitHub.
+   **Repository switch (2026-11-06, later the same day):** this GitHub
+   repository is now the working one. The Forgejo repository with the full
+   private history was renamed `spaiter-vpn-archive` and frozen (archived);
+   it is never pushed anywhere public. The `ops/` snapshot moved to its own
+   private repository, `spaiter-vpn-ops`, with its history split out by
+   `git subtree`, cloned into the git-ignored `/ops/` path of the working
+   tree; `.gitattributes` with the `export-ignore` is gone because there is
+   nothing left to exclude. Releases are built here directly, with no
+   snapshot step in between.
+   The first clean clone did not compile: `.gitignore`'s blanket `*.pem` had
+   kept tailscale's embedded signing roots
+   (`core/thirdparty/tailscale/clientupdate/distsign/roots/`) out of git,
+   invisible in the private checkout where the files sat untracked on disk.
+   Every source tarball before v0.1.3 is missing them; the binaries are
+   unaffected, having been built from that checkout. Fixed with a negation
+   rule; the two other ignored `.pem` sets (`core/common/certificate/`,
+   tailscale `ipnlocal/testdata/`) are referenced by nothing and stay out.
 2. **Retire the shared naive account:** every code path already issues
    per-user naive and mieru accounts (generator, Go bot, guide), and mieru has
    no shared account (confirmed with the owner 2026-11-05). The one shared

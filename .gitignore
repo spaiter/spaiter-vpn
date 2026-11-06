@@ -9,6 +9,12 @@ passwords.json
 *.pem
 *.keystore
 *.jks
+# Public signing roots that tailscale embeds (go:embed roots): not secrets, and
+# without them the tree does not compile. Found when the first clean clone of
+# the public repository failed to build -- the private checkout had them on
+# disk, untracked, and every release before v0.1.3 shipped a source tarball
+# missing them.
+!core/thirdparty/tailscale/clientupdate/distsign/roots/*.pem
 
 # ===== Generated deploy artifacts =====
 /build/
@@ -49,3 +55,6 @@ secrets.json
 
 # Python bytecode from running ops/bin tools
 __pycache__/
+
+# ===== Private ops snapshot: its own repository, cloned here, never public =====
+/ops/

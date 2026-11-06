@@ -11,7 +11,7 @@
 # DENYLIST defaults to $SPAITER_VPN_DENYLIST or
 # ~/.config/spaiter-vpn-leakscan/denylist. DIR defaults to what would be
 # published: the index (stage first) through `git archive`, which honours the
-# export-ignore paths in .gitattributes. Exit 0 clean, 1 leaks found, 2 cannot scan.
+# anything git would not archive (ops/ is its own repository, not in this tree). Exit 0 clean, 1 leaks found, 2 cannot scan.
 set -euo pipefail
 
 denylist=${1:-${SPAITER_VPN_DENYLIST:-$HOME/.config/spaiter-vpn-leakscan/denylist}}

@@ -401,13 +401,13 @@ can be run again with the same archive.
 | `relay/` | the WG-over-VK shim — a **nested** Go module, built separately |
 
 Everything needed to build the installer, the core image and the relay is in
-this tree, and it has **zero `replace` directives**. The author's private
-mirror additionally carries an `ops/` directory — a snapshot of one running
-host (compose projects, systemd units) — which is `export-ignore`d and is not
-part of the public repository: it describes a specific deployment, not the
-software. `bot/` was a similar snapshot until 2026-11-03, when the Python bot
-it held was replaced by `internal/bot` and removed — see
-`internal/bot/PROVENANCE.md`.
+this tree, and it has **zero `replace` directives**. The author keeps an
+`ops/` directory beside it — a snapshot of one running host (compose projects,
+systemd units, host-side tools) — as a separate private repository cloned into
+the git-ignored `/ops/` path: it describes a specific deployment, not the
+software, so it is not part of this repository. `bot/` was a similar snapshot
+until 2026-11-03, when the Python bot it held was replaced by `internal/bot`
+and removed — see `internal/bot/PROVENANCE.md`.
 
 ## Checks
 
