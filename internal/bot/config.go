@@ -387,7 +387,7 @@ func defaultUI() UI {
 			"getcfg":          "🔑 Мой конфиг",
 			"allsub":          "🔗 Все методы (авто-обновление)",
 			"mystats":         "📊 Мой трафик",
-			"apk":             "📱 Android клиент",
+			"apk":             "📱 Android: Spaiter VPN",
 			"a:list":          "👥 Все юзеры",
 			"a:stats":         "📈 Общий трафик",
 			"menu":            "⬅️ Меню",
@@ -411,7 +411,7 @@ func defaultUI() UI {
 			"copy_direct":     "📋 Резервная",
 			"col_command":     "Команда",
 			"col_action":      "Что делает",
-			"apk_unavailable": "📱 Android клиент (временно недоступен)",
+			"apk_unavailable": "📱 Android: Spaiter VPN (временно недоступен)",
 			"usage_rotate":    "Использование: /rotate <uid> [uid…] — перевыпустить все креды пользователей",
 			"usage_port":      "Использование: /port <протокол> <порт>, например /port awg-in 10870",
 			"usage_image":     "Использование: /image <тот же репозиторий>:<тег>",
@@ -487,18 +487,18 @@ func defaultUI() UI {
 		AccessGranted: "✅ Доступ к VPN открыт! Нажми /start.",
 		AccessRefused: "🚫 В доступе к VPN отказано.",
 		ClientApps: map[string]string{
-			"default": "📱 Android: Hiddify · v2rayNG · NekoBox\n" +
+			"default": "📱 Android: Spaiter VPN (наше приложение, кнопка ниже) · Hiddify · v2rayNG\n" +
 				"🍏 iPhone: Hiddify · Streisand · Shadowrocket(платн.)\n" +
 				"💻 ПК: Hiddify · NekoRay · v2rayN (Win)",
 			"awg-in": "📱 Android: AmneziaVPN / AmneziaWG\n" +
 				"🍏 iPhone: AmneziaVPN\n💻 ПК: AmneziaVPN",
 			"awg3-in": "📱 Android: AmneziaVPN / AmneziaWG\n" +
 				"🍏 iPhone: AmneziaVPN\n💻 ПК: AmneziaVPN",
-			"masque-wg": "📱 Android: sing‑box на ядре нашего форка (masque‑wg) — сток‑клиенты не умеют\n" +
+			"masque-wg": "📱 Android: Spaiter VPN (наше приложение) — сток‑клиенты masque‑wg не умеют\n" +
 				"🍏 iPhone: — (нет ядра с masque‑wg)\n💻 ПК: sing‑box (наш форк‑бинарь) с этим JSON",
-			"snell-in": "📱 Android: Hiddify · NekoBox (импорт JSON)\n" +
+			"snell-in": "📱 Android: Spaiter VPN (наше) · Hiddify (импорт JSON)\n" +
 				"🍏 iPhone: Surge · Stash (платн.) · Hiddify\n💻 ПК: Hiddify · sing‑box · Surge (Mac)",
-			"naive-in": "📱 Android: NekoBox / husi (с naive)\n" +
+			"naive-in": "📱 Android: Spaiter VPN (наше) / husi (с naive)\n" +
 				"🍏 iPhone: — (наив не поддержан; выбери другой протокол)\n" +
 				"💻 ПК: naiveproxy (klzgrad) / NekoRay",
 		},
@@ -565,12 +565,15 @@ func defaultUI() UI {
 			"caption_json": "🔑 *%s* — импортируй файл ниже в *%s* (конфиг). " +
 				"QR — для быстрого копирования.",
 			"caption_link": "🔑 *%s* — отсканируй QR в *Hiddify* (или скопируй ссылку):\n\n```\n%s\n```",
-			"caption_apk":  "📱 Android клиент (наш форк) %s",
+			"caption_apk": "📱 *Spaiter VPN* для Android, версия %s — наше собственное приложение.\n\n" +
+				"Это новое приложение (`com.spaiter.vpn`): оно ставится рядом со старым NekoBox+, " +
+				"а не поверх него. Профили перенеси через *Настройки → Бэкап* в старом приложении " +
+				"и восстанови в новом.\n\nИсходники и релизы: https://github.com/spaiter/spaiter-vpn-android",
 			"subscription": "🔗 *Подписка: все методы* (авто-обновление)\n\n" +
 				"В подписке *%d* нод — каждый протокол отдельной нодой, все с твоими " +
 				"персональными ключами. Клиент сам подтянет свежий конфиг при любых изменениях " +
 				"на сервере (порт/VK-хеши/ключи).\n\n" +
-				"📲 *Настройка (наш форк, свежая версия):*\n" +
+				"📲 *Настройка (Spaiter VPN для Android, свежая версия):*\n" +
 				"1. *Группы* → *+* → *Тип: Подписка* → вставь ссылку → сохрани.\n" +
 				"2. В группе появятся все протоколы **и нода «🚀 Авто (лучший)»** — она создаётся " +
 				"сама. Просто выбери её и подключайся.\n" +
