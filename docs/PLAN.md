@@ -1020,6 +1020,17 @@ Shipped as core image `10c7b09` (production and GHCR, `singbox.DefaultImage`
 bumped); production config re-validated with the new binary before the
 switch. Published as **v0.1.6**.
 
+**Closed 2026-11-06 — client-side batch from the same review.** WireGuard
+endpoints let the kernel fragment (DF dropped large packets in a tunnel inside
+a tunnel: WG-over-VK, masque-wg); wireguard-go reopens its bind on a new
+ephemeral port after failed handshakes and after a dead receive routine
+(recovery after sleep, expired NAT mappings, DPI-flagged 5-tuples); the client
+bind bounds its detour dial; REALITY honours `fragment`/`record_fragment`;
+SS2022 writes its request header before use. MASQUE h3→h2 fallback and
+WireGuard MTU discovery were left out (different transport layer; large
+feature) — see `core/PROVENANCE.md`. Published as **v0.1.7** with core image
+of the same commit.
+
 
 - **The fresh-host path is not proven end to end.** The generator, Compose,
   preflight and self-test work independently, but production still runs a

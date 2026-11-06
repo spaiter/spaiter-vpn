@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sagernet/sing/common"
@@ -15,6 +16,7 @@ import (
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
 	"github.com/sagernet/sing/service/pause"
+	C "github.com/spaiter/spaiter-vpn/core/constant"
 	"github.com/spaiter/spaiter-vpn/core/thirdparty/wireguard-go/conn"
 )
 
@@ -29,7 +31,7 @@ type ClientBind struct {
 	dialer              N.Dialer
 	reservedForEndpoint map[netip.AddrPort][3]uint8
 	connAccess          sync.Mutex
-	conn                *wireConn
+	conn                atomic.Pointer[wireConn] // read without the lock on the fast path
 	done                chan struct{}
 	isConnect           bool
 	connectAddr         netip.AddrPort
@@ -51,7 +53,7 @@ func NewClientBind(ctx context.Context, logger logger.Logger, dialer N.Dialer, i
 }
 
 func (c *ClientBind) connect() (*wireConn, error) {
-	serverConn := c.conn
+	serverConn := c.conn.Load()
 	if serverConn != nil {
 		select {
 		case <-serverConn.done:
@@ -67,7 +69,7 @@ func (c *ClientBind) connect() (*wireConn, error) {
 		return nil, net.ErrClosed
 	default:
 	}
-	serverConn = c.conn
+	serverConn = c.conn.Load()
 	if serverConn != nil {
 		select {
 		case <-serverConn.done:
@@ -76,26 +78,36 @@ func (c *ClientBind) connect() (*wireConn, error) {
 			return serverConn, nil
 		}
 	}
+	// sending and receiving wait on this lock, so a detour that hangs must not hold it for good:
+	// give up after the TCP timeout and let the next attempt retry. Only the dial is bounded; the
+	// connection may live on its context, which ends when the connection closes
+	dialCtx, cancelDial := context.WithCancel(c.bindCtx)
+	dialTimer := time.AfterFunc(C.TCPTimeout, cancelDial)
+	defer dialTimer.Stop()
 	if c.isConnect {
-		udpConn, err := c.dialer.DialContext(c.bindCtx, N.NetworkUDP, M.SocksaddrFromNetIP(c.connectAddr))
+		udpConn, err := c.dialer.DialContext(dialCtx, N.NetworkUDP, M.SocksaddrFromNetIP(c.connectAddr))
 		if err != nil {
+			cancelDial()
 			return nil, err
 		}
-		c.conn = &wireConn{
+		c.conn.Store(&wireConn{
 			PacketConn: bufio.NewUnbindPacketConn(udpConn),
 			done:       make(chan struct{}),
-		}
+			cancel:     cancelDial,
+		})
 	} else {
-		udpConn, err := c.dialer.ListenPacket(c.bindCtx, M.Socksaddr{Addr: netip.IPv4Unspecified()})
+		udpConn, err := c.dialer.ListenPacket(dialCtx, M.Socksaddr{Addr: netip.IPv4Unspecified()})
 		if err != nil {
+			cancelDial()
 			return nil, err
 		}
-		c.conn = &wireConn{
+		c.conn.Store(&wireConn{
 			PacketConn: bufio.NewPacketConn(udpConn),
 			done:       make(chan struct{}),
-		}
+			cancel:     cancelDial,
+		})
 	}
-	return c.conn, nil
+	return c.conn.Load(), nil
 }
 
 func (c *ClientBind) Open(port uint16) (fns []conn.ReceiveFunc, actualPort uint16, err error) {
@@ -156,7 +168,7 @@ func (c *ClientBind) Close() error {
 	}
 	c.connAccess.Lock()
 	defer c.connAccess.Unlock()
-	common.Close(common.PtrOrNil(c.conn))
+	common.Close(common.PtrOrNil(c.conn.Load()))
 	return nil
 }
 
@@ -240,6 +252,7 @@ type wireConn struct {
 	conn   net.Conn
 	access sync.Mutex
 	done   chan struct{}
+	cancel context.CancelFunc // ends the context it was dialed with
 }
 
 func (w *wireConn) WriteToUDPAddrPort(b []byte, addr netip.AddrPort) (int, error) {
@@ -259,6 +272,9 @@ func (w *wireConn) Close() error {
 	}
 	w.PacketConn.Close()
 	close(w.done)
+	if w.cancel != nil {
+		w.cancel()
+	}
 	return nil
 }
 

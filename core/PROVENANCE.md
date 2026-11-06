@@ -236,3 +236,29 @@ single fix and its test, nothing else. The hiddify versions of `cache.go` and
 `sagernet/gvisor` respectively, so only the fix hunks were applied to our
 pinned bases. The DNS fix was likewise re-applied to this tree's older
 `dns/client.go`, whose exchange path hiddify has since restructured.
+
+## 2026-11-06: client-side fixes from hiddify v5 (no dependency change)
+
+The second batch from the same review, all in this tree. `protocol/wireguard`
+lets the kernel fragment WireGuard's UDP (`UDPFragmentDefault`, as official
+WireGuard and our AWG endpoint already did): with DF set, a tunnel inside
+another tunnel dropped every packet over the path MTU. `transport/wireguard`'s
+`ClientBind` bounds the detour dial by `C.TCPTimeout` and reads its
+connection atomically. The absorbed `thirdparty/wireguard-go` gains the rebind
+logic from `hiddify/wireguard-go` `f191d6751` and `b46c4143a`
+(`device/handshake_rebind.go`, `scheduleBindUpdateAfter`): after three
+unanswered handshake initiations on a dead session, or when a handshake cycle
+gives up, the bind is reopened on a new ephemeral port (a configured
+`listen_port` is kept), at most once per `RekeyAttemptTime`; a receive routine
+that gives up on its socket also schedules a reopen instead of leaving the
+tunnel deaf until a network change. `common/tls` applies `fragment` and
+`record_fragment` to REALITY, which skipped them. `protocol/shadowsocks`
+writes the SS2022 request header before returning the connection, so a reader
+that starts during an early first write no longer fails with "bad request
+salt".
+
+Not taken from that batch: hiddify's MASQUE HTTP/3 → HTTP/2 fallback, because
+it belongs to their rewritten `transport/http` layer and our MASQUE (the
+Cloudflare WARP transport) picks h2 or h3 statically from the endpoint type;
+and MTU discovery for WireGuard endpoints, a 500-line feature on top of
+endpoint internals (`device_peer_router`) this tree does not have.

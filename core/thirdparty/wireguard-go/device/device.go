@@ -49,6 +49,12 @@ type Device struct {
 		port          uint16 // listening port
 		fwmark        uint32 // mark value (0 = disabled)
 		brokenRoaming bool
+		// configuredPort is listen_port as configured; 0 for an ephemeral port.
+		configuredPort uint16
+		// rebindPending is set while a background bind reopen is scheduled.
+		rebindPending atomic.Bool
+		// lastHandshakeRebind is the unix time (ns) of the last rebind after failed handshakes.
+		lastHandshakeRebind atomic.Int64
 	}
 
 	staticIdentity struct {
@@ -482,6 +488,32 @@ func (device *Device) BindSetMark(mark uint32) error {
 	device.peers.RUnlock()
 
 	return nil
+}
+
+// scheduleBindUpdateAfter reopens the bind after delay, unless the device closes first. A
+// receive routine that gives up on its socket calls it: nothing else would restart the routine,
+// and the tunnel would stop receiving until the network changed. The delay keeps a socket that
+// fails at once from spinning.
+func (device *Device) scheduleBindUpdateAfter(delay time.Duration) {
+	if !device.net.rebindPending.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer device.net.rebindPending.Store(false)
+		select {
+		case <-time.After(delay):
+		case <-device.closed:
+			return
+		}
+		if device.isClosed() || !device.isUp() {
+			return
+		}
+		device.log.Verbosef("Receive routine gave up, reopening the bind")
+		err := device.BindUpdate()
+		if err != nil {
+			device.log.Errorf("Failed to reopen bind: %v", err)
+		}
+	}()
 }
 
 func (device *Device) BindUpdate() error {

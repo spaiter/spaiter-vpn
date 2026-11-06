@@ -34,6 +34,7 @@ import (
 	"github.com/sagernet/sing/common/ntp"
 	aTLS "github.com/sagernet/sing/common/tls"
 	"github.com/spaiter/spaiter-vpn/core/adapter"
+	"github.com/spaiter/spaiter-vpn/core/common/tlsfragment"
 	C "github.com/spaiter/spaiter-vpn/core/constant"
 	"github.com/spaiter/spaiter-vpn/core/option"
 
@@ -142,6 +143,9 @@ func (e *RealityClientConfig) ClientHandshake(ctx context.Context, conn net.Conn
 	uConfig.InsecureSkipVerify = true
 	uConfig.SessionTicketsDisabled = true
 	uConfig.VerifyPeerCertificate = verifier.VerifyPeerCertificate
+	if e.uClient.fragment || e.uClient.recordFragment { // fragment and record_fragment were skipped for REALITY
+		conn = tf.NewConn(conn, e.uClient.ctx, e.uClient.fragment, e.uClient.recordFragment, e.uClient.fragmentFallbackDelay)
+	}
 	uConn := utls.UClient(conn, uConfig, e.uClient.id)
 	verifier.UConn = uConn
 	err := uConn.BuildHandshakeState()

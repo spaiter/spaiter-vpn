@@ -114,6 +114,7 @@ func (device *Device) RoutineReceiveIncoming(maxBatchSize int, recv conn.Receive
 			}
 			device.log.Verbosef("Failed to receive %s packet: %v", recvName, err)
 			if neterr, ok := err.(net.Error); ok && !neterr.Temporary() {
+				device.scheduleBindUpdateAfter(time.Second) // nothing else restarts this routine
 				return
 			}
 			if deathSpiral < 10 {
@@ -121,6 +122,7 @@ func (device *Device) RoutineReceiveIncoming(maxBatchSize int, recv conn.Receive
 				time.Sleep(time.Second / 3)
 				continue
 			}
+			device.scheduleBindUpdateAfter(time.Second)
 			return
 		}
 		deathSpiral = 0

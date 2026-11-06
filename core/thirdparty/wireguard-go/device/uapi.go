@@ -216,6 +216,7 @@ func (device *Device) handleDeviceLine(key, value string) error {
 
 		device.net.Lock()
 		device.net.port = uint16(port)
+		device.net.configuredPort = uint16(port)
 		device.net.Unlock()
 
 		if err := device.BindUpdate(); err != nil {
