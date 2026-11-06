@@ -95,7 +95,8 @@ type Server struct {
 	// Optional.
 	Tell func(ctx context.Context, uid int64, text string)
 
-	files *ticketStore
+	files    *ticketStore
+	sessions *sessionStore
 }
 
 // New builds the app over the bot's collaborators. token is the Telegram bot
@@ -106,8 +107,9 @@ func New(cfg botcfg.Config, svc Methods, access Access, store Store, token strin
 	}
 	return &Server{
 		cfg: cfg, svc: svc, access: access, store: store, token: token, log: log,
-		now:   time.Now,
-		files: newTicketStore(5 * time.Minute),
+		now:      time.Now,
+		files:    newTicketStore(5 * time.Minute),
+		sessions: newSessionStore(),
 	}
 }
 
@@ -136,6 +138,8 @@ func URL(cfg botcfg.Config) string {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+Prefix+"{$}", s.index)
+	mux.HandleFunc("POST "+Prefix+"api/session", s.session)
+	mux.HandleFunc("POST "+Prefix+"api/logout", s.logout)
 	mux.HandleFunc("GET "+Prefix+"api/me", s.authed(s.me))
 	mux.HandleFunc("GET "+Prefix+"api/methods", s.authed(s.allowed(s.methods)))
 	mux.HandleFunc("POST "+Prefix+"api/issue", s.authed(s.allowed(s.issue)))
@@ -175,6 +179,14 @@ const initHeader = "X-Telegram-Init-Data"
 
 func (s *Server) authed(next handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// A browser session, opened with a one-time link from the bot, is
+		// the other way in. It carries no profile, so nothing is registered.
+		if r.Header.Get(initHeader) == "" {
+			if user, ok := s.fromSession(r); ok {
+				next(w, r, user)
+				return
+			}
+		}
 		user, err := Verify(r.Header.Get(initHeader), s.token, s.now())
 		if err != nil {
 			status := http.StatusUnauthorized

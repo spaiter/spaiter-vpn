@@ -43,7 +43,12 @@ type UI struct {
 	refresher Refresher
 	control   Control
 	webLogin  func() (string, error)
+	// appLogin mints a one-time browser link to the Mini App for one user.
+	appLogin func(uid int64) (string, error)
 }
+
+// SetWebAppLogin attaches the Mini App's browser-link minter.
+func (u *UI) SetWebAppLogin(fn func(uid int64) (string, error)) { u.appLogin = fn }
 
 // PoolChecker validates the whole VK pool on demand.
 type PoolChecker interface {
@@ -207,6 +212,9 @@ func (u *UI) onCallback(ctx context.Context, client *bot.Bot, update *models.Upd
 	case data == cbAPK:
 		u.deliverAPK(ctx, query, uid)
 
+	case data == cbWebLink:
+		u.deliverWebLink(ctx, query, uid)
+
 	case data == cbMyStats:
 		u.showMyStats(ctx, query, uid)
 
@@ -247,10 +255,28 @@ func (u *UI) onCallback(ctx context.Context, client *bot.Bot, update *models.Upd
 	}
 }
 
+// deliverWebLink hands out a one-time browser link to the Mini App. Protected
+// and short-lived on both ends: the link is a login, and a forwarded one would
+// log somebody else in as this user.
+func (u *UI) deliverWebLink(ctx context.Context, query *models.CallbackQuery, uid int64) {
+	chat := queryChat(query)
+	if chat == 0 || u.appLogin == nil {
+		u.edit(ctx, query, u.label("unavailable"), u.backKeyboard())
+		return
+	}
+	link, err := u.appLogin(uid)
+	if err != nil {
+		u.fail(ctx, query, err)
+		return
+	}
+	u.replyProtected(ctx, chat, u.text("web_app_link"),
+		keyboard(row(styled(urlButton(u.label("weblink_open"), link), stylePrimary))))
+}
+
 // needsApproval lists the actions that hand out access to the VPN itself.
 func needsApproval(data string) bool {
 	switch {
-	case data == cbGetConfig, data == cbMyStats, data == cbAllMethods, data == cbAPK:
+	case data == cbGetConfig, data == cbMyStats, data == cbAllMethods, data == cbAPK, data == cbWebLink:
 		return true
 	case strings.HasPrefix(data, cbPick), strings.HasPrefix(data, cbGen):
 		return true

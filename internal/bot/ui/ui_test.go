@@ -463,7 +463,7 @@ func TestEveryConfiguredMessageHasItsPlaceholders(t *testing.T) {
 		"preparing_sub": 0, "generating": 0, "registering_warp": 0,
 		"provisioning_wdtt": 0, "admin_only": 1, "claim_accepted": 0, "claim_refused": 0,
 		"srv_unavailable": 0, "srv_failed": 1, "srv_status": 1, "srv_generations": 1,
-		"web_link": 1, "web_unavailable": 0,
+		"web_link": 1, "web_unavailable": 0, "web_app_link": 0,
 		"srv_plan": 2, "srv_applying": 0, "srv_applied": 1, "srv_cancelled": 0,
 		"caption_awg": 0, "caption_warp": 0, "caption_wdtt": 0,
 		"caption_json": 2, "caption_link": 2, "caption_apk": 1,

@@ -36,6 +36,9 @@ const (
 	// client does not let it be pressed; present because the API requires
 	// every button to have some action.
 	cbNoop = "noop"
+	// cbWebLink asks for a one-time browser link to the Mini App, for clients
+	// that cannot host one (Telegram X) and for desktops.
+	cbWebLink = "weblink"
 )
 
 // Kinds of method, which decide how a configuration is delivered and which
@@ -86,9 +89,10 @@ func (u *UI) mainMenu(uid int64) *models.InlineKeyboardMarkup {
 		row(button(u.label("mystats"), cbMyStats)),
 	}
 	if url := webapp.URL(u.cfg); url != "" {
-		rows = append(rows, row(models.InlineKeyboardButton{
-			Text: u.label("webapp"), WebApp: &models.WebAppInfo{URL: url},
-		}))
+		rows = append(rows, row(
+			models.InlineKeyboardButton{Text: u.label("webapp"), WebApp: &models.WebAppInfo{URL: url}},
+			button(u.label("weblink"), cbWebLink),
+		))
 	}
 
 	switch {

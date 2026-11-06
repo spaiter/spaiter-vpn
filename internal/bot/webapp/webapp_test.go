@@ -361,3 +361,79 @@ func TestURLFollowsTheSubscriptionHost(t *testing.T) {
 		t.Errorf("no CF host still has URL %q", got)
 	}
 }
+
+// TestABrowserLinkLogsInOnceAndOnlyWithTheHeader: the link from the bot opens
+// a cookie session for exactly the user it was minted for, exactly once,
+// within its lifetime; the session then needs the anti-CSRF header.
+func TestABrowserLinkLogsInOnceAndOnlyWithTheHeader(t *testing.T) {
+	s, _, _ := newServer(t)
+	h := s.Handler()
+	now := time.Now()
+	s.now = func() time.Time { return now }
+
+	link, err := s.LoginLink(4242, now)
+	if err != nil || !strings.HasPrefix(link, "https://sub.example.com/app/?login=") {
+		t.Fatalf("LoginLink: %q %v", link, err)
+	}
+	token := strings.TrimPrefix(link, "https://sub.example.com/app/?login=")
+	token, _ = url.QueryUnescape(token)
+
+	exchange := func(tok string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", Prefix+"api/session", strings.NewReader(`{"login":"`+tok+`"}`))
+		req.Header.Set("X-Forwarded-Proto", "https")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	rec := exchange(token)
+	if rec.Code != 200 {
+		t.Fatalf("exchange: %d %s", rec.Code, rec.Body.String())
+	}
+	var cookie *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessionCookie {
+			cookie = c
+		}
+	}
+	if cookie == nil || !cookie.HttpOnly || !cookie.Secure || cookie.Path != Prefix {
+		t.Fatalf("session cookie is missing or lax: %+v", cookie)
+	}
+	if again := exchange(token); again.Code != http.StatusForbidden {
+		t.Errorf("the link worked twice: %d", again.Code)
+	}
+	if bad := exchange(token[:len(token)-2] + "zz"); bad.Code != http.StatusForbidden {
+		t.Errorf("a tampered link worked: %d", bad.Code)
+	}
+
+	me := func(withHeader bool) (*httptest.ResponseRecorder, map[string]any) {
+		req := httptest.NewRequest("GET", Prefix+"api/me", nil)
+		req.AddCookie(cookie)
+		if withHeader {
+			req.Header.Set("X-Requested-With", requestedWith)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		var out map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return rec, out
+	}
+	if rec, out := me(true); rec.Code != 200 || out["id"] != float64(4242) || out["allowed"] != true {
+		t.Errorf("session /me: %d %v", rec.Code, out)
+	}
+	if rec, _ := me(false); rec.Code != http.StatusUnauthorized {
+		t.Errorf("a cookie without the header was accepted: %d", rec.Code)
+	}
+
+	// Expiry of the link itself.
+	s.now = func() time.Time { return now.Add(loginTTL + time.Minute) }
+	late, _ := s.LoginLink(7, now)
+	lateTok, _ := url.QueryUnescape(strings.TrimPrefix(late, "https://sub.example.com/app/?login="))
+	if rec := exchange(lateTok); rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "expired") {
+		t.Errorf("an expired link was accepted: %d %s", rec.Code, rec.Body.String())
+	}
+	// And of the session.
+	s.now = func() time.Time { return now.Add(sessionTTL + time.Minute) }
+	if rec, _ := me(true); rec.Code != http.StatusUnauthorized {
+		t.Errorf("an expired session was accepted: %d", rec.Code)
+	}
+}

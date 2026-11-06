@@ -525,6 +525,12 @@ installer's true footprint, the pcap corpus's actual home and resolved status).
    overrides the derived address, `web_app.disabled` hides it. The
    admin-side *control plane* (web UI in `internal/web`) is a different
    thing and is still not deployed.
+   Telegram X turned out to have no Mini App host at all (upstream PR
+   TGX-Android/Telegram-X#1106 would add one), so the bot also hands out a
+   one-time browser login link («🔗 В браузере»): signed with a key derived
+   from the bot token, ten minutes, single use, exchanged by the page for an
+   HttpOnly cookie session guarded by SameSite plus a required
+   `X-Requested-With` header.
    Published as the snapshot `29b57a6` on GitHub and release v0.1.2 (signed,
    with source tarball). Forgejo remains the working repository; its history
    carries deployment data in old commits and is never pushed to GitHub.

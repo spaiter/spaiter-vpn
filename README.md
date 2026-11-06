@@ -517,6 +517,13 @@ reaches this port; `web_app.url` points it elsewhere and `web_app.disabled`
 hides it. Without a Telegram token the app is not mounted: there would be
 nothing to authenticate against.
 
+Not every Telegram client hosts Mini Apps — Telegram X has no WebView host, so
+its menu button does nothing — and a desktop browser is sometimes handier. For
+those, the «В браузере» button hands out a one-time login link: ten minutes,
+single use, bound to the user, signed with a key derived from the bot token.
+The same page, opened from it, trades the link for an HttpOnly cookie session
+(twelve hours, held in memory) and uses the same API.
+
 ## The core image
 
 The core runs from a prebuilt image, so installing needs no Go toolchain:

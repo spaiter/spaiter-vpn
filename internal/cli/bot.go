@@ -267,19 +267,22 @@ func runBotServices(ctx context.Context, out io.Writer, cfg botcfg.Config,
 		}()
 	}
 
+	// The Mini App rides on the subscription port. It needs the bot token to
+	// check Telegram's signature, so without Telegram there is nothing it
+	// could authenticate and it is not mounted.
+	subs := subserver.New(parts.store, log)
+	if token != "" && webapp.URL(cfg) != "" {
+		app := webapp.New(cfg, parts.svc, parts.access, parts.store, token, log)
+		app.OnAccessRequest = parts.face.NotifyAccessRequest
+		app.Tell = parts.face.Tell
+		parts.face.SetWebAppLogin(func(uid int64) (string, error) {
+			return app.LoginLink(uid, time.Now())
+		})
+		subs.Mount(webapp.Prefix, app.Handler())
+		log.Info("mini app mounted", "url", webapp.URL(cfg))
+	}
 	start("subscription server", func() error {
-		server := subserver.New(parts.store, log)
-		// The Mini App rides on the subscription port. It needs the bot
-		// token to check Telegram's signature, so without Telegram there is
-		// nothing it could authenticate and it is not mounted.
-		if token != "" && webapp.URL(cfg) != "" {
-			app := webapp.New(cfg, parts.svc, parts.access, parts.store, token, log)
-			app.OnAccessRequest = parts.face.NotifyAccessRequest
-			app.Tell = parts.face.Tell
-			server.Mount(webapp.Prefix, app.Handler())
-			log.Info("mini app mounted", "url", webapp.URL(cfg))
-		}
-		return server.Run(ctx, fmt.Sprintf(":%d", cfg.Subscription.Port))
+		return subs.Run(ctx, fmt.Sprintf(":%d", cfg.Subscription.Port))
 	})
 	start("subscription refresh", func() error {
 		return parts.refresher.RunRefresh(ctx,

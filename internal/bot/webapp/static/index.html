@@ -14,6 +14,10 @@
   --sep:var(--tg-theme-section-separator-color,rgba(0,0,0,.08));
   --ok:#2e9e5b;--bad:#d9453d;
 }
+@media (prefers-color-scheme: dark){
+  :root{--bg:var(--tg-theme-bg-color,#1c1c1e);--fg:var(--tg-theme-text-color,#eee);--hint:var(--tg-theme-hint-color,#999);
+    --sec:var(--tg-theme-secondary-bg-color,#000);--card:var(--tg-theme-section-bg-color,#1c1c1e);--sep:var(--tg-theme-section-separator-color,rgba(255,255,255,.1))}
+}
 *{box-sizing:border-box}
 body{margin:0;background:var(--sec);color:var(--fg);font:16px/1.4 -apple-system,system-ui,Roboto,sans-serif;
   padding:12px 16px calc(24px + env(safe-area-inset-bottom))}
@@ -52,9 +56,13 @@ small.mono{font-family:ui-monospace,monospace;color:var(--hint)}
 <script>
 (function(){
 'use strict';
-const tg = window.Telegram && window.Telegram.WebApp;
-const initData = tg ? tg.initData : '';
+const tgAny = window.Telegram && window.Telegram.WebApp;
+const initData = tgAny ? tgAny.initData : '';
+// Outside Telegram the bridge object exists but is inert; everything below
+// treats "in Telegram" as "has signed init data".
+const tg = initData ? tgAny : null;
 if (tg) { tg.ready(); tg.expand(); }
+const loginToken = new URLSearchParams(window.location.search).get('login');
 const $ = s => document.querySelector(s);
 const app = $('#app');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -63,7 +71,9 @@ let me = null, methods = null, view = {name:'home'};
 function toast(t){ const el=$('#toast'); el.textContent=t; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),1600); }
 function haptic(k){ try{ tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred(k||'success'); }catch(e){} }
 async function api(path, opts){
-  const r = await fetch('api/'+path, Object.assign({headers:{'X-Telegram-Init-Data':initData,'Content-Type':'application/json'}}, opts||{}));
+  const headers = {'Content-Type':'application/json','X-Requested-With':'spaiter-vpn'};
+  if (initData) headers['X-Telegram-Init-Data'] = initData;
+  const r = await fetch('api/'+path, Object.assign({headers, credentials:'same-origin'}, opts||{}));
   if (r.headers.get('content-type')?.startsWith('image/')) { if(!r.ok) throw new Error('QR недоступен'); return r.blob(); }
   const j = await r.json().catch(()=>({error:'ответ не прочитан'}));
   if (!r.ok) throw new Error(j.error || ('HTTP '+r.status));
@@ -203,8 +213,18 @@ function download(path, filename, after){
 }
 
 (async function start(){
-  if (!initData) { app.innerHTML = `<h1>🛡 VPN</h1><div class="card">Открой эту страницу из Telegram: кнопка меню бота или «🌐 Приложение».</div>`; return; }
-  try { me = await api('me'); } catch(e) { app.innerHTML = `<h1>🛡 VPN</h1><div class="err">${esc(e.message)}</div><button onclick="location.reload()">Повторить</button>`; return; }
+  if (!initData && loginToken) {
+    // A one-time link from the bot: trade it for a cookie, then drop it from
+    // the address bar so a reload or a bookmark does not replay it.
+    try { await post('session', {login: loginToken}); }
+    catch(e) { app.innerHTML = `<h1>🛡 VPN</h1><div class="err">${esc(e.message)}</div><p class="hint">Попроси у бота новую ссылку: кнопка «🔗 В браузере».</p>`; return; }
+    history.replaceState(null, '', window.location.pathname);
+  }
+  try { me = await api('me'); }
+  catch(e) {
+    if (!initData) { app.innerHTML = `<h1>🛡 VPN</h1><div class="card">Открой приложение из Telegram (кнопка меню бота или «🌐 Приложение»), либо попроси у бота одноразовую ссылку: «🔗 В браузере».</div>`; return; }
+    app.innerHTML = `<h1>🛡 VPN</h1><div class="err">${esc(e.message)}</div><button onclick="location.reload()">Повторить</button>`; return;
+  }
   render();
 })();
 })();
