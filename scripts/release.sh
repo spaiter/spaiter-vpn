@@ -124,6 +124,18 @@ main() {
 		# says where each lives.
 		git archive --format=tar.gz --prefix="spaiter-vpn-${version}/" \
 			-o "$out/spaiter-vpn-${version}-source.tar.gz" HEAD
+		# The tarball must build on its own. A working tree can carry files
+		# git does not: v0.1.0 to v0.1.2 shipped source missing an embedded
+		# directory that a blanket ignore rule had kept out of the repository,
+		# and nothing noticed because the checkout the binaries were built
+		# from had the files on disk.
+		say "building from the source tarball"
+		local scratch; scratch=$(mktemp -d)
+		tar -xzf "$out/spaiter-vpn-${version}-source.tar.gz" -C "$scratch"
+		(cd "$scratch/spaiter-vpn-${version}" &&
+			CGO_ENABLED=0 go build -o /dev/null ./cmd/spaiter-vpn) ||
+			die "the source tarball does not build; the repository is missing something the working tree has"
+		rm -rf "$scratch"
 	fi
 
 	cd "$out"

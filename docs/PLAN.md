@@ -533,6 +533,9 @@ installer's true footprint, the pcap corpus's actual home and resolved status).
    unaffected, having been built from that checkout. Fixed with a negation
    rule; the two other ignored `.pem` sets (`core/common/certificate/`,
    tailscale `ipnlocal/testdata/`) are referenced by nothing and stay out.
+   Released as **v0.1.3** (signed, built from this repository directly);
+   `release.sh --source` now compiles the source tarball from a clean extract
+   before anything is published.
 2. **Retire the shared naive account — done 2026-11-06.** The live
    `naive-in` had one shared `seed` account, kept only because a naive inbound
    cannot start with no users. Through the core's management API every user
