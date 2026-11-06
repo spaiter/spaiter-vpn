@@ -428,18 +428,41 @@ What makes that checkable rather than hoped for:
   required (`bot.dynamicIp`), and the built-in updater (`ddns`, Cloudflare,
   DuckDNS or dyndns2) can keep its record from the server itself.
 
-The publication step itself, in order:
+The publication step itself, in order — status as of 2026-11-06:
 
-1. Build and push the core image to `ghcr.io/spaiter/spaiter-vpn-core`; set
-   `singbox.DefaultImage` and `DefaultImageRegistry` to it (the last match
-   `leakscan` reports today), regenerate `reconcile-image.golden`, and move
-   `leaks` into `check.sh all`.
-2. Turn `deployment.mtprotoPerUser` on by default (item 1 below).
-3. Rewrite the README's repository table and every mention of `ops/` for a
-   reader who does not have it.
-4. `scripts/check.sh leaks` clean; one commit from the exported tree, authored
-   with the GitHub no-reply address; push; release with `--source`.
-5. Wire provider one-click to the published release (item 3 below).
+1. ✅ Core image built from `Dockerfile.core` (now stamping OCI `source`,
+   `revision` and `licenses` labels) and pushed as
+   `ghcr.io/spaiter/spaiter-vpn-core:19419c49`; `singbox.DefaultImage` and
+   `DefaultImageRegistry` point at it and the plan goldens are regenerated.
+   ⏳ The GHCR package is still **private**: GitHub exposes no API to flip a
+   container package's visibility, so the owner makes it public in the web UI
+   (package → settings → change visibility). Until then an anonymous pull is
+   401 and a fresh install cannot fetch the default image.
+   ✅ `leaks` is in `check.sh all` (2026-11-06): it runs where the denylist
+   is and skips with a visible notice elsewhere (no denylist, or no ripgrep) —
+   a skip is not a pass, and `check: ok` on another machine does not vouch
+   for publication.
+2. ⏳ `deployment.mtprotoPerUser` is still off by default (item 1 below).
+3. ✅ README describes the tree as a public reader sees it; `ops/` is named as
+   the private mirror's export-ignored host snapshot.
+4. ✅ `leakscan` clean (0 of 369 values); one commit from the exported tree,
+   authored `6448350+spaiter@users.noreply.github.com`, pushed:
+   <https://github.com/spaiter/spaiter-vpn>, commit `853c689` (snapshot of
+   private `f1d545f`; 4218 files, no `ops/`, GitHub detects GPL-3.0).
+   ⏳ No release yet: `scripts/release.sh vX.Y.Z --source` is the next step,
+   and its notes now name the public corresponding source.
+5. ⏳ Provider one-click waits on that release (item 3 below).
+
+Also done on the way, 2026-11-06 — a licensing audit of every shipped binary
+(`go list -deps` of the core with production tags, the installer and the
+relay, each module's `LICENSE` read from the module cache): all compatible with
+GPL-3.0 except `github.com/hiddify/hmrd_multi_resolver_dns`, which has **no
+license at all** (pinned commit and upstream `HEAD`). Its two consumers,
+`dnstt` and `smart_dns_pool`, are now behind `-tags with_dnstt`, which no
+published build sets, so neither artifact links it. `THIRD-PARTY-NOTICES.md`
+and `core/NOTICE.md` were rewritten to the real tree (psiphon gone, `replace/`
+→ `core/thirdparty/` with the five unlisted modules, the sagernet GPL set, the
+installer's true footprint, the pcap corpus's actual home and resolved status).
 
 1. **Per-user MTProto in production:** the code is done (see above) and gated
    by `deployment.mtprotoPerUser`, because the default core image predates it.

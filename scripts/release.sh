@@ -86,12 +86,6 @@ main() {
 	local commit; commit=$(git rev-parse HEAD)
 	local short; short=$(git rev-parse --short=8 HEAD)
 
-	# The fork is a submodule and the build cannot resolve its module without
-	# it. Failing here beats failing halfway through a compile.
-	if [[ ! -f third_party/sing-box/go.mod ]]; then
-		die "third_party/sing-box is empty; run: git submodule update --init"
-	fi
-
 	local name="spaiter-vpn-${version}-${TARGET_OS}-${TARGET_ARCH}"
 	local out="$root/dist/$version"
 	rm -rf "$out"

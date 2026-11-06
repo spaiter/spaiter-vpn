@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# The fast signal an agent (or a human) should get before committing. Four
+# The fast signal an agent (or a human) should get before committing. Five
 # gates, cheapest first. Nothing here needs network or privileges.
 #
 # The `bot` gate (bot.py parses) and the Python half of `contract` went away on
@@ -8,9 +8,14 @@
 # port so two independent implementations of the generators were compared on
 # every commit; with one implementation left there is nothing to compare.
 #
-#   scripts/check.sh                      all of them
-#   scripts/check.sh fmt|vet|test|deps    just one
-#   scripts/check.sh leaks                 the publication gate (scripts/leakscan.sh)
+#   scripts/check.sh                            all of them
+#   scripts/check.sh fmt|deps|leaks|vet|test    just one
+#
+#   leaks   The publication gate (scripts/leakscan.sh): what `git archive`
+#           would publish must carry no literal of the real deployment. The
+#           denylist lives only on that deployment's host, so elsewhere the
+#           gate skips and says so -- a skip is not a pass, and `check: ok`
+#           on another machine does not vouch for publication.
 #
 # Why each gate is scoped the way it is:
 #
@@ -262,13 +267,18 @@ gate_test() {
 
 # gate_leaks fails if what would be published carries a value of the real
 # deployment. It needs that deployment's denylist, which only its host has, so
-# without one it is skipped rather than passed. Not part of `all` until the
-# default core image moves to its public registry, the one known match left.
+# without one (or without ripgrep, which leakscan.sh needs) it is skipped
+# rather than passed. Part of `all` since 2026-11-06, when the default core
+# image moved to GHCR and the last known match went away.
 gate_leaks() {
 	say "leaks (published tree)"
 	local list=${SPAITER_VPN_DENYLIST:-$HOME/.config/spaiter-vpn-leakscan/denylist}
 	if [[ ! -s $list ]]; then
-		echo "skipped: no denylist at $list"
+		echo "skipped: no denylist at $list (only the deployment host has one)"
+		return 0
+	fi
+	if ! command -v rg >/dev/null; then
+		echo "skipped: ripgrep (rg) not installed"
 		return 0
 	fi
 	"$(dirname "$0")/leakscan.sh" "$list"
@@ -284,11 +294,12 @@ leaks) gate_leaks || rc=1 ;;
 all)
 	gate_fmt || rc=1
 	gate_deps || rc=1
+	gate_leaks || rc=1
 	gate_vet || rc=1
 	gate_test || rc=1
 	;;
 *)
-	echo "usage: scripts/check.sh [all|fmt|vet|test|deps|contract|leaks]" >&2
+	echo "usage: scripts/check.sh [all|fmt|deps|leaks|vet|test|contract]" >&2
 	exit 2
 	;;
 esac
