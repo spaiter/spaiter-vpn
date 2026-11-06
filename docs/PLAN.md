@@ -531,6 +531,8 @@ installer's true footprint, the pcap corpus's actual home and resolved status).
    from the bot token, ten minutes, single use, exchanged by the page for an
    HttpOnly cookie session guarded by SameSite plus a required
    `X-Requested-With` header.
+   Released as **v0.1.4** from `0a018fa` (Mini App, browser login link, the
+   newer Bot API surface in the chat UI).
    Published as the snapshot `29b57a6` on GitHub and release v0.1.2 (signed,
    with source tarball). Forgejo remains the working repository; its history
    carries deployment data in old commits and is never pushed to GitHub.
