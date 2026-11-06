@@ -998,6 +998,8 @@ mitigations stay until it does.
 Shipped as core image `d34c330` (production and GHCR, `singbox.DefaultImage`
 bumped), bot `dev+d34c330`, relay rebuilt; `go version -m` of each shows
 `multipathtcp=0` and `ss -M` shows no listener of ours.
+Published as **v0.1.5**, a security release whose notes tell operators of
+earlier releases how to check and mitigate.
 
 
 - **The fresh-host path is not proven end to end.** The generator, Compose,
