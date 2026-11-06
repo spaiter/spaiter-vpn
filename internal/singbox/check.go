@@ -48,7 +48,7 @@ type Checker struct {
 // repository; if that is ever tightened, the failure surfaces through
 // DefaultImageRegistry below. The image carries org.opencontainers.image.source
 // and .revision, so it names its own GPL-3.0 corresponding source.
-const DefaultImage = "ghcr.io/spaiter/spaiter-vpn-core:19419c49"
+const DefaultImage = "ghcr.io/spaiter/spaiter-vpn-core:d34c330"
 
 // DefaultImageRegistry is the host that DefaultImage lives on, so a pull
 // failure can name what to authenticate against rather than leaving an

@@ -1,10 +1,10 @@
 apiVersion: spaiter-vpn/plan/v1alpha1
 desiredDigest: bd5ba214ee0a338914deb2f3073416ddacb69e3b91fc6be57c74700a1a53bfd5
-observationDigest: 9f597c02f44e958494a9e1262fb320a40a86873297f57e6771e3857f2d57409c
+observationDigest: ce3cc33f9ff4cd84dd6a28fafaad2ba14644ebb0777597120c77a111da49d511
 mode: reconcile
 blocked: false
 changes:
-- /deployment/image | reconcile | "ghcr.io/spaiter/spaiter-vpn-core:19419c49" -> "registry.example/spaiter-vpn-core:next"
+- /deployment/image | reconcile | "ghcr.io/spaiter/spaiter-vpn-core:d34c330" -> "registry.example/spaiter-vpn-core:next"
 actions:
 - platform | verify | mutates=false | use supported ubuntu 24.04 on amd64
 - root | verify | mutates=false | re-run apply as root (current euid 1000)

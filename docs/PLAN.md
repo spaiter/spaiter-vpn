@@ -995,6 +995,9 @@ explicit `SetMultipathTCP(tcp_multi_path)` in the listener and dialer, the
 dead flag removed everywhere, a Linux test that the default listener is not
 MPTCP. Ubuntu had no fixed 7.0 HWE kernel in the archive that day; the host
 mitigations stay until it does.
+Shipped as core image `d34c330` (production and GHCR, `singbox.DefaultImage`
+bumped), bot `dev+d34c330`, relay rebuilt; `go version -m` of each shows
+`multipathtcp=0` and `ss -M` shows no listener of ours.
 
 
 - **The fresh-host path is not proven end to end.** The generator, Compose,
