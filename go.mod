@@ -24,9 +24,7 @@ require (
 	github.com/cretz/bine v0.2.0
 	github.com/database64128/tfo-go/v2 v2.3.2
 	github.com/digitalocean/go-smbios v0.0.0-20180907143718-390a4f403a8e
-	github.com/docker/docker v27.5.1+incompatible
-	github.com/docker/go-connections v0.8.2
-	github.com/enfein/mieru/v3 v3.27.0
+	github.com/enfein/mieru/v3 v3.38.2
 	github.com/fogleman/gg v1.3.0
 	github.com/go-chi/chi/v5 v5.2.5
 	github.com/go-chi/render v1.0.3
@@ -34,9 +32,6 @@ require (
 	github.com/gofrs/uuid/v5 v5.4.0
 	github.com/google/go-tpm v0.9.4
 	github.com/gorilla/csrf v1.7.3
-	github.com/hashicorp/go-hclog v1.6.2
-	github.com/hashicorp/raft v1.7.2
-	github.com/hashicorp/raft-boltdb/v2 v2.3.1
 	github.com/hiddify/hmrd_multi_resolver_dns v0.0.0-20260429114007-8d809dc33d0e
 	github.com/illarion/gonotify/v3 v3.0.2
 	github.com/insomniacslk/dhcp v0.0.0-20260220084031-5adc3eb26f91
@@ -87,14 +82,12 @@ require (
 	github.com/sagernet/ws v0.0.0-20231204124109-acfe8907c854
 	github.com/songgao/water v0.0.0-20200317203138-2b4b6d7c09d8
 	github.com/spf13/cobra v1.10.2
-	github.com/spyzhov/ajson v0.9.6
 	github.com/stretchr/testify v1.11.1
 	github.com/tidwall/gjson v1.18.0
 	github.com/toqueteos/webbrowser v1.2.0
 	github.com/vishvananda/netlink v1.3.1-0.20240922070040-084abd93d350
 	github.com/vishvananda/netns v0.0.5
 	github.com/yosida95/uritemplate/v3 v3.0.2
-	go.uber.org/goleak v1.3.0
 	go.uber.org/zap v1.27.1
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba
 	golang.org/x/crypto v0.53.0
@@ -112,33 +105,16 @@ require (
 )
 
 require (
-	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/boltdb/bolt v1.3.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/containerd/log v0.1.0 // indirect
-	github.com/distribution/reference v0.6.0 // indirect
-	github.com/docker/go-units v0.5.0 // indirect
-	github.com/fatih/color v1.18.0 // indirect
 	github.com/go-telegram/bot v1.27.0
-	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0 // indirect
 	github.com/gorilla/securecookie v1.1.2 // indirect
-	github.com/hashicorp/go-immutable-radix v1.3.1 // indirect
-	github.com/hashicorp/go-metrics v0.5.4 // indirect
-	github.com/hashicorp/go-msgpack/v2 v2.1.2 // indirect
-	github.com/hashicorp/golang-lru v1.0.2 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
-	github.com/moby/docker-image-spec v1.3.1 // indirect
-	github.com/moby/term v0.5.2 // indirect
-	github.com/morikuni/aec v1.1.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
-	github.com/opencontainers/go-digest v1.0.0 // indirect
-	github.com/opencontainers/image-spec v1.1.0 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect
 	github.com/prometheus/common v0.65.0 // indirect
 	github.com/prometheus/procfs v0.16.1 // indirect
-	go.etcd.io/bbolt v1.3.11 // indirect
 	golang.org/x/image v0.27.0 // indirect
 )
 
@@ -264,13 +240,9 @@ require (
 require (
 	github.com/OneOfOne/xxhash v1.2.8 // indirect
 	github.com/amnezia-vpn/amneziawg-go/v3 v3.1.20260814
-	github.com/armon/go-metrics v0.4.1 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/flynn/noise v1.1.0
-	github.com/go-logr/logr v1.4.3 // indirect
-	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/klauspost/reedsolomon v1.13.0 // indirect
 	github.com/mattn/go-isatty v0.0.20
 	github.com/ncruces/go-strftime v1.0.0 // indirect
@@ -286,14 +258,7 @@ require (
 	github.com/xtaci/kcp-go/v5 v5.6.70
 	github.com/xtaci/smux v1.5.50
 	github.com/yl2chen/cidranger v1.0.2 // indirect
-	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
-	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.60.0 // indirect
-	go.opentelemetry.io/otel v1.39.0 // indirect
-	go.opentelemetry.io/otel/metric v1.39.0 // indirect
-	go.opentelemetry.io/otel/trace v1.39.0 // indirect
-	go.opentelemetry.io/proto/otlp v1.7.1 // indirect
 	golang.zx2c4.com/wireguard v0.0.0-20231211153847-12269c276173 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20251202230838-ff82c1b0f217 // indirect
 	gvisor.dev/gvisor v0.0.0-20231202080848-1f7806d17489 // indirect
 	modernc.org/libc v1.67.6 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
@@ -305,3 +270,13 @@ require (
 // user does not require tearing the inbound down. Upstream sing-anytls has
 // UpdateUsers but assigns the map unsynchronised (a hard concurrent-map crash
 // against the auth lookup); upstream sing-shadowtls has no setter at all. //H
+
+// Three upstream libraries carry one bug fix each, taken from hiddify's sing-box
+// v5 line; the forks under github.com/spaiter keep the upstream module paths and
+// differ from the pinned upstream commits by exactly those commits. See
+// core/PROVENANCE.md.
+replace github.com/sagernet/gvisor => github.com/spaiter/gvisor v0.0.0-20261106193230-3dd6df2db1b2
+
+replace github.com/sagernet/sing => github.com/spaiter/sing v0.0.0-20261106193231-4ae1b43e3228
+
+replace github.com/amnezia-vpn/amneziawg-go/v3 => github.com/spaiter/amneziawg-go/v3 v3.0.0-20261106193232-69ea60a955aa

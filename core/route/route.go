@@ -256,6 +256,9 @@ func (r *Router) RoutePacketConnection(ctx context.Context, conn N.PacketConn, m
 		} else {
 			r.logger.ErrorContext(ctx, err)
 		}
+		// nothing took the connection, so nobody will ever call onClose: waiting
+		// below would park this goroutine (one per failed packet) until shutdown
+		return nil
 	}
 	select {
 	case <-done:

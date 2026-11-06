@@ -130,12 +130,15 @@ Two things are worth knowing before running it:
   swarm, no third party. The benign datagram is the point — without it, "every
   probe was rejected" is indistinguishable from "nothing arrived at all".
 
-One `git clone` is the whole checkout: no submodules, and **zero `replace`
-directives**. The VPN core and every dependency that used to be reached through
-one live in `core/`, with eleven module paths rewritten under this module's
-path. What that bought and what it cost — upstream rebasing is gone — is in
-[`core/PROVENANCE.md`](core/PROVENANCE.md), which also records the exact commit
-of every absorbed tree.
+One `git clone` is the whole checkout: no submodules, and no `replace`
+directive that points anywhere but a public, pinned fork. The VPN core and every
+dependency that used to be reached through a local path live in `core/`, with
+eleven module paths rewritten under this module's path. Three libraries
+(`sagernet/gvisor`, `sagernet/sing`, `amnezia-vpn/amneziawg-go`) are replaced by
+forks under `github.com/spaiter/` that differ from the pinned upstream commits by
+exactly one bug-fix commit each. What that bought and what it cost — upstream
+rebasing is gone — is in [`core/PROVENANCE.md`](core/PROVENANCE.md), which also
+records the exact commit of every absorbed tree and of each fork.
 
 ### A fresh server
 
@@ -397,11 +400,12 @@ can be run again with the same archive.
 | Path | What |
 |---|---|
 | `cmd/`, `internal/`, `scripts/` | the installer — this is the Go module root |
-| `core/` | the VPN core and every dependency that used to need a `replace` |
+| `core/` | the VPN core and every dependency that used to need a local `replace` |
 | `relay/` | the WG-over-VK shim — a **nested** Go module, built separately |
 
 Everything needed to build the installer, the core image and the relay is in
-this tree, and it has **zero `replace` directives**. The author keeps an
+this tree; its three `replace` directives point at public, commit-pinned forks
+(see `core/PROVENANCE.md`), never at a local path. The author keeps an
 `ops/` directory beside it — a snapshot of one running host (compose projects,
 systemd units, host-side tools) — as a separate private repository cloned into
 the git-ignored `/ops/` path: it describes a specific deployment, not the
@@ -706,9 +710,10 @@ unrelated projects to use it.
 
 The earlier plan kept the core and relay in separate repositories. That was
 superseded on 2026-10-23: the core and its patched dependencies now live under
-`core/`, and the WG-over-VK relay under `relay/`. The root module deliberately
-has zero `replace` directives; `relay/` remains a nested module because merging
-its dependency graph would move the core's carefully pinned versions.
+`core/`, and the WG-over-VK relay under `relay/`. The root module's only
+`replace` directives point at three public, commit-pinned forks carrying one
+fix each; `relay/` remains a nested module because merging its dependency graph
+would move the core's carefully pinned versions.
 
 The licence boundary is therefore a directory boundary rather than a repository
 boundary. `BitTorrentBlocker` remains a separate, retired MIT project and is not

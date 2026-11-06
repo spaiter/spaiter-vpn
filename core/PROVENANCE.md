@@ -28,7 +28,8 @@ that happened to be sitting in the fork's working tree.
 ## Why the module paths were rewritten
 
 Eleven module paths were rewritten so that nothing is reached through a
-`replace` directive — the repository has **zero** of them. A `replace` exists
+`replace` directive — the repository had **zero** of them until 2026-11-06,
+when three public forks were pinned (see the entry of that date). A `replace` exists
 precisely because some module imports a path that has to be substituted, so the
 only way to remove one is to absorb every module in that import chain and
 rename it.
@@ -202,3 +203,36 @@ upstream named a symbol that does not exist, so every published core listened
 on MPTCP; the directive reaches every build of the module, and
 `common/listener` now sets MPTCP off explicitly unless `tcp_multi_path` asks.
 Ported from hiddify-sing-box `9aca6c8c1`.
+
+## 2026-11-06: three pinned forks and mieru 3.38.2 (deps digest refreshed)
+
+Nine server-side fixes were ported from hiddify-sing-box v5 (`6a545ead1`).
+Six are in this tree: the XHTTP stream-down handler closes its connection when
+the client goes away and `uploadQueue.Close` no longer waits for a `Push`
+blocked on a full queue (`transport/v2rayxhttp`); TCP dials through the awg,
+masque and wireguard netstacks get `C.TCPTimeout` instead of waiting for a SYN
+answer forever; `Router.RoutePacketConnection` returns after a failed route
+instead of parking a goroutine until shutdown; Reality rejects a `short_id`
+longer than 16 hex digits on both sides instead of panicking in `hex.Decode`;
+and DNS waiters rejoin the per-question lock after a failed query so they share
+one new query. `github.com/enfein/mieru/v3` moved from v3.27.0 to v3.38.2,
+which dropped its docker and raft dependencies from the graph (that is the
+large negative diff in go.sum).
+
+Three fixes live in libraries, so `go.mod` gained its first `replace`
+directives. Each fork keeps the upstream module path, starts from the exact
+commit that was pinned before, and carries exactly one commit:
+
+| Upstream pin | Fork | Fix |
+|---|---|---|
+| `sagernet/gvisor` `20b7e9b2d7e2` | `github.com/spaiter/gvisor@3dd6df2` | `tcp.handleConnecting` returns when a failed handshake already cleared `ep.h` (nil deref crash) |
+| `sagernet/sing` `2ded2af32d3d` | `github.com/spaiter/sing@4ae1b43` | `bufio.CachedConn` buffer is taken under a mutex (double release on concurrent Close) |
+| `amnezia-vpn/amneziawg-go/v3` `1b86b2ae0e49` | `github.com/spaiter/amneziawg-go@69ea60a` | `netstack.Close` no longer closes `incomingPacket` under a concurrent writer (send on closed channel) |
+
+The forks are public so that a clean `git clone` + `go build` still works
+without any local path. `git diff <upstream pin>..main` in each fork shows the
+single fix and its test, nothing else. The hiddify versions of `cache.go` and
+`tun.go` were not taken verbatim: theirs sit on sing 0.9.7 and on
+`sagernet/gvisor` respectively, so only the fix hunks were applied to our
+pinned bases. The DNS fix was likewise re-applied to this tree's older
+`dns/client.go`, whose exchange path hiddify has since restructured.

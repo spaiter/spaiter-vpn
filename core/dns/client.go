@@ -182,32 +182,38 @@ func (c *Client) Exchange(ctx context.Context, transport adapter.DNSTransport, m
 	disableCache := !isSimpleRequest || c.disableCache || options.DisableCache
 	if !disableCache {
 		cacheKey := dnsCacheKey{Question: question, transportTag: transport.Tag()}
-		cond, loaded := c.cacheLock.LoadOrStore(cacheKey, make(chan struct{}))
-		if loaded {
+		// each wait ends by rejoining here, so after a failed query the waiters share one
+		// new query instead of each sending their own
+		for {
+			cond, loaded := c.cacheLock.LoadOrStore(cacheKey, make(chan struct{}))
+			if !loaded {
+				defer func() {
+					c.cacheLock.Delete(cacheKey)
+					close(cond)
+				}()
+			}
+			response, ttl, isStale := c.loadResponse(question, transport)
+			if response != nil {
+				if isStale && !options.DisableOptimisticCache {
+					c.backgroundRefreshDNS(transport, question, message.Copy(), options, responseChecker)
+					logOptimisticResponse(c.logger, ctx, response)
+					response.Id = message.Id
+					return response, nil
+				} else if !isStale {
+					logCachedResponse(c.logger, ctx, response, ttl)
+					response.Id = message.Id
+					return response, nil
+				}
+			}
+			if !loaded {
+				break
+			}
 			select {
 			case <-cond:
 			case <-time.After(c.timeout):
 				return nil, E.New("cache wait timeout")
 			case <-ctx.Done():
 				return nil, ctx.Err()
-			}
-		} else {
-			defer func() {
-				c.cacheLock.Delete(cacheKey)
-				close(cond)
-			}()
-		}
-		response, ttl, isStale := c.loadResponse(question, transport)
-		if response != nil {
-			if isStale && !options.DisableOptimisticCache {
-				c.backgroundRefreshDNS(transport, question, message.Copy(), options, responseChecker)
-				logOptimisticResponse(c.logger, ctx, response)
-				response.Id = message.Id
-				return response, nil
-			} else if !isStale {
-				logCachedResponse(c.logger, ctx, response, ttl)
-				response.Id = message.Id
-				return response, nil
 			}
 		}
 	}

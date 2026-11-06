@@ -75,6 +75,9 @@ func newRealityClient(ctx context.Context, logger logger.ContextLogger, serverAd
 	if len(publicKey) != 32 {
 		return nil, E.New("invalid public_key")
 	}
+	if len(options.Reality.ShortID) > 16 {
+		return nil, E.New("invalid short_id: longer than 16 hex digits")
+	}
 	var shortID [8]byte
 	decodedLen, err := hex.Decode(shortID[:], []byte(options.Reality.ShortID))
 	if err != nil {

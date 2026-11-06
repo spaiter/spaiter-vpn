@@ -23,6 +23,7 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
+	C "github.com/spaiter/spaiter-vpn/core/constant"
 	"github.com/spaiter/spaiter-vpn/core/log"
 	wgTun "github.com/spaiter/spaiter-vpn/core/thirdparty/wireguard-go/tun"
 	"github.com/spaiter/spaiter-vpn/core/transport/wireguard"
@@ -119,6 +120,10 @@ func (w *stackDevice) DialContext(ctx context.Context, network string, destinati
 	}
 	switch N.NetworkName(network) {
 	case N.NetworkTCP:
+		// the netstack dial has no timeout of its own: a peer that never answers the SYN
+		// would hold the caller forever
+		ctx, cancel := context.WithTimeout(ctx, C.TCPTimeout)
+		defer cancel()
 		tcpConn, err := wireguard.DialTCPWithBind(ctx, w.stack, bind, addr, networkProtocol)
 		if err != nil {
 			return nil, err
