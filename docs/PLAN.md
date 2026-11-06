@@ -533,16 +533,17 @@ installer's true footprint, the pcap corpus's actual home and resolved status).
    unaffected, having been built from that checkout. Fixed with a negation
    rule; the two other ignored `.pem` sets (`core/common/certificate/`,
    tailscale `ipnlocal/testdata/`) are referenced by nothing and stay out.
-2. **Retire the shared naive account:** every code path already issues
-   per-user naive and mieru accounts (generator, Go bot, guide), and mieru has
-   no shared account (confirmed with the owner 2026-11-05). The one shared
-   credential is the live `naive-in` legacy `seed` account, kept because a
-   naive inbound cannot start with no users. Remaining: hand naive users
-   per-user links, then drop `seed` once at least one per-user naive account
-   exists. The core updates naive's users in place (`7001f6d`), so this costs
-   no sessions. Naive cannot ship in the Android client (cronet does not
-   link), so it stays link-only. This touches the live deployment, so it waits
-   for the owner.
+2. **Retire the shared naive account — done 2026-11-06.** The live
+   `naive-in` had one shared `seed` account, kept only because a naive inbound
+   cannot start with no users. Through the core's management API every user
+   on record received a personal naive account (username = their Telegram id,
+   random password held by the core and read back by the bot on delivery),
+   then `seed` was deleted; each apply reloaded `naive-in` alone, in place, so
+   no other session was touched. Verified afterwards from the running core:
+   ten personal accounts, no `seed`, no naive errors in the log. Naive stays
+   link-only (cronet does not link into the Android client) and out of the
+   bundle (`bundle.skip_tags`); the bot offers it per method. No shared
+   credential remains on the deployment.
 3. **Provider one-click — done 2026-11-06.** Signed releases are on GitHub
    Releases (v0.1.0), `bootstrap cloud-init` points at them by default, and
    the README documents where each provider takes the user-data. What was
