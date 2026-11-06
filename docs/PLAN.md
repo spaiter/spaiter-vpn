@@ -1001,6 +1001,25 @@ bumped), bot `dev+d34c330`, relay rebuilt; `go version -m` of each shows
 Published as **v0.1.5**, a security release whose notes tell operators of
 earlier releases how to check and mitigate.
 
+**Closed 2026-11-06 — nine server-side fixes from hiddify v5 ported.** The
+same review listed what else the former upstream had fixed since the fork
+diverged. The server-relevant batch went in as one change: gVisor's
+`tcp.handleConnecting` crashed on a nil handshake; the XHTTP stream-down
+handler and its upload queue leaked a goroutine and a connection per client
+that opened a GET and never uploaded; TCP dials through the awg, masque and
+wireguard netstacks had no timeout; a failed UDP route parked a goroutine
+until shutdown; amneziawg-go's netstack panicked on close under a concurrent
+writer; sing's `CachedConn` released its buffer twice under a concurrent
+close; a Reality `short_id` over 16 hex digits panicked `hex.Decode`; DNS
+waiters each re-queried after a failed query; mieru moved 3.27.0 → 3.38.2.
+Three of these live in libraries, so `go.mod` gained its first `replace`
+directives, each to a public fork under `github.com/spaiter/` carrying one
+commit on top of the exact upstream pin — recorded in `core/PROVENANCE.md`,
+and the README no longer claims zero replaces.
+Shipped as core image `10c7b09` (production and GHCR, `singbox.DefaultImage`
+bumped); production config re-validated with the new binary before the
+switch. Published as **v0.1.6**.
+
 
 - **The fresh-host path is not proven end to end.** The generator, Compose,
   preflight and self-test work independently, but production still runs a

@@ -1,6 +1,6 @@
 apiVersion: spaiter-vpn/plan/v1alpha1
-desiredDigest: 29e6670e0389acc8794c4da02ae1775f4b03b70f004f9614df35d082a930befb
-observationDigest: 57fbf3d3996b0177328b3a3c65e937e88696121d7c8e3aac904efe91fd1911d1
+desiredDigest: 64c502ad6cab135b80c11e8d0fe4bfb3ca194cf2ad31336d45434e1fd33c1768
+observationDigest: 18ce78c7091f0207fe79ba31ce6a3bcadb544bf5ab2b6f8910808b2b08e8dc1d
 mode: migrate
 blocked: false
 changes:
