@@ -1,0 +1,46 @@
+package wireguard
+
+import (
+	"context"
+	"net/netip"
+	"time"
+
+	"github.com/sagernet/sing-tun"
+	"github.com/sagernet/sing/common/logger"
+	N "github.com/sagernet/sing/common/network"
+	"github.com/spaiter/spaiter-vpn/core/thirdparty/wireguard-go/device"
+	wgTun "github.com/spaiter/spaiter-vpn/core/thirdparty/wireguard-go/tun"
+)
+
+type Device interface {
+	wgTun.Device
+	N.Dialer
+	Start() error
+	SetDevice(device *device.Device)
+	Inet4Address() netip.Addr
+	Inet6Address() netip.Addr
+}
+
+type DeviceOptions struct {
+	Context        context.Context
+	Logger         logger.ContextLogger
+	System         bool
+	Handler        tun.Handler
+	UDPTimeout     time.Duration
+	ICMPTimeout    time.Duration
+	CreateDialer   func(interfaceName string) N.Dialer
+	Name           string
+	MTU            uint32
+	Address        []netip.Prefix
+	AllowedAddress []netip.Prefix
+}
+
+func NewDevice(options DeviceOptions) (Device, error) {
+	if !options.System {
+		return newStackDevice(options)
+	} else if !tun.WithGVisor {
+		return newSystemDevice(options)
+	} else {
+		return newSystemStackDevice(options)
+	}
+}

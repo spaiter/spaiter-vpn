@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>sing-box Panel</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+<style>
+:root{--sb-bg:#11191f;--sb-card:#1a2332;--sb-border:#2a3a4a;--sb-accent:#4a9eff;--sb-danger:#e55;}
+body{background:var(--sb-bg);margin:0;font-family:system-ui,sans-serif}
+nav.tabs{display:flex;gap:0;background:var(--sb-card);border-bottom:1px solid var(--sb-border);padding:0 1rem;position:sticky;top:0;z-index:10}
+nav.tabs button{background:none;border:none;color:#8899aa;padding:.75rem 1.2rem;cursor:pointer;font-size:.9rem;border-bottom:2px solid transparent;transition:all .2s}
+nav.tabs button:hover{color:#ccc}
+nav.tabs button.active{color:var(--sb-accent);border-bottom-color:var(--sb-accent)}
+.tab-content{display:none;padding:1.5rem;max-width:1100px;margin:0 auto}
+.tab-content.active{display:block}
+.card{background:var(--sb-card);border:1px solid var(--sb-border);border-radius:8px;padding:1.2rem;margin-bottom:1rem}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1rem}
+.stat-value{font-size:1.8rem;font-weight:700;color:var(--sb-accent)}
+.stat-label{font-size:.8rem;color:#8899aa;text-transform:uppercase;margin-top:.25rem}
+table{width:100%;border-collapse:collapse;font-size:.85rem}
+th{text-align:left;padding:.6rem .5rem;color:#8899aa;border-bottom:1px solid var(--sb-border);font-weight:500}
+td{padding:.6rem .5rem;border-bottom:1px solid var(--sb-border);color:#ccc}
+tr:hover td{background:rgba(74,158,255,.05)}
+button.btn{background:var(--sb-accent);color:#fff;border:none;padding:.5rem 1rem;border-radius:4px;cursor:pointer;font-size:.85rem}
+button.btn:hover{opacity:.85}
+button.btn-sm{padding:.3rem .7rem;font-size:.8rem}
+button.btn-danger{background:var(--sb-danger)}
+button.btn-outline{background:none;border:1px solid var(--sb-border);color:#ccc}
+button.btn-outline:hover{border-color:var(--sb-accent);color:var(--sb-accent)}
+.login-overlay{position:fixed;inset:0;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center;z-index:100}
+.login-box{background:var(--sb-card);padding:2rem;border-radius:12px;width:340px;border:1px solid var(--sb-border)}
+.login-box h2{margin:0 0 1rem;color:#eee;font-size:1.2rem}
+.login-box input{width:100%;padding:.6rem;margin-bottom:1rem;background:var(--sb-bg);border:1px solid var(--sb-border);border-radius:4px;color:#eee;box-sizing:border-box}
+.login-box .error{color:var(--sb-danger);font-size:.85rem;margin-bottom:.5rem}
+pre.config-json{background:var(--sb-bg);border:1px solid var(--sb-border);border-radius:6px;padding:1rem;overflow:auto;max-height:70vh;font-size:.8rem;color:#b0c4de;white-space:pre-wrap;word-break:break-all}
+dialog{background:var(--sb-card);border:1px solid var(--sb-border);border-radius:10px;color:#eee;padding:1.5rem;max-width:560px;width:90%}
+dialog::backdrop{background:rgba(0,0,0,.6)}
+dialog h3{margin:0 0 1rem}
+dialog textarea{width:100%;min-height:180px;background:var(--sb-bg);border:1px solid var(--sb-border);border-radius:4px;color:#eee;font-family:monospace;font-size:.85rem;padding:.6rem;box-sizing:border-box}
+dialog .actions{display:flex;gap:.5rem;justify-content:flex-end;margin-top:1rem}
+.form-group{margin-bottom:.8rem}
+.form-group label{display:block;font-size:.8rem;color:#8899aa;margin-bottom:.3rem}
+.form-group input,.form-group select,.form-group textarea{width:100%;padding:.5rem;background:var(--sb-bg);border:1px solid var(--sb-border);border-radius:4px;color:#eee;box-sizing:border-box;font-size:.85rem}
+.form-group textarea{min-height:60px;font-family:monospace}
+.uuid-row{display:flex;gap:.5rem}
+.uuid-row input{flex:1}
+.toast{position:fixed;top:1rem;right:1rem;padding:.8rem 1.2rem;border-radius:6px;color:#fff;font-size:.85rem;z-index:200;animation:fadeIn .3s}
+.toast.error{background:var(--sb-danger)}
+.toast.success{background:#2a7}
+@keyframes fadeIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
+.empty{text-align:center;padding:2rem;color:#667}
+.conn-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem}
+.select-inbound{margin-bottom:1rem}
+.select-inbound select{padding:.5rem;background:var(--sb-bg);border:1px solid var(--sb-border);border-radius:4px;color:#eee;min-width:200px}
+</style>
+</head>
+<body>
+
+<div id="loginOverlay" class="login-overlay" style="display:none">
+  <div class="login-box">
+    <h2>sing-box Panel</h2>
+    <div id="loginError" class="error" style="display:none"></div>
+    <input type="password" id="loginSecret" placeholder="Enter API secret" autofocus>
+    <button class="btn" style="width:100%" onclick="doLogin()">Login</button>
+  </div>
+</div>
+
+<nav class="tabs" id="tabNav" style="display:none">
+  <button class="active" data-tab="dashboard">Dashboard</button>
+  <button data-tab="config">Config</button>
+  <button data-tab="inbounds">Inbounds</button>
+  <button data-tab="endpoints">Endpoints</button>
+  <button data-tab="users">Users</button>
+  <button data-tab="connections">Connections</button>
+  <button data-tab="stats">Stats</button>
+</nav>
+
+<div id="dashboard" class="tab-content active">
+  <div class="stats">
+    <div class="card"><div class="stat-value" id="versionDisplay">-</div><div class="stat-label">Version</div></div>
+    <div class="card"><div class="stat-value" id="uploadSpeed">0 B/s</div><div class="stat-label">Upload</div></div>
+    <div class="card"><div class="stat-value" id="downloadSpeed">0 B/s</div><div class="stat-label">Download</div></div>
+    <div class="card"><div class="stat-value" id="memoryUsage">-</div><div class="stat-label">Memory</div></div>
+  </div>
+</div>
+
+<div id="config" class="tab-content">
+  <div class="card" style="display:flex;justify-content:space-between;align-items:center;padding:.8rem 1.2rem">
+    <span style="color:#8899aa;font-size:.9rem">Configuration (read-only)</span>
+    <button class="btn btn-sm btn-outline" onclick="copyConfig()">Copy JSON</button>
+  </div>
+  <pre class="config-json" id="configJson">Loading...</pre>
+</div>
+
+<div id="inbounds" class="tab-content">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+    <h3 style="margin:0;color:#eee">Inbounds</h3>
+    <button class="btn" onclick="showAddInbound()">Add Inbound</button>
+  </div>
+  <div class="card" style="padding:0;overflow:auto">
+    <table>
+      <thead><tr><th>Tag</th><th>Type</th><th style="width:120px">Actions</th></tr></thead>
+      <tbody id="inboundsBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<div id="endpoints" class="tab-content">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+    <h3 style="margin:0;color:#eee">Endpoints</h3>
+    <button class="btn" onclick="showAddEndpoint()">Add Endpoint</button>
+  </div>
+  <div class="card" style="padding:0;overflow:auto">
+    <table>
+      <thead><tr><th>Tag</th><th>Type</th><th style="width:120px">Actions</th></tr></thead>
+      <tbody id="endpointsBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<div id="users" class="tab-content">
+  <div class="select-inbound">
+    <label style="color:#8899aa;font-size:.85rem;margin-right:.5rem">Select inbound:</label>
+    <select id="userInboundSelect" onchange="loadUsers()"></select>
+  </div>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+    <h3 style="margin:0;color:#eee">Users</h3>
+    <button class="btn" id="addUserBtn" onclick="showAddUser()" style="display:none">Add User</button>
+  </div>
+  <div class="card" style="padding:0;overflow:auto">
+    <table>
+      <thead><tr><th>Name</th><th>Details</th><th style="width:120px">Actions</th></tr></thead>
+      <tbody id="usersBody"><tr><td colspan="3" class="empty">Select an inbound above</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div id="connections" class="tab-content">
+  <div class="conn-header">
+    <h3 style="margin:0;color:#eee">Active Connections: <span id="connCount">0</span></h3>
+    <button class="btn btn-danger btn-sm" onclick="closeAllConns()">Close All</button>
+  </div>
+  <div class="card" style="padding:0;overflow:auto">
+    <table>
+      <thead><tr><th>Network</th><th>Inbound</th><th>Source</th><th>Destination</th><th>Host</th><th>Chains</th><th>Upload</th><th>Download</th><th>Time</th><th></th></tr></thead>
+      <tbody id="connsBody"><tr><td colspan="10" class="empty">No active connections</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div id="stats" class="tab-content">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+    <h3 style="margin:0;color:#eee">User Traffic Stats</h3>
+  </div>
+  <div class="card" style="padding:0;overflow:auto">
+    <table>
+      <thead><tr><th>User</th><th>Upload</th><th>Download</th><th>Total</th><th>Connections</th><th>Active</th><th style="width:140px">Actions</th></tr></thead>
+      <tbody id="statsBody"><tr><td colspan="7" class="empty">Loading...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<dialog id="userStatsDialog">
+  <h3 id="userStatsDialogTitle">User Details</h3>
+  <h4 style="margin:0 0 .5rem;color:#8899aa;font-size:.85rem">Daily Breakdown</h4>
+  <div class="card" style="padding:0;overflow:auto;max-height:30vh">
+    <table>
+      <thead><tr><th>Date</th><th>Upload</th><th>Download</th><th>Total</th><th>Connections</th></tr></thead>
+      <tbody id="userStatsDaily"></tbody>
+    </table>
+  </div>
+  <h4 style="margin:1rem 0 .5rem;color:#8899aa;font-size:.85rem">Top Resources</h4>
+  <div class="card" style="padding:0;overflow:auto;max-height:30vh">
+    <table>
+      <thead><tr><th>Resource</th><th>Upload</th><th>Download</th><th>Total</th><th>Connections</th></tr></thead>
+      <tbody id="userStatsResources"></tbody>
+    </table>
+  </div>
+  <div class="actions">
+    <button class="btn btn-outline" onclick="userStatsDialog.close()">Close</button>
+  </div>
+</dialog>
+
+<dialog id="inboundDialog">
+  <h3 id="inboundDialogTitle">Add Inbound</h3>
+  <textarea id="inboundJson" placeholder='{"type":"shadowsocks","tag":"my-ss","listen":"::","listen_port":8388,...}'></textarea>
+  <div class="actions">
+    <button class="btn btn-outline" onclick="inboundDialog.close()">Cancel</button>
+    <button class="btn" id="inboundDialogSave" onclick="saveInbound()">Save</button>
+  </div>
+</dialog>
+
+<dialog id="endpointDialog">
+  <h3 id="endpointDialogTitle">Add Endpoint</h3>
+  <textarea id="endpointJson" placeholder='{"type":"awg","tag":"my-awg","private_key":"...","address":["10.0.0.1/24"],...}'></textarea>
+  <div class="actions">
+    <button class="btn btn-outline" onclick="endpointDialog.close()">Cancel</button>
+    <button class="btn" id="endpointDialogSave" onclick="saveEndpoint()">Save</button>
+  </div>
+</dialog>
+
+<dialog id="userDialog">
+  <h3 id="userDialogTitle">Add User</h3>
+  <div id="userFormFields"></div>
+  <div class="actions">
+    <button class="btn btn-outline" onclick="userDialog.close()">Cancel</button>
+    <button class="btn" id="userDialogSave" onclick="saveUser()">Save</button>
+  </div>
+</dialog>
+
+<dialog id="confirmDialog">
+  <h3>Confirm</h3>
+  <p id="confirmMsg"></p>
+  <div class="actions">
+    <button class="btn btn-outline" onclick="confirmDialog.close()">Cancel</button>
+    <button class="btn btn-danger" id="confirmOk">Delete</button>
+  </div>
+</dialog>
+
+<script>
+const $ = s => document.querySelector(s);
+const $$ = s => document.querySelectorAll(s);
+
+let TOKEN = localStorage.getItem('sb-panel-token') || '';
+let trafficWs = null;
+let connInterval = null;
+let editingInboundTag = null;
+let editingEndpointTag = null;
+let editingUserName = null;
+let currentInbounds = [];
+
+// --- Protocol field definitions ---
+const USER_FIELDS = {
+  shadowsocks:  [{key:'name',label:'Name'},{key:'password',label:'Password'}],
+  vmess:        [{key:'name',label:'Name'},{key:'uuid',label:'UUID',uuid:true},{key:'alter_id',label:'Alter ID',optional:true,type:'number'}],
+  trojan:       [{key:'name',label:'Name'},{key:'password',label:'Password'}],
+  vless:        [{key:'name',label:'Name'},{key:'uuid',label:'UUID',uuid:true},{key:'flow',label:'Flow',type:'select',options:['','xtls-rprx-vision']}],
+  hysteria2:    [{key:'name',label:'Name'},{key:'password',label:'Password'}],
+  hysteria:     [{key:'name',label:'Name'},{key:'auth_str',label:'Auth String'}],
+  tuic:         [{key:'name',label:'Name'},{key:'uuid',label:'UUID',uuid:true},{key:'password',label:'Password'}],
+  ssh:          [{key:'user',label:'User'},{key:'password',label:'Password',optional:true},{key:'public_key',label:'Public Key',type:'textarea',optional:true}],
+  mieru:        [{key:'name',label:'Name'},{key:'password',label:'Password'}],
+  shadowtls:    [{key:'name',label:'Name'},{key:'password',label:'Password'}],
+  anytls:       [{key:'name',label:'Name'},{key:'password',label:'Password'}],
+  naive:        [{key:'username',label:'Username'},{key:'password',label:'Password'}],
+  socks:        [{key:'username',label:'Username'},{key:'password',label:'Password'}],
+  http:         [{key:'username',label:'Username'},{key:'password',label:'Password'}],
+  mixed:        [{key:'username',label:'Username'},{key:'password',label:'Password'}],
+};
+
+// --- Utility ---
+function formatBytes(b) {
+  if (b === 0) return '0 B';
+  const k = 1024, s = ['B','KB','MB','GB','TB'];
+  const i = Math.floor(Math.log(b) / Math.log(k));
+  return (b / Math.pow(k, i)).toFixed(i > 0 ? 1 : 0) + ' ' + s[i];
+}
+
+function formatSpeed(b) { return formatBytes(b) + '/s'; }
+
+function timeAgo(date) {
+  const s = Math.floor((Date.now() - new Date(date).getTime()) / 1000);
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s/60) + 'm';
+  return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function showToast(msg, type) {
+  const t = document.createElement('div');
+  t.className = 'toast ' + type;
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
+}
+
+// --- API helper ---
+async function api(path, opts = {}) {
+  const headers = opts.headers || {};
+  if (TOKEN) headers['Authorization'] = 'Bearer ' + TOKEN;
+  if (opts.body && typeof opts.body === 'object') {
+    headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(opts.body);
+  }
+  const resp = await fetch(path, { ...opts, headers });
+  if (resp.status === 401) {
+    TOKEN = '';
+    localStorage.removeItem('sb-panel-token');
+    showApp(false);
+    showToast('Session expired', 'error');
+    throw new Error('Unauthorized');
+  }
+  if (!resp.ok) {
+    let msg = resp.statusText;
+    try { const j = await resp.json(); msg = j.message || j.error || msg; } catch {}
+    throw new Error(msg);
+  }
+  if (resp.status === 204) return null;
+  const ct = resp.headers.get('content-type') || '';
+  if (ct.includes('json')) return resp.json();
+  return resp.text();
+}
+
+// --- Auth ---
+function showApp(show) {
+  $('#loginOverlay').style.display = show ? 'none' : 'flex';
+  $('#tabNav').style.display = show ? 'flex' : 'none';
+  $$('.tab-content').forEach(el => {
+    if (show && el.id === 'dashboard') el.classList.add('active');
+    else if (!show) el.classList.remove('active');
+  });
+}
+
+async function doLogin() {
+  const secret = $('#loginSecret').value.trim();
+  if (!secret) return;
+  TOKEN = secret;
+  try {
+    await api('/version');
+    localStorage.setItem('sb-panel-token', TOKEN);
+    $('#loginError').style.display = 'none';
+    showApp(true);
+    initDashboard();
+  } catch (e) {
+    TOKEN = '';
+    $('#loginError').textContent = 'Invalid secret';
+    $('#loginError').style.display = 'block';
+  }
+}
+
+$('#loginSecret').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+// --- Tabs ---
+$$('nav.tabs button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    $$('nav.tabs button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    $$('.tab-content').forEach(el => el.classList.remove('active'));
+    const tab = btn.dataset.tab;
+    $('#' + tab).classList.add('active');
+    if (tab === 'config') loadConfig();
+    if (tab === 'inbounds') loadInbounds();
+    if (tab === 'endpoints') loadEndpoints();
+    if (tab === 'users') loadInboundSelect();
+    if (tab === 'connections') startConnPolling();
+    if (tab !== 'connections') stopConnPolling();
+    if (tab === 'stats') loadStats();
+  });
+});
+
+// --- Dashboard ---
+async function initDashboard() {
+  try {
+    const v = await api('/version');
+    $('#versionDisplay').textContent = v.version || 'unknown';
+  } catch {}
+  connectTrafficWs();
+  loadMemory();
+}
+
+function connectTrafficWs() {
+  if (trafficWs) { trafficWs.close(); trafficWs = null; }
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  trafficWs = new WebSocket(proto + '//' + location.host + '/traffic?token=' + encodeURIComponent(TOKEN));
+  trafficWs.onmessage = e => {
+    try {
+      const d = JSON.parse(e.data);
+      $('#uploadSpeed').textContent = formatSpeed(d.up || 0);
+      $('#downloadSpeed').textContent = formatSpeed(d.down || 0);
+    } catch {}
+  };
+  trafficWs.onclose = () => { setTimeout(connectTrafficWs, 3000); };
+}
+
+async function loadMemory() {
+  try {
+    const snap = await api('/connections');
+    if (snap && typeof snap.memory !== 'undefined') {
+      $('#memoryUsage').textContent = formatBytes(snap.memory);
+    }
+  } catch {}
+  setTimeout(loadMemory, 5000);
+}
+
+// --- Config ---
+async function loadConfig() {
+  try {
+    const data = await api('/manage/config');
+    $('#configJson').textContent = JSON.stringify(data, null, 2);
+  } catch (e) {
+    $('#configJson').textContent = 'Error: ' + e.message;
+  }
+}
+
+function copyConfig() {
+  navigator.clipboard.writeText($('#configJson').textContent)
+    .then(() => showToast('Copied!', 'success'))
+    .catch(() => showToast('Copy failed', 'error'));
+}
+
+// --- Inbounds ---
+async function loadInbounds() {
+  try {
+    const list = await api('/manage/inbounds');
+    currentInbounds = list || [];
+    const body = $('#inboundsBody');
+    if (!list || list.length === 0) {
+      body.innerHTML = '<tr><td colspan="3" class="empty">No inbounds</td></tr>';
+      return;
+    }
+    body.innerHTML = list.map(ib => `<tr>
+      <td>${escapeHtml(ib.tag)}</td>
+      <td>${escapeHtml(ib.type)}</td>
+      <td>
+        <button class="btn btn-sm btn-outline" onclick="showEditInbound('${escapeHtml(ib.tag)}')">Edit</button>
+        <button class="btn btn-sm btn-danger" onclick="confirmDeleteInbound('${escapeHtml(ib.tag)}')">Delete</button>
+      </td>
+    </tr>`).join('');
+  } catch (e) {
+    showToast('Failed to load inbounds: ' + e.message, 'error');
+  }
+}
+
+function showAddInbound() {
+  editingInboundTag = null;
+  $('#inboundDialogTitle').textContent = 'Add Inbound';
+  $('#inboundJson').value = '';
+  $('#inboundDialogSave').textContent = 'Add';
+  inboundDialog.showModal();
+}
+
+async function showEditInbound(tag) {
+  editingInboundTag = tag;
+  $('#inboundDialogTitle').textContent = 'Edit Inbound: ' + tag;
+  $('#inboundDialogSave').textContent = 'Save';
+  try {
+    const data = await api('/manage/inbounds/' + encodeURIComponent(tag));
+    $('#inboundJson').value = JSON.stringify(data, null, 2);
+    inboundDialog.showModal();
+  } catch (e) {
+    showToast('Failed to load inbound: ' + e.message, 'error');
+  }
+}
+
+async function saveInbound() {
+  const raw = $('#inboundJson').value.trim();
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { showToast('Invalid JSON', 'error'); return; }
+  try {
+    if (editingInboundTag) {
+      await api('/manage/inbounds/' + encodeURIComponent(editingInboundTag), { method: 'PUT', body: raw, headers: { 'Content-Type': 'application/json' } });
+      showToast('Inbound updated', 'success');
+    } else {
+      await api('/manage/inbounds', { method: 'POST', body: raw, headers: { 'Content-Type': 'application/json' } });
+      showToast('Inbound added', 'success');
+    }
+    inboundDialog.close();
+    loadInbounds();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+function confirmDeleteInbound(tag) {
+  $('#confirmMsg').textContent = 'Delete inbound "' + tag + '"?';
+  $('#confirmOk').onclick = async () => {
+    try {
+      await api('/manage/inbounds/' + encodeURIComponent(tag), { method: 'DELETE' });
+      showToast('Inbound deleted', 'success');
+      confirmDialog.close();
+      loadInbounds();
+    } catch (e) { showToast(e.message, 'error'); }
+  };
+  confirmDialog.showModal();
+}
+
+// --- Endpoints ---
+async function loadEndpoints() {
+  try {
+    const list = await api('/manage/endpoints');
+    const body = $('#endpointsBody');
+    if (!list || list.length === 0) {
+      body.innerHTML = '<tr><td colspan="3" class="empty">No endpoints</td></tr>';
+      return;
+    }
+    body.innerHTML = list.map(ep => `<tr>
+      <td>${escapeHtml(ep.tag)}</td>
+      <td>${escapeHtml(ep.type)}</td>
+      <td>
+        <button class="btn btn-sm btn-outline" onclick="showEditEndpoint('${escapeHtml(ep.tag)}')">Edit</button>
+        <button class="btn btn-sm btn-danger" onclick="confirmDeleteEndpoint('${escapeHtml(ep.tag)}')">Delete</button>
+      </td>
+    </tr>`).join('');
+  } catch (e) {
+    showToast('Failed to load endpoints: ' + e.message, 'error');
+  }
+}
+
+function showAddEndpoint() {
+  editingEndpointTag = null;
+  $('#endpointDialogTitle').textContent = 'Add Endpoint';
+  $('#endpointJson').value = '';
+  $('#endpointDialogSave').textContent = 'Add';
+  endpointDialog.showModal();
+}
+
+async function showEditEndpoint(tag) {
+  editingEndpointTag = tag;
+  $('#endpointDialogTitle').textContent = 'Edit Endpoint: ' + tag;
+  $('#endpointDialogSave').textContent = 'Save';
+  try {
+    const data = await api('/manage/endpoints/' + encodeURIComponent(tag));
+    $('#endpointJson').value = JSON.stringify(data, null, 2);
+    endpointDialog.showModal();
+  } catch (e) {
+    showToast('Failed to load endpoint: ' + e.message, 'error');
+  }
+}
+
+async function saveEndpoint() {
+  const raw = $('#endpointJson').value.trim();
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { showToast('Invalid JSON', 'error'); return; }
+  try {
+    if (editingEndpointTag) {
+      await api('/manage/endpoints/' + encodeURIComponent(editingEndpointTag), { method: 'PUT', body: raw, headers: { 'Content-Type': 'application/json' } });
+      showToast('Endpoint updated', 'success');
+    } else {
+      await api('/manage/endpoints', { method: 'POST', body: raw, headers: { 'Content-Type': 'application/json' } });
+      showToast('Endpoint added', 'success');
+    }
+    endpointDialog.close();
+    loadEndpoints();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+function confirmDeleteEndpoint(tag) {
+  $('#confirmMsg').textContent = 'Delete endpoint "' + tag + '"?';
+  $('#confirmOk').onclick = async () => {
+    try {
+      await api('/manage/endpoints/' + encodeURIComponent(tag), { method: 'DELETE' });
+      showToast('Endpoint deleted', 'success');
+      confirmDialog.close();
+      loadEndpoints();
+    } catch (e) { showToast(e.message, 'error'); }
+  };
+  confirmDialog.showModal();
+}
+
+// --- Users ---
+async function loadInboundSelect() {
+  try {
+    const list = await api('/manage/inbounds');
+    currentInbounds = list || [];
+    const sel = $('#userInboundSelect');
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">-- select --</option>' +
+      list.map(ib => `<option value="${escapeHtml(ib.tag)}" data-type="${escapeHtml(ib.type)}">${escapeHtml(ib.tag)} (${escapeHtml(ib.type)})</option>`).join('');
+    if (prev && list.some(ib => ib.tag === prev)) { sel.value = prev; loadUsers(); }
+  } catch (e) {
+    showToast('Failed to load inbounds: ' + e.message, 'error');
+  }
+}
+
+async function loadUsers() {
+  const sel = $('#userInboundSelect');
+  const tag = sel.value;
+  if (!tag) {
+    $('#usersBody').innerHTML = '<tr><td colspan="3" class="empty">Select an inbound above</td></tr>';
+    $('#addUserBtn').style.display = 'none';
+    return;
+  }
+  const opt = sel.options[sel.selectedIndex];
+  const ibType = opt.dataset.type;
+  if (!USER_FIELDS[ibType]) {
+    $('#usersBody').innerHTML = '<tr><td colspan="3" class="empty">Protocol "' + escapeHtml(ibType) + '" does not support users</td></tr>';
+    $('#addUserBtn').style.display = 'none';
+    return;
+  }
+  $('#addUserBtn').style.display = '';
+  try {
+    const users = await api('/manage/inbounds/' + encodeURIComponent(tag) + '/users');
+    const body = $('#usersBody');
+    if (!users || users.length === 0) {
+      body.innerHTML = '<tr><td colspan="3" class="empty">No users</td></tr>';
+      return;
+    }
+    body.innerHTML = users.map(u => {
+      const name = u.name || u.user || u.username || '?';
+      const details = userDetails(u, ibType);
+      return `<tr>
+        <td>${escapeHtml(name)}</td>
+        <td style="font-size:.8rem;color:#8899aa">${escapeHtml(details)}</td>
+        <td>
+          <button class="btn btn-sm btn-outline" onclick="showEditUser('${escapeHtml(tag)}','${escapeHtml(name)}','${escapeHtml(ibType)}')">Edit</button>
+          <button class="btn btn-sm btn-danger" onclick="confirmDeleteUser('${escapeHtml(tag)}','${escapeHtml(name)}')">Delete</button>
+        </td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    showToast('Failed to load users: ' + e.message, 'error');
+  }
+}
+
+function userDetails(u, ibType) {
+  const parts = [];
+  if (u.uuid) parts.push('uuid: ' + u.uuid.substring(0, 8) + '...');
+  if (u.password) parts.push('pass: ***');
+  if (u.auth_str) parts.push('auth: ***');
+  if (u.flow) parts.push('flow: ' + u.flow);
+  if (u.alter_id) parts.push('alterId: ' + u.alter_id);
+  return parts.join(', ') || '-';
+}
+
+function buildUserForm(ibType, data) {
+  const fields = USER_FIELDS[ibType];
+  if (!fields) return '';
+  return fields.map(f => {
+    const val = data ? (data[f.key] || '') : '';
+    const req = f.optional ? '' : ' required';
+    if (f.type === 'select') {
+      const opts = (f.options || []).map(o => `<option value="${o}"${val===o?' selected':''}>${o || '(none)'}</option>`).join('');
+      return `<div class="form-group"><label>${f.label}${f.optional?'':' *'}</label><select data-key="${f.key}">${opts}</select></div>`;
+    }
+    if (f.type === 'textarea') {
+      return `<div class="form-group"><label>${f.label}${f.optional?'':' *'}</label><textarea data-key="${f.key}"${req}>${escapeHtml(String(val))}</textarea></div>`;
+    }
+    if (f.uuid) {
+      return `<div class="form-group"><label>${f.label} *</label><div class="uuid-row"><input type="text" data-key="${f.key}" value="${escapeHtml(String(val))}" required><button type="button" class="btn btn-sm btn-outline" onclick="this.previousElementSibling.value=crypto.randomUUID()">Generate</button></div></div>`;
+    }
+    const inputType = f.type === 'number' ? 'number' : 'text';
+    return `<div class="form-group"><label>${f.label}${f.optional?'':' *'}</label><input type="${inputType}" data-key="${f.key}" value="${escapeHtml(String(val))}"${req}></div>`;
+  }).join('');
+}
+
+function showAddUser() {
+  const sel = $('#userInboundSelect');
+  const ibType = sel.options[sel.selectedIndex].dataset.type;
+  editingUserName = null;
+  $('#userDialogTitle').textContent = 'Add User';
+  $('#userDialogSave').textContent = 'Add';
+  $('#userFormFields').innerHTML = buildUserForm(ibType, null);
+  userDialog.showModal();
+}
+
+async function showEditUser(tag, name, ibType) {
+  editingUserName = name;
+  $('#userDialogTitle').textContent = 'Edit User: ' + name;
+  $('#userDialogSave').textContent = 'Save';
+  try {
+    const data = await api('/manage/inbounds/' + encodeURIComponent(tag) + '/users/' + encodeURIComponent(name));
+    $('#userFormFields').innerHTML = buildUserForm(ibType, data);
+    userDialog.showModal();
+  } catch (e) {
+    showToast('Failed to load user: ' + e.message, 'error');
+  }
+}
+
+async function saveUser() {
+  const sel = $('#userInboundSelect');
+  const tag = sel.value;
+  const ibType = sel.options[sel.selectedIndex].dataset.type;
+  const fields = USER_FIELDS[ibType];
+  const obj = {};
+  for (const f of fields) {
+    const el = userDialog.querySelector('[data-key="' + f.key + '"]');
+    if (!el) continue;
+    let val = el.value;
+    if (f.type === 'number' && val !== '') val = parseInt(val, 10);
+    if (!f.optional && (val === '' || val === undefined)) {
+      showToast(f.label + ' is required', 'error');
+      return;
+    }
+    if (val !== '' && val !== undefined) obj[f.key] = val;
+  }
+  try {
+    if (editingUserName) {
+      await api('/manage/inbounds/' + encodeURIComponent(tag) + '/users/' + encodeURIComponent(editingUserName), { method: 'PUT', body: obj });
+      showToast('User updated', 'success');
+    } else {
+      await api('/manage/inbounds/' + encodeURIComponent(tag) + '/users', { method: 'POST', body: obj });
+      showToast('User added', 'success');
+    }
+    userDialog.close();
+    loadUsers();
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+function confirmDeleteUser(tag, name) {
+  $('#confirmMsg').textContent = 'Delete user "' + name + '"?';
+  $('#confirmOk').onclick = async () => {
+    try {
+      await api('/manage/inbounds/' + encodeURIComponent(tag) + '/users/' + encodeURIComponent(name), { method: 'DELETE' });
+      showToast('User deleted', 'success');
+      confirmDialog.close();
+      loadUsers();
+    } catch (e) { showToast(e.message, 'error'); }
+  };
+  confirmDialog.showModal();
+}
+
+// --- Connections ---
+function startConnPolling() {
+  stopConnPolling();
+  loadConnections();
+  connInterval = setInterval(loadConnections, 2000);
+}
+
+function stopConnPolling() {
+  if (connInterval) { clearInterval(connInterval); connInterval = null; }
+}
+
+async function loadConnections() {
+  try {
+    const snap = await api('/connections');
+    const conns = snap.connections || [];
+    $('#connCount').textContent = conns.length;
+    // Update dashboard memory while we have it
+    if (typeof snap.memory !== 'undefined') {
+      $('#memoryUsage').textContent = formatBytes(snap.memory);
+    }
+    const body = $('#connsBody');
+    if (conns.length === 0) {
+      body.innerHTML = '<tr><td colspan="10" class="empty">No active connections</td></tr>';
+      return;
+    }
+    body.innerHTML = conns.map(c => {
+      const m = c.metadata || {};
+      return `<tr>
+        <td>${escapeHtml(m.network||'-')}</td>
+        <td>${escapeHtml(m.type||'-')}</td>
+        <td>${escapeHtml((m.sourceIP||'?')+':'+( m.sourcePort||''))}</td>
+        <td>${escapeHtml((m.destinationIP||'?')+':'+(m.destinationPort||''))}</td>
+        <td>${escapeHtml(m.host||'-')}</td>
+        <td style="font-size:.8rem">${escapeHtml((c.chains||[]).join(' → '))}</td>
+        <td>${formatBytes(c.upload||0)}</td>
+        <td>${formatBytes(c.download||0)}</td>
+        <td>${timeAgo(c.start)}</td>
+        <td><button class="btn btn-sm btn-danger" onclick="closeConn('${c.id}')">Close</button></td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    // silently ignore polling errors
+  }
+}
+
+async function closeConn(id) {
+  try {
+    await api('/connections/' + id, { method: 'DELETE' });
+  } catch {}
+  loadConnections();
+}
+
+async function closeAllConns() {
+  try {
+    await api('/connections', { method: 'DELETE' });
+    showToast('All connections closed', 'success');
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+  loadConnections();
+}
+
+// --- Stats ---
+async function loadStats() {
+  try {
+    const stats = await api('/stats/users');
+    const body = $('#statsBody');
+    if (!stats || stats.length === 0) {
+      body.innerHTML = '<tr><td colspan="7" class="empty">No user stats yet</td></tr>';
+      return;
+    }
+    body.innerHTML = stats.map(s => `<tr>
+      <td>${escapeHtml(s.user)}</td>
+      <td>${formatBytes(s.upload||0)}</td>
+      <td>${formatBytes(s.download||0)}</td>
+      <td>${formatBytes((s.upload||0)+(s.download||0))}</td>
+      <td>${s.conn_count||0}</td>
+      <td>${s.active||0}</td>
+      <td>
+        <button class="btn btn-sm btn-outline" onclick="showUserDetail('${escapeHtml(s.user)}')">Detail</button>
+        <button class="btn btn-sm btn-danger" onclick="confirmResetUser('${escapeHtml(s.user)}')">Reset</button>
+      </td>
+    </tr>`).join('');
+  } catch (e) {
+    showToast('Failed to load stats: ' + e.message, 'error');
+  }
+}
+
+async function showUserDetail(name) {
+  $('#userStatsDialogTitle').textContent = 'Stats: ' + name;
+  try {
+    const [data, resources] = await Promise.all([
+      api('/stats/users/' + encodeURIComponent(name) + '?days=30'),
+      api('/stats/users/' + encodeURIComponent(name) + '/resources?days=30')
+    ]);
+    const daily = data.daily || [];
+    const body = $('#userStatsDaily');
+    if (daily.length === 0) {
+      body.innerHTML = '<tr><td colspan="5" class="empty">No daily data</td></tr>';
+    } else {
+      body.innerHTML = daily.map(d => `<tr>
+        <td>${escapeHtml(d.date)}</td>
+        <td>${formatBytes(d.upload||0)}</td>
+        <td>${formatBytes(d.download||0)}</td>
+        <td>${formatBytes((d.upload||0)+(d.download||0))}</td>
+        <td>${d.conn_count||0}</td>
+      </tr>`).join('');
+    }
+    const resList = resources || [];
+    const resBody = $('#userStatsResources');
+    if (resList.length === 0) {
+      resBody.innerHTML = '<tr><td colspan="5" class="empty">No resource data</td></tr>';
+    } else {
+      resBody.innerHTML = resList.map(r => `<tr>
+        <td>${escapeHtml(r.resource)}</td>
+        <td>${formatBytes(r.upload||0)}</td>
+        <td>${formatBytes(r.download||0)}</td>
+        <td>${formatBytes((r.upload||0)+(r.download||0))}</td>
+        <td>${r.conn_count||0}</td>
+      </tr>`).join('');
+    }
+    userStatsDialog.showModal();
+  } catch (e) {
+    showToast('Failed to load user detail: ' + e.message, 'error');
+  }
+}
+
+function confirmResetUser(name) {
+  $('#confirmMsg').textContent = 'Reset all stats for "' + name + '"?';
+  $('#confirmOk').onclick = async () => {
+    try {
+      await api('/stats/users/' + encodeURIComponent(name), { method: 'DELETE' });
+      showToast('Stats reset for ' + name, 'success');
+      confirmDialog.close();
+      loadStats();
+    } catch (e) { showToast(e.message, 'error'); }
+  };
+  confirmDialog.showModal();
+}
+
+// --- Init ---
+async function init() {
+  if (!TOKEN) { showApp(false); return; }
+  try {
+    await api('/version');
+    showApp(true);
+    initDashboard();
+  } catch {
+    TOKEN = '';
+    localStorage.removeItem('sb-panel-token');
+    showApp(false);
+  }
+}
+
+init();
+</script>
+</body>
+</html>

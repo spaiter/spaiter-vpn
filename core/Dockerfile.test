@@ -1,0 +1,20 @@
+FROM golang:1.24-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    iproute2 \
+    iputils-ping \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY go.mod go.sum ./
+COPY replace/ replace/
+RUN go mod download
+
+COPY . .
+
+ENV TAGS="with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_ccm,with_ocm,badlinkname,tfogo_checklinkname0,with_grpc,with_awg,with_xdp"
+
+# Pre-compile all test binaries during build to catch errors early
+RUN go test -tags "${TAGS}" -run ^$ ./...
+
+ENTRYPOINT ["sh", "-c", "go test -v -count=1 -tags \"${TAGS}\" ${TEST_ARGS:-./...}"]

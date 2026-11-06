@@ -1,0 +1,28 @@
+//go:build !linux && !windows
+
+//nolint:unused
+package settings
+
+import (
+	"os"
+
+	"github.com/spaiter/spaiter-vpn/core/adapter"
+)
+
+type stubWIFIMonitor struct{}
+
+func NewWIFIMonitor(callback func(adapter.WIFIState)) (WIFIMonitor, error) {
+	return nil, os.ErrInvalid
+}
+
+func (m *stubWIFIMonitor) ReadWIFIState() adapter.WIFIState {
+	return adapter.WIFIState{}
+}
+
+func (m *stubWIFIMonitor) Start() error {
+	return nil
+}
+
+func (m *stubWIFIMonitor) Close() error {
+	return nil
+}

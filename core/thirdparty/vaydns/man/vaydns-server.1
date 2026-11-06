@@ -1,0 +1,284 @@
+.\" https://man.openbsd.org/mdoc.7
+.Dd 2026-03-22
+.Dt VAYDNS-SERVER 1
+.Os
+
+
+.Sh NAME
+
+.Nm vaydns-server
+.Nd DNS tunnel server
+
+
+.Sh SYNOPSIS
+
+.Nm
+.Fl gen-key
+.Op Fl privkey-file Ar FILENAME
+.Op Fl pubkey-file Ar FILENAME
+
+.Nm
+.Fl udp Ar ADDR : Ns Ar PORT
+.Op Fl privkey Ar HEX | Fl privkey-file Ar FILENAME
+.Op Fl mtu Ar MTU
+.Fl domain Ar DOMAIN
+.Fl upstream Ar UPSTREAMADDR : Ns Ar UPSTREAMPORT
+
+
+.Sh DESCRIPTION
+
+.Nm
+is the server portion of a DNS tunnel.
+It receives DNS over UDP messages at
+.Ar ADDR : Ns Ar PORT ,
+decodes the streams they contain,
+and forwards the streams as TCP connections to the address given by
+.Fl upstream .
+.Nm
+acts as the authoritative name server for the domain given by
+.Fl domain
+and communicates with an instance of
+.Xr vaydns-client 1
+via a recursive resolver.
+
+.Ss GENERATING A SERVER KEYPAIR
+
+The tunnel client
+encrypts and authenticates the tunneled connection
+using the server's public key.
+To generate a server keypair, use the
+.Fl gen-key
+option.
+Use the
+.Fl privkey-file
+and
+.Fl pubkey-file
+options to save the generated private key,
+public key, or both,
+to a file.
+
+.Bl -tag
+
+.It Fl gen-key
+Generate a server keypair.
+
+.It Fl privkey-file Ar FILENAME
+With
+.Fl gen-key ,
+save the generated private key to
+.Ar FILENAME .
+
+.It Fl pubkey-file Ar FILENAME
+With
+.Fl gen-key ,
+save the generated public key to
+.Ar FILENAME .
+
+.El
+
+.Pp
+On the server, you only need to store the private key, because
+.Nm
+can derive the public key from the private key.
+The client only needs to have the server's public key
+and should not know the server's private key.
+
+.Ss RUNNING THE SERVER
+
+.Bl -tag
+
+.It Fl udp Ar ADDR : Ns Ar PORT
+Listen for incoming DNS messages at the given address.
+Required.
+.Ar PORT
+must typically be 53
+when operating with a recursive intermediate resolver,
+unless you have made some other provision for forwarding
+port 53 to
+.Ar PORT .
+
+.It Fl domain Ar DOMAIN
+Tunnel domain.
+Required.
+
+.It Fl upstream Ar ADDR
+TCP address to forward tunneled connections to.
+Required.
+
+.It Fl privkey Ar HEX
+Server private key as a string of 64 hexadecimal digits.
+
+.It Fl privkey-file Ar FILENAME
+Read the server private key from
+.Ar FILENAME .
+The file should contain 64 hexadecimal digits and an
+optional trailing newline character.
+
+.It Fl mtu Ar MTU
+Never send UDP payloads larger than
+.Ar MTU
+bytes.
+Default:
+.Cm 1232 .
+Some recursive resolvers only support a maximum of 512.
+You will know you need to use this option when you see messages like:
+.Dl FORMERR: requester payload size 512 is too small (minimum 1232)
+
+.It Fl idle-timeout Ar DURATION
+Session idle timeout.
+Sessions with no data within this period are torn down.
+Should match the client's
+.Fl idle-timeout .
+Default:
+.Cm 10s
+(or
+.Cm 2m
+with
+.Fl dnstt-compat ) .
+
+.It Fl keepalive Ar DURATION
+Keepalive ping interval.
+Must be less than
+.Fl idle-timeout .
+Should match the client's
+.Fl keepalive .
+Default:
+.Cm 2s
+(or
+.Cm 10s
+with
+.Fl dnstt-compat ) .
+
+.It Fl fallback Ar ADDR
+UDP endpoint to forward non-DNS packets to.
+If an incoming packet is not a valid DNS message,
+it will be forwarded to this address.
+This allows another service to share the same UDP port.
+
+.It Fl dnstt-compat
+Enable original dnstt wire protocol compatibility.
+Uses 8-byte ClientIDs and the padding-aware upstream packet format,
+allowing the server to accept connections from original dnstt clients.
+Also overrides the following defaults to match dnstt unless explicitly set:
+.Fl idle-timeout
+to 2m,
+.Fl keepalive
+to 10s.
+When set, the
+.Fl clientid-size
+option is ignored.
+
+.It Fl clientid-size Ar N
+Set the ClientID size in bytes.
+Default:
+.Cm 2 .
+Ignored when
+.Fl dnstt-compat
+is set.
+
+.It Fl log-level Ar LEVEL
+Log level: debug, info, warning, error.
+Default:
+.Cm warning .
+
+.El
+
+.Pp
+If no private key is provided via
+.Fl privkey
+or
+.Fl privkey-file ,
+.Nm
+generates a temporary keypair on each start
+and logs the public key to standard error.
+
+
+.Sh EXAMPLES
+
+Generate a keypair.
+Save the private key to the file
+.Cm server.key
+and the public key to
+.Cm server.pub .
+Copy
+.Pa server.pub
+to the client.
+
+.Bd -literal -offset indent
+vaydns-server -gen-key -privkey-file server.key \e
+  -pubkey-file server.pub
+.Ed
+
+.Pp
+Accept DNS messages at the UDP address
+.Cm 0.0.0.0:5300 ,
+decode the streams contained therein,
+and forward the streams as TCP connections to
+.Cm 127.0.0.1:8000 .
+
+.Bd -literal -offset indent
+vaydns-server -udp 0.0.0.0:5300 -privkey-file server.key \e
+  -domain t.example.com -upstream 127.0.0.1:8000
+.Ed
+
+.Pp
+Accept connections from original dnstt clients:
+
+.Bd -literal -offset indent
+vaydns-server -udp 0.0.0.0:5300 -dnstt-compat \e
+  -privkey-file server.key -domain t.example.com \e
+  -upstream 127.0.0.1:8000
+.Ed
+
+.Pp
+Forward non-DNS traffic to a fallback service:
+
+.Bd -literal -offset indent
+vaydns-server -udp 0.0.0.0:5300 -privkey-file server.key \e
+  -fallback 127.0.0.1:8888 -domain t.example.com \e
+  -upstream 127.0.0.1:8000
+.Ed
+
+
+.Sh DIAGNOSTICS
+
+.Nm
+writes running logs to standard error.
+
+At startup,
+.Nm
+logs its public key.
+This string can be used with the
+.Fl pubkey
+option in
+.Xr vaydns-client 1 .
+
+.Dl pubkey 14ca15f53660e248d289d9302f992c4bee518f2361d6343dafa7b417b5a3d752
+
+.Pp
+At startup,
+.Nm
+logs the effective MTU, which is the amount of useful payload capacity
+in each DNS response after accounting for encoding overhead.
+This number will vary depending on the length of the
+.Fl domain
+value and the value of
+.Fl mtu .
+
+.Dl effective MTU 932
+
+.Pp
+If the recursive resolver's stated maximum UDP payload size
+is smaller than
+.Fl mtu ,
+.Nm
+will log a message like this:
+
+.Dl FORMERR: requester payload size 512 is too small (minimum 1232)
+
+
+.Sh SEE ALSO
+
+.Xr vaydns-client 1
+
+.Lk https://github.com/net2share/vaydns

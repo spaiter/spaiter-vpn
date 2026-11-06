@@ -1,0 +1,23 @@
+apiVersion: spaiter-vpn/plan/v1alpha1
+desiredDigest: 18333c7b3396355ef1ef99a45a0be16dde5f3c57ce408fc2c4a00a92380c25e6
+observationDigest: 3fad7a4aaa7ad5281a0c89d57941a439b6e5643de7489a4b0d13044d0da03f85
+mode: migrate
+blocked: false
+changes:
+- /deployment/ports/awg-in | migration | 10863 -> 10864
+actions:
+- platform | verify | mutates=false | use supported ubuntu 24.04 on amd64
+- root | verify | mutates=false | re-run apply as root (current euid 1000)
+- docker | verify | mutates=false | use Docker 27.5.1 directly
+- xdp-interface | verify | mutates=false | resolve XDP auto to eth0
+- preflight | verify | mutates=false | run the complete host preflight
+- stage-migration | apply | mutates=true | re-render the live configuration without reissuing credentials
+- management-apply | apply | mutates=true | apply the configuration diff through the live management API
+- logrotate | apply | mutates=true | install or reconcile the logrotate configuration
+- firewall | verify | mutates=false | keep existing UFW allow rules
+- desired-state | apply | mutates=true | persist canonical desired.json
+- compose-pull | apply | mutates=true | pull the immutable core image
+- compose-up | apply | mutates=true | converge the Compose project
+- health | verify | mutates=false | wait for the local management endpoint
+- selftest | verify | mutates=false | run the live BitTorrent self-test
+- external-checks | manual | mutates=false | verify reachability from another network

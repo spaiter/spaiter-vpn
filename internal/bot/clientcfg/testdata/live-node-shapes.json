@@ -1,0 +1,202 @@
+{
+ "ShadowTLS": {
+  "keys": [
+   "_chain",
+   "tag",
+   "type"
+  ],
+  "legs": [
+   {
+    "keys": [
+     "detour",
+     "method",
+     "multiplex",
+     "password",
+     "server",
+     "server_port",
+     "tag",
+     "type"
+    ],
+    "type": "shadowsocks"
+   },
+   {
+    "keys": [
+     "password",
+     "server",
+     "server_port",
+     "tag",
+     "tls",
+     "type",
+     "version"
+    ],
+    "type": "shadowtls"
+   }
+  ],
+  "type": "chain"
+ },
+ "WARP → сервер": {
+  "keys": [
+   "_chain",
+   "tag",
+   "type"
+  ],
+  "legs": [
+   {
+    "keys": [
+     "detour",
+     "server",
+     "server_port",
+     "tag",
+     "tls",
+     "transport",
+     "type",
+     "uuid"
+    ],
+    "type": "vless"
+   },
+   {
+    "keys": [
+     "config",
+     "tag",
+     "tls",
+     "type",
+     "use_http2"
+    ],
+    "type": "masque"
+   }
+  ],
+  "type": "chain"
+ },
+ "anytls": {
+  "keys": [
+   "password",
+   "server",
+   "server_port",
+   "tag",
+   "tls",
+   "type"
+  ],
+  "type": "anytls"
+ },
+ "awg": {
+  "keys": [
+   "address",
+   "h1",
+   "h2",
+   "h3",
+   "h4",
+   "jc",
+   "jmax",
+   "jmin",
+   "mtu",
+   "peers",
+   "private_key",
+   "s1",
+   "s2",
+   "tag",
+   "type"
+  ],
+  "type": "awg"
+ },
+ "hysteria2": {
+  "keys": [
+   "obfs",
+   "password",
+   "server",
+   "server_port",
+   "tag",
+   "tls",
+   "type"
+  ],
+  "type": "hysteria2"
+ },
+ "masque-wg": {
+  "keys": [
+   "local_address",
+   "mtu",
+   "path",
+   "peer_public_key",
+   "private_key",
+   "server",
+   "server_port",
+   "tag",
+   "tls",
+   "type"
+  ],
+  "type": "masque-wg"
+ },
+ "mieru": {
+  "keys": [
+   "password",
+   "server",
+   "server_port",
+   "tag",
+   "transport",
+   "type",
+   "username"
+  ],
+  "type": "mieru"
+ },
+ "snell": {
+  "keys": [
+   "psk",
+   "server",
+   "server_port",
+   "tag",
+   "type",
+   "userkey",
+   "version"
+  ],
+  "type": "snell"
+ },
+ "tuic": {
+  "keys": [
+   "congestion_control",
+   "password",
+   "server",
+   "server_port",
+   "tag",
+   "tls",
+   "type",
+   "uuid"
+  ],
+  "type": "tuic"
+ },
+ "urltest": {
+  "keys": [
+   "interval",
+   "outbounds",
+   "tag",
+   "type",
+   "url"
+  ],
+  "type": "urltest"
+ },
+ "vless": {
+  "keys": [
+   "server",
+   "server_port",
+   "tag",
+   "tls",
+   "transport",
+   "type",
+   "uuid"
+  ],
+  "type": "vless"
+ },
+ "wdtt": {
+  "keys": [
+   "mtu",
+   "obfs",
+   "password",
+   "server",
+   "server_port",
+   "tag",
+   "type",
+   "vk_dns",
+   "vk_hashes",
+   "workers"
+  ],
+  "type": "wdtt"
+ }
+}

@@ -1,0 +1,64 @@
+# Builds the VPN core from this repository.
+#
+# The build context is the repository root, because the core is no longer a
+# separate module: there is one go.mod covering the installer, the core and
+# every dependency that used to be reached through a replace directive.
+#
+#   docker build -f Dockerfile.core -t spaiter-vpn-core:<fork-commit> .
+#
+# golang:1.25 is pinned with GOTOOLCHAIN=local, and that pin is not habit.
+# common/badtls reaches into crypto/tls with //go:linkname, which is why
+# -checklinkname=0 is needed at all, and such code is only valid against the
+# standard library it was written for. Go 1.26 does build and run this core
+# since protocol/psiphon was dropped — psiphon-tls hard-coded the layout of
+# crypto/tls.ConnectionState and died in init on 1.26 — but the pin stays
+# until a 1.26 build has been exercised in production rather than merely
+# started.
+FROM golang:1.25-alpine AS builder
+ARG VERSION=dev
+WORKDIR /src
+
+# go.mod and go.sum alone, so the dependency download is cached independently
+# of the source. There is no `COPY replace/` any more: nothing is replaced.
+COPY go.mod go.sum ./
+RUN apk add --no-cache git build-base && \
+    export GOTOOLCHAIN=local && \
+    go mod download
+
+COPY . .
+# A direct `go build` rather than the core's Makefile: the Makefile derives
+# LDFLAGS from release/ and .git, both excluded by .dockerignore, which left
+# the version string empty and broke the badtls link step.
+#
+# with_tailscale is deliberately absent, as it is in upstream's default tags
+# since 573719dd5. Nothing here uses it: no `tailscale` or `derp` in the live
+# config or any of its backups, and none in the bot or the installer (their
+# apparent hits are "derP" inside HeaderProtectionKey). A tailscale config
+# would now fail with "not included in this build", which is the point --
+# that is cheaper than linking a stack nobody uses and carrying the
+# thirdparty/tailscale pin, which upstream had broken and we hold at
+# 788aa623.
+#
+# with_masque enables the Cloudflare WARP MASQUE outbound (the "WARP -> server"
+# chain the bot builds). It is separate from masque-wg, our self-hosted
+# CONNECT-UDP inbound, which needs no tag.
+RUN export GOTOOLCHAIN=local && \
+    CGO_ENABLED=0 go build -v -trimpath \
+      -tags "with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_ccm,with_ocm,with_cloudflared,badlinkname,tfogo_checklinkname0,with_grpc,with_awg,with_xdp,with_masque" \
+      -ldflags "-X 'github.com/spaiter/spaiter-vpn/core/constant.Version=${VERSION}' -X internal/godebug.defaultGODEBUG=multipathtcp=0 -checklinkname=0 -s -w -buildid=" \
+      -o /src/sing-box ./core/cmd/sing-box
+
+FROM alpine
+# OCI provenance so a published image names its own source and licence.
+# image.source is the canonical public mirror (GPL-3.0 corresponding source);
+# image.revision is the exact commit this core was built from.
+ARG REVISION=unknown
+ARG SOURCE=https://github.com/spaiter/spaiter-vpn
+LABEL org.opencontainers.image.title="spaiter-vpn-core" \
+      org.opencontainers.image.description="VPN core (sing-box fork) for spaiter-vpn" \
+      org.opencontainers.image.source="${SOURCE}" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.licenses="GPL-3.0-or-later"
+RUN apk add --no-cache bash tzdata ca-certificates nftables
+COPY --from=builder /src/sing-box /usr/local/bin/sing-box
+ENTRYPOINT ["sing-box"]

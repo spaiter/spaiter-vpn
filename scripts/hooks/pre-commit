@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+#
+# Install with: scripts/hooks/install.sh
+#
+# The four cheap gates run on every commit -- with a warm build cache the whole
+# thing is under ten seconds. The contract gate runs only when something it
+# could plausibly break is staged, because it may have to rebuild a core first
+# (3.5s when both binaries in .cache/ are current, up to two minutes when they
+# are not).
+#
+# Skip once with `git commit --no-verify` when that is deliberate.
+set -euo pipefail
+
+repo=$(git rev-parse --show-toplevel)
+cd "$repo"
+
+# Paths that feed the bot <-> core JSON boundary: the generators themselves,
+# the option structs they have to match, the protocol registrations that decide
+# which types exist, and the gate's own machinery.
+readonly CONTRACT_PATHS=(
+	'internal/bot/'
+	'internal/singbox/'
+	'core/option/'
+	'core/protocol/'
+	'core/include/'
+	'core/common/tls/'
+	'scripts/check.sh'
+)
+
+./scripts/check.sh
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+for path in "${CONTRACT_PATHS[@]}"; do
+	if grep -qF "$path" <<<"$staged"; then
+		printf '\n(%s is staged)\n' "$path"
+		exec ./scripts/check.sh contract
+	fi
+done
