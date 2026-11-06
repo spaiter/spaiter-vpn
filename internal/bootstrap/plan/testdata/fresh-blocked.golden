@@ -1,5 +1,5 @@
 apiVersion: spaiter-vpn/plan/v1alpha1
-desiredDigest: 298e67310144b1a055bdae035f9515d34d1364ec610a1b08f1bd27a2c3b856c6
+desiredDigest: 4d4ec564748f61b352e3dd9cafeed59d55c0daadbae6c6220f66caa14095cb02
 observationDigest: e298492e2e80a7ada3add93bd1fbc2f90db37f0f5c00a653315a25ee7876c94b
 mode: fresh
 blocked: true

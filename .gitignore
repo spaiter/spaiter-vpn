@@ -46,3 +46,6 @@ secrets.json
 /core/libcore.aar
 
 # ===== Imported host-side trees =====
+
+# Python bytecode from running ops/bin tools
+__pycache__/

@@ -323,10 +323,12 @@ unprivileged and is entered by one-time links from `spaiter-vpn web
 login-link` or the bot's `/weblogin`. Every change shows its plan before it is
 applied. `bootstrap.manageWeb: true` has bootstrap run it as its own account.
 
-`spaiter-vpn bootstrap cloud-init -f desired.json -release URL -version vX`
-renders user-data for a fresh VPS. On first boot it verifies a signed release
-against a pinned key, installs it and applies the document; nothing is piped
-into a shell.
+`spaiter-vpn bootstrap cloud-init -f desired.json -o user-data` renders
+user-data for a fresh VPS. On first boot it verifies a signed release against
+a pinned key, installs it and applies the document; nothing is piped into a
+shell. A released binary installs its own release by default (`-release` and
+`-version` override that; a `dev` build needs `-version`). See
+[One click on a provider](#one-click-on-a-provider).
 
 `spaiter-vpn bot guide -user NAME -o guide.html` (run where the bot runs)
 provisions a user on every method the bot offers and writes one offline HTML
@@ -384,9 +386,9 @@ can be run again with the same archive.
 
 #### What is still missing
 
-- Publishing: the project, its signed releases and core images go to GitHub
-  as the last step (see the plan); per-user MTProto by default and provider
-  one-click listings wait on it. Roadmap in
+- Provider one-click listings, which point at the signed releases on GitHub
+  (the first one, v0.1.0, is out; the core image is on GHCR and per-user
+  MTProto is the default for new deployments). Roadmap in
   [`docs/PLAN.md`](docs/PLAN.md), design in
   [`docs/BOOTSTRAP-DESIGN.md`](docs/BOOTSTRAP-DESIGN.md).
 
@@ -500,22 +502,22 @@ generated, so `up` needs it in the environment.
 
 The core runs from a prebuilt image, so installing needs no Go toolchain:
 
-    # the installer pulls, with no credentials needed:
-    #   registry.example.com/spaiter/spaiter-vpn-core:<fork-commit>
+    # the installer pulls, with no credentials:
+    #   ghcr.io/spaiter/spaiter-vpn-core:<commit>
 
-⚠️ **That image is publicly pullable, and probably not on purpose.** Forgejo's
-container packages belong to the *owner*, not to a repository, and do not
-inherit a linked repository's visibility — so this image is anonymously
-downloadable even though the `spaiter-vpn` repository is private. Measured, not
-assumed: a pull with an empty docker config succeeds. Convenient for a fresh
-VPS; worth deciding deliberately rather than inheriting.
+The image is a GitHub Container Registry package whose visibility is set to
+**public** by its owner, independently of any repository; an anonymous
+`docker pull` is exactly what a fresh install does, so that setting is part of
+the release, not an afterthought. The image carries
+`org.opencontainers.image.source` and `.revision`, naming the public commit it
+was built from — the GPL-3.0 corresponding source for what is inside it.
 
-Should that ever be tightened, an unauthenticated pull reports the repository
-as *nonexistent* rather than unauthorised — which is why the installer
-recognises docker's own framing and says "run docker login" instead of blaming
-the config it never read.
+Should the package ever be private, an unauthenticated pull reports the
+repository as *nonexistent* or *unauthorized* rather than naming the cause —
+which is why the installer recognises docker's own framing and says "run
+docker login against ghcr.io" instead of blaming the config it never read.
 
-The tag is the fork commit the image was built from, and it is immutable. A
+The tag is the commit the image was built from, and it is immutable. A
 moving tag would let two installs a month apart validate against different
 binaries while reporting the same image, and would leave a rollback with
 nothing to roll back to. Bumping the core is a visible change to
@@ -559,14 +561,62 @@ one has no passphrase and decrypts every secret on the host.
 **There will be no `curl … | bash` installer.** A one-line remote shell script
 for a VPN server teaches operators to pipe unaudited network input into root —
 exactly how a project like this becomes the supply-chain vector it exists to
-avoid. "One click" here means a verified release (or a provider image) running
-a built-in, reviewable `bootstrap` command; not bypassing signature
-verification. Until that command exists: download, verify, unpack, run.
+avoid. "One click" here means a verified release running the built-in,
+reviewable `bootstrap` command — never bypassing signature verification. By
+hand that is: download, verify, unpack, run. Without a hand it is the
+cloud-init path below, which performs the same verification before the binary
+is allowed to exist on the host.
 
-⚠️ Releases are **internal artifacts**. This is GPL-3.0 and now *contains* the
-GPL-3.0 core outright, so handing the binary to anyone obliges providing the
-corresponding source, and this repository is private. `--source` produces that
-tarball for the day that changes.
+Releases are published at
+<https://github.com/spaiter/spaiter-vpn/releases>: the first is **v0.1.0**.
+Each carries the binary tarball, `spaiter-vpn-<tag>-source.tar.gz` — the
+corresponding source GPL-3.0 §6 asks for, since the binary contains the GPL
+core — `SHA256SUMS` and `SHA256SUMS.asc`. The core image is
+`ghcr.io/spaiter/spaiter-vpn-core`, labelled with the commit it was built from.
+
+### One click on a provider
+
+Every major VPS provider accepts cloud-init user-data at creation time. That
+is the one-click entry point here, and it works the same everywhere; nothing
+provider-specific is installed and no vendor marketplace is involved.
+
+1. Write the document and review it — ports are drawn at random, set the
+   host clients will dial, and a fresh VPS needs Docker installed:
+
+       spaiter-vpn bootstrap state -users alice,bob -public-host vpn.example.com -o desired.json
+       # set "installDocker": true under "bootstrap"; edit anything else you like
+       spaiter-vpn bootstrap plan -f desired.json
+
+2. Render the user-data. A released binary points at its own release; a
+   `dev` build needs `-version v0.1.0`:
+
+       spaiter-vpn bootstrap cloud-init -f desired.json -o user-data
+
+   The file holds the document and every credential it names (mode 0600).
+   **The provider can read user-data**; prefer a bot that claims its admin
+   after boot (no token travels), and rotate anything that had to.
+
+3. Paste `user-data` where the provider takes cloud-init, on an **Ubuntu
+   24.04** or **Debian 12/13** amd64 image:
+
+   | Provider | Console | CLI |
+   |---|---|---|
+   | Hetzner Cloud | Create server → *Cloud config* | `hcloud server create --image ubuntu-24.04 --type cx22 --name vpn --user-data-from-file user-data` |
+   | DigitalOcean | Advanced options → *Add initialization scripts (free)* | `doctl compute droplet create vpn --image ubuntu-24-04-x64 --size s-1vcpu-1gb --region fra1 --user-data-file user-data` |
+   | Vultr | Deploy → *Cloud-Init User-Data* | `vultr-cli instance create --region fra --plan vc2-1c-1gb --os 2284 --userdata "$(cat user-data)"` |
+   | Linode / Akamai | Create Linode → *Add User Data* | `linode-cli linodes create --type g6-nanode-1 --region eu-central --image linode/ubuntu24.04 --metadata.user_data "$(base64 -w0 user-data)"` |
+   | Oracle Cloud | Advanced options → *Cloud-init script* | `oci compute instance launch … --user-data-file user-data` |
+
+4. First boot does the rest and logs to `/var/log/spaiter-vpn-firstboot.log`:
+   download the release, require a valid signature over `SHA256SUMS` made by
+   the pinned key `6D4841065CBDB46F500A4367C0718B337F6155B7`, check the tarball
+   against it, install, store the credentials, apply the document. A bot with
+   no admin prints a one-time `/claim` code to the serial console.
+
+Marketplace listings (DigitalOcean Marketplace, Hetzner Apps, Vultr
+Marketplace) ship a vendor-built image through a vendor review process; they
+are a distribution channel, not a different install path, and this repository
+does not depend on them. The user-data above is what such an image would run.
 
 ## License
 

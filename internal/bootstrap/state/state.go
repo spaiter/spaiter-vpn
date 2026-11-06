@@ -248,8 +248,12 @@ type Deployment struct {
 	// before it existed keep their digest.
 	RetireSharedMTProto bool `json:"retireSharedMtproto,omitempty"`
 	// MTProtoPerUser gives each user their own MTProto secret, attributed and
-	// limited per user. Needs a core image built with MTProto users, so it is
-	// off until the default image has them.
+	// limited per user. It needs a core image built with MTProto users, which
+	// the default image has had since ghcr.io/…:19419c49, so Default() turns it
+	// on (2026-11-06). Documents are decoded as written, never overlaid on
+	// Default(), so an existing deployment keeps whatever it says — turning it
+	// on there is an explicit, supported migration — and a document that omits
+	// the key still reads as off, as it did before the default changed.
 	MTProtoPerUser bool `json:"mtprotoPerUser,omitempty"`
 }
 
@@ -388,6 +392,7 @@ func Default(seedUsers []string) State {
 				Port: spec.ShadowTLSHandshakePort,
 			},
 			MTProtoFrontDomain: spec.MTProtoFrontDomain,
+			MTProtoPerUser:     true,
 		},
 		Bootstrap: Bootstrap{
 			SeedUsers:       append([]string(nil), seedUsers...),

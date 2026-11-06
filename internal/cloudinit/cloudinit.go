@@ -27,6 +27,11 @@ var ReleaseKey []byte
 
 const ReleaseFingerprint = "6D4841065CBDB46F500A4367C0718B337F6155B7"
 
+// DefaultReleaseBase is where signed releases are published; a release's
+// directory is DefaultReleaseBase + "/" + tag, holding SHA256SUMS,
+// SHA256SUMS.asc and the tarball — the layout the first-boot script expects.
+const DefaultReleaseBase = "https://github.com/spaiter/spaiter-vpn/releases/download"
+
 // Options is everything the user-data carries.
 type Options struct {
 	// Desired is the canonical desired-state document.

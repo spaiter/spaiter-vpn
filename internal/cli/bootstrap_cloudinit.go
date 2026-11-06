@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/spaiter/spaiter-vpn/internal/bootstrap/discover"
@@ -24,7 +25,7 @@ func runBootstrapCloudInit(_ context.Context, out io.Writer, args []string) erro
 	fingerprint := fs.String("fingerprint", "", "fingerprint -signing-key must have")
 	output := fs.String("o", "", "where to write the user-data (default: stdout)")
 	fs.Usage = func() {
-		fmt.Fprintln(out, "usage: spaiter-vpn bootstrap cloud-init -f desired.json -release URL -version vX [-credentials DIR] [-o user-data]")
+		fmt.Fprintln(out, "usage: spaiter-vpn bootstrap cloud-init -f desired.json [-release URL] [-version vX] [-credentials DIR] [-o user-data]")
 		fmt.Fprintln(out, "\nRenders #cloud-config user-data for a fresh Ubuntu 24.04 or Debian 12/13 VPS:")
 		fmt.Fprintln(out, "it downloads the release, checks the signature over SHA256SUMS against a")
 		fmt.Fprintln(out, "pinned key and the tarball against SHA256SUMS, installs the binary, stores")
@@ -32,14 +33,26 @@ func runBootstrapCloudInit(_ context.Context, out io.Writer, args []string) erro
 		fmt.Fprintln(out, "\nThe user-data carries the document and every credential it names, and")
 		fmt.Fprintln(out, "providers can read user-data. Prefer a bot without a token in it and")
 		fmt.Fprintln(out, "rotate anything that must travel this way once the server is up.")
+		fmt.Fprintln(out, "\nA released binary installs its own release by default: -version is this")
+		fmt.Fprintln(out, "binary's tag and -release is that tag's directory under")
+		fmt.Fprintln(out, cloudinit.DefaultReleaseBase+". A dev build has no tag, so it needs -version.")
 		fmt.Fprintln(out)
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *desiredPath == "" || *release == "" || *version == "" || fs.NArg() != 0 {
-		return fmt.Errorf("%w: cloud-init needs -f, -release and -version", ErrUsage)
+	if *desiredPath == "" || fs.NArg() != 0 {
+		return fmt.Errorf("%w: cloud-init needs -f", ErrUsage)
+	}
+	if *version == "" {
+		*version = releaseTag(Version)
+		if *version == "" {
+			return fmt.Errorf("%w: this is a %q build with no release tag; pass -version vX.Y.Z", ErrUsage, Version)
+		}
+	}
+	if *release == "" {
+		*release = cloudinit.DefaultReleaseBase + "/" + *version
 	}
 	desired, err := state.Load(*desiredPath)
 	if err != nil {
@@ -103,3 +116,16 @@ func canonicalJSON(desired state.State) ([]byte, error) {
 	}
 	return append(data, '\n'), nil
 }
+
+// releaseTag is the release a binary came from, as its directory under
+// DefaultReleaseBase is named: "v0.1.0+299c2118" is from v0.1.0. A build whose
+// version is not a tag — "dev", a bare commit — has no release to point at.
+func releaseTag(version string) string {
+	tag, _, _ := strings.Cut(version, "+")
+	if !releaseTagPattern.MatchString(tag) {
+		return ""
+	}
+	return tag
+}
+
+var releaseTagPattern = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$`)

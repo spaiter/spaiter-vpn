@@ -442,16 +442,32 @@ The publication step itself, in order — status as of 2026-11-06:
    is and skips with a visible notice elsewhere (no denylist, or no ripgrep) —
    a skip is not a pass, and `check: ok` on another machine does not vouch
    for publication.
-2. ⏳ `deployment.mtprotoPerUser` is still off by default (item 1 below).
+2. ✅ `deployment.mtprotoPerUser` is on in `state.Default()` (2026-11-06): the
+   default image `…:19419c49` has MTProto users. Only new documents see it —
+   `Parse` decodes a document as written, never over `Default()` — so an
+   existing deployment keeps its value and flips through the supported
+   migration when its owner says so.
 3. ✅ README describes the tree as a public reader sees it; `ops/` is named as
    the private mirror's export-ignored host snapshot.
 4. ✅ `leakscan` clean (0 of 369 values); one commit from the exported tree,
    authored `6448350+spaiter@users.noreply.github.com`, pushed:
    <https://github.com/spaiter/spaiter-vpn>, commit `853c689` (snapshot of
    private `f1d545f`; 4218 files, no `ops/`, GitHub detects GPL-3.0).
-   ⏳ No release yet: `scripts/release.sh vX.Y.Z --source` is the next step,
-   and its notes now name the public corresponding source.
-5. ⏳ Provider one-click waits on that release (item 3 below).
+   ✅ First release **v0.1.0** (2026-11-06), built by `scripts/release.sh
+   v0.1.0 --source` from the public snapshot `299c2118` and signed with
+   `C0718B337F6155B7`: <https://github.com/spaiter/spaiter-vpn/releases/tag/v0.1.0>
+   — `spaiter-vpn-v0.1.0-linux-amd64.tar.gz`, `spaiter-vpn-v0.1.0-source.tar.gz`,
+   `SHA256SUMS`, `SHA256SUMS.asc`. The download layout is what
+   `bootstrap cloudinit -release` expects; verified anonymously end to end
+   (`release.sh --verify` on the downloaded directory).
+5. ✅ Provider one-click is wired to the release (2026-11-06): a released
+   binary's `bootstrap cloud-init` defaults to its own tag's directory under
+   `https://github.com/spaiter/spaiter-vpn/releases/download`, and the README
+   gives the exact console field and CLI flag for Hetzner, DigitalOcean,
+   Vultr, Linode/Akamai and Oracle. Verified against the live v0.1.0 release:
+   the rendered first-boot script downloaded it and passed the pinned-key
+   signature and hash checks. Marketplace listings are a vendor channel, not
+   a different install path, and are not something this repository does.
 
 Also done on the way, 2026-11-06 — a licensing audit of every shipped binary
 (`go list -deps` of the core with production tags, the installer and the
@@ -464,11 +480,16 @@ and `core/NOTICE.md` were rewritten to the real tree (psiphon gone, `replace/`
 → `core/thirdparty/` with the five unlisted modules, the sagernet GPL set, the
 installer's true footprint, the pcap corpus's actual home and resolved status).
 
-1. **Per-user MTProto in production:** the code is done (see above) and gated
-   by `deployment.mtprotoPerUser`, because the default core image predates it.
-   Remaining: decide how core images are published (the GPL source offer in
-   their labels), bump `singbox.DefaultImage`, turn the flag on by default,
-   move existing users off the shared secret and set `retireSharedMtproto`.
+1. **Per-user MTProto in production — decided against (2026-11-06).** The
+   code is done and is the default for new deployments, but the live host
+   keeps its single shared MTProto secret on purpose: its core config is
+   managed by hand, the bot hands out only the shared `tg://proxy` link, and
+   the owner chose not to migrate those users. The per-user `users` list that
+   had been added to its `mtproto-in` that morning was removed again through
+   the management API (`DELETE …/users/{name}` ×10, then `apply`, with a
+   backup of the live config taken first). Nothing is
+   pending here unless that decision changes; `retireSharedMtproto` does not
+   apply to a deployment with no per-user secrets.
 2. **Retire the shared naive account:** every code path already issues
    per-user naive and mieru accounts (generator, Go bot, guide), and mieru has
    no shared account (confirmed with the owner 2026-11-05). The one shared
@@ -479,10 +500,13 @@ installer's true footprint, the pcap corpus's actual home and resolved status).
    no sessions. Naive cannot ship in the Android client (cronet does not
    link), so it stays link-only. This touches the live deployment, so it waits
    for the owner.
-3. **Provider listings:** the cloud-init path exists (see above); what is
-   left is publishing signed releases somewhere a fresh VPS can fetch them and
-   wiring provider marketplace buttons to the rendered user-data. Both wait on
-   the same publishing decision as item 1.
+3. **Provider one-click — done 2026-11-06.** Signed releases are on GitHub
+   Releases (v0.1.0), `bootstrap cloud-init` points at them by default, and
+   the README documents where each provider takes the user-data. What was
+   called "marketplace buttons" is a vendor listing (DigitalOcean Marketplace,
+   Hetzner Apps, Vultr Marketplace): a reviewed vendor image that would run
+   this same user-data. It is a distribution channel to pursue with those
+   vendors if ever wanted, not code in this tree.
 4. **Done 2026-11-05: MASQUE-WG no longer connects at start.** The outbound
    brings its WireGuard device up and dials CONNECT-UDP in a background loop
    (1 s doubling to 30 s), so one unreachable server no longer stops the whole
