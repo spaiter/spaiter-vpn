@@ -12,6 +12,105 @@ reader knows where to resume.
 
 ---
 
+## 2026-11-05 … 2026-11-06 (posts up to #145870920, page `st=10560`)
+
+Sections 1–2 are **not forum reports**: they are facts read from the
+repositories the thread keeps recommending (names, upstreams, licences, pinned
+revisions). Sections 3–4 are forum reports as usual. This batch deliberately
+records *what* exists and *where*, not how any of it works.
+
+### 1. qThrone is now Rawline; its exotic protocols are side-car binaries
+
+qThrone was renamed **Rawline** (`ttrroyy/RawlineDesktop`, `ttrroyy/RawlineMobile`),
+**GPL-3.0**, a fork of Throne/NekoRay on sing-box + Xray. This answers the
+licence question left open in the previous batch.
+
+Integration model, verified in source: every non-standard protocol below is the
+**original upstream binary**, launched locally as a SOCKS5 bridge on
+`127.0.0.1:<random port>` with a one-shot username/password and a
+`--rawline-config` JSON; the core then uses that SOCKS as an ordinary outbound.
+Pinned upstream revisions and checksums live in `transport-sources.lock.json`.
+No protocol code was ported into the core.
+
+**What this means for us:** if one of these is ever wanted as a client-side
+option, the cheap path is the same side-car pattern (process supervision plus a
+SOCKS hop), not a port into `core/`. Nothing to do now.
+
+### 2. Catalogue of what Rawline bundles
+
+Grouped as Rawline's own README groups them. Licence column: only what was
+actually read; "not checked" means exactly that — check before borrowing code
+(`PLAN.md` §8).
+
+| Group | Name | Upstream | Pinned rev | Licence |
+|---|---|---|---|---|
+| VK / WebRTC | qWDTT | `SpaceNeuroX/proxy-turn-vk-android` | — | not checked |
+| VK / WebRTC | WDTT Plus | `Ivan4537/WDTT-Plus` | `f706ccd3` | not checked |
+| VK / WebRTC | CSQTT 2.5.0 Legacy | `ttrroyy/MRTT` (tag `v2.5.0-legacy`), `ttrroyy/csqtt-rebirth` | `20661561` | not checked |
+| VK / WebRTC | olcRTC | `openlibrecommunity/olcrtc` | `f3ad8fb7` | **WTFPL** (Go, marked beta) |
+| VK / WebRTC | OpenFlux | `p1neappleXpress/OpenFlux` | `f492a1a3` | not checked |
+| DNS tunnels | DNSTT | bamsoftware dnstt | — | not checked |
+| DNS tunnels | VayDNS | `net2share/vaydns` | `a0ff7011` | not checked |
+| DNS tunnels | SlipStream | `Mygod/slipstream-rust` | `7de506b2` | not checked |
+| DNS tunnels | MasterDNS (+StormDNS) | `masterking32/MasterDnsVPN` | `4052a6b9` | not checked |
+| DNS tunnels | CottenDNS, Soar | `TaJirax/cottenDNS`, `getlantern/soar` | — | not checked |
+| S3 storage | S3 Bypass | `SpaceNeuroX/s3-bypass` + `Fedarisha/Xray-core-fedarisha` (Xray outbound `fedarisha`) | `a04f4c09` | not checked |
+| WG obfuscation | wg-obfuscator, Phobos, wgobfs | `ClusterM/wg-obfuscator`, `Ground-Zerro/Phobos`, `infinet/xt_wgobfs` + `rs-wgobfs` | — | not checked |
+| Other | SSTP, TrustTunnel | `alichdrdzn/swiftsstp`, `xchacha20-poly1305/sing-trusttunnel` | — | not checked |
+
+Link schemes Rawline imports: `qwdtt://`, `csqtt://`, `olcrtc://`,
+`openflux://`, `dnst://`, `slipnet://`, `masterdns://`, `stormdns://`,
+`cottendns://`, `soar://`, `phobos://`; S3 Bypass is imported from an Xray JSON
+with a `fedarisha` outbound. Relevant if our `/sub` bundle ever needs to be
+consumed by that client.
+
+Two product-relevant facts from the same source read:
+
+- Rawline has a **"VK account binding"**: one bound account supplies call
+  hashes to qWDTT, WDTT Plus and CSQTT, so those clients never sign in to VK
+  themselves. Architecturally the same idea as our pool, inside one desktop
+  client.
+- qWDTT mints its hash through the VK API method `calls.start`, which returns
+  a join link but **no socket to keep the call alive**. Our holder has to hold
+  calls, so it stays on its own path; this was examined and rejected on purpose.
+  The one thing adopted from that client is the idea of solving the "I'm not a
+  robot" checkbox automatically during the yearly relogin — now in
+  `internal/vk/relogin_captcha.go` (behind an injectable seam, falls back to the
+  old behaviour when the browser cannot be driven).
+
+### 3. Blocking escalations (forum reports)
+
+| Date | Where | Observation | Reports |
+|---|---|---|---|
+| 2026-11-04 | Timeweb VDS, all operators | A two-year-old VDS stopped answering ping and SSH on every operator; **changing the IP did not help**. Users call it targeted per-IP blocking, as distinct from shaping. | 2 |
+| 2026-11-05 | MTS → Yandex CDN | ICMP and plain HTTP reach the CDN, HTTPS does not: the TLS ClientHello goes out and nothing comes back. | 1, detailed |
+
+**What this means for us:** a single VPS is no longer a clean exit by default
+and an IP swap is not a fix — consistent with the "ТСПУ above hosting"
+item in the previous batch. Argues for the CDN-fronted and IPv6-outbound
+options we already have rather than for more VPS churn.
+
+### 4. Clients and services mentioned (forum reports, mixed quality)
+
+- **OpenFlux** is described as deployable on a home machine without a public
+  IP (egress is then the home connection). One user; no corroboration.
+- **Фарватер** (Android) with its "Галс" node picker: auto-detects whitelist
+  vs ordinary blocking, picks the fastest node, autoconnect in 1.0.27. One
+  enthusiastic poster, one user saying it shows "connected" while nothing loads.
+- **@umbranet_bot**: reported working on MTS, Megafon and Rostelecom; traffic
+  caps on every server, including non-whitelist ones. Two users, one negative.
+- **xkeen-csqtt**: a Keenetic/Netcraze router panel serving xray plus csqtt /
+  wdtt. Hardware advice in the thread otherwise points at Raspberry Pi + OpenWrt.
+- **wap.mts.ru** as an operator gateway under whitelists on MTS: "works, but
+  crooked, unstable, and tethering does not work". One user.
+
+On VK-call hashes specifically, the thread has nothing on how they are made:
+users pass around ready-made hashes and profiles and say an own VK account is
+not needed. No one describes automatic authorisation; see §2 for what the
+clients actually do.
+
+---
+
 ## 2026-11-01 … 2026-11-05 (posts up to #145855288, page `st=10500`)
 
 ### 1. Reality over a plain TCP stream degrades; XHTTP survives
