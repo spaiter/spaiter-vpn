@@ -498,6 +498,25 @@ Three properties worth knowing, all tested:
 Its token is referenced as `${TELEGRAM_TOKEN}` and never written into anything
 generated, so `up` needs it in the environment.
 
+### The Mini App
+
+The same self-service is also a Telegram Mini App: a page under `/app/` on the
+subscription port, served by the bot process itself, opened from the bot's
+menu button or the «Приложение» button. It issues the same methods through the
+same service, provisions the same subscription, shows the same traffic, and
+gives an admin the user list and the access queue. Telegram signs what it hands
+the page (the `initData` string); every request carries that string and the
+server checks the signature against the bot token and its age, so there is no
+login and no session to steal. Files reach the device through one-time,
+five-minute download tickets, because Telegram fetches a download URL without
+the page's headers.
+
+It needs public HTTPS, which Telegram insists on. By default the app rides on
+the Cloudflare-fronted subscription host (`subscription.host_cf`), which already
+reaches this port; `web_app.url` points it elsewhere and `web_app.disabled`
+hides it. Without a Telegram token the app is not mounted: there would be
+nothing to authenticate against.
+
 ## The core image
 
 The core runs from a prebuilt image, so installing needs no Go toolchain:

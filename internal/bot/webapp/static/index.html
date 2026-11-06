@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>VPN</title>
+<script src="https://telegram.org/js/telegram-web-app.js?59"></script>
+<style>
+:root{
+  --bg:var(--tg-theme-bg-color,#fff);--fg:var(--tg-theme-text-color,#111);
+  --hint:var(--tg-theme-hint-color,#777);--link:var(--tg-theme-link-color,#2a7ae2);
+  --btn:var(--tg-theme-button-color,#2a7ae2);--btnfg:var(--tg-theme-button-text-color,#fff);
+  --sec:var(--tg-theme-secondary-bg-color,#f2f2f6);--card:var(--tg-theme-section-bg-color,#fff);
+  --sep:var(--tg-theme-section-separator-color,rgba(0,0,0,.08));
+  --ok:#2e9e5b;--bad:#d9453d;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--sec);color:var(--fg);font:16px/1.4 -apple-system,system-ui,Roboto,sans-serif;
+  padding:12px 16px calc(24px + env(safe-area-inset-bottom))}
+h1{font-size:20px;margin:8px 0 12px}h2{font-size:16px;margin:16px 0 8px;color:var(--hint);font-weight:600}
+.card{background:var(--card);border-radius:14px;padding:14px;margin:8px 0;box-shadow:0 0 0 1px var(--sep)}
+.row{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.list .item{padding:12px 14px;display:flex;justify-content:space-between;align-items:center;cursor:pointer}
+.list .item+.item{border-top:1px solid var(--sep)}
+.list{padding:0;overflow:hidden}
+.item .t{font-weight:600}.item .s{color:var(--hint);font-size:13px}
+.chev{color:var(--hint)}
+button{font:inherit;border:0;border-radius:12px;padding:12px 14px;background:var(--btn);color:var(--btnfg);width:100%;margin-top:8px;cursor:pointer}
+button.sec{background:var(--sec);color:var(--fg)}button.danger{background:var(--bad);color:#fff}button.ok{background:var(--ok);color:#fff}
+button:disabled{opacity:.5}
+.inline{display:flex;gap:8px}.inline button{margin-top:0}
+pre{background:var(--sec);border-radius:10px;padding:10px;font-size:12px;overflow:auto;max-height:180px;white-space:pre-wrap;word-break:break-all;margin:8px 0}
+.hint{color:var(--hint);font-size:13px;white-space:pre-line}
+.qr{display:block;margin:8px auto;width:min(260px,70vw);border-radius:10px;background:#fff;padding:8px}
+.stat{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center}
+.stat b{display:block;font-size:18px}.stat span{color:var(--hint);font-size:12px}
+.badge{font-size:12px;padding:2px 8px;border-radius:999px;background:var(--sec);color:var(--hint)}
+.badge.on{background:rgba(46,158,91,.15);color:var(--ok)}
+.tabs{display:flex;gap:6px;margin:6px 0}.tabs button{margin:0;padding:8px}
+.tabs button.off{background:var(--sec);color:var(--fg)}
+.err{color:var(--bad);font-size:14px;margin:8px 0}
+.back{color:var(--link);cursor:pointer;margin:4px 0 8px;display:inline-block}
+.spin{color:var(--hint);text-align:center;padding:24px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:8px 14px;border-radius:999px;font-size:14px;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.show{opacity:.92}
+small.mono{font-family:ui-monospace,monospace;color:var(--hint)}
+</style>
+</head>
+<body>
+<div id="app"><div class="spin">Загрузка…</div></div>
+<div id="toast" class="toast"></div>
+<script>
+(function(){
+'use strict';
+const tg = window.Telegram && window.Telegram.WebApp;
+const initData = tg ? tg.initData : '';
+if (tg) { tg.ready(); tg.expand(); }
+const $ = s => document.querySelector(s);
+const app = $('#app');
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let me = null, methods = null, view = {name:'home'};
+
+function toast(t){ const el=$('#toast'); el.textContent=t; el.classList.add('show'); setTimeout(()=>el.classList.remove('show'),1600); }
+function haptic(k){ try{ tg && tg.HapticFeedback && tg.HapticFeedback.notificationOccurred(k||'success'); }catch(e){} }
+async function api(path, opts){
+  const r = await fetch('api/'+path, Object.assign({headers:{'X-Telegram-Init-Data':initData,'Content-Type':'application/json'}}, opts||{}));
+  if (r.headers.get('content-type')?.startsWith('image/')) { if(!r.ok) throw new Error('QR недоступен'); return r.blob(); }
+  const j = await r.json().catch(()=>({error:'ответ не прочитан'}));
+  if (!r.ok) throw new Error(j.error || ('HTTP '+r.status));
+  return j;
+}
+const post = (p,b)=>api(p,{method:'POST',body:JSON.stringify(b||{})});
+const human = n => { let v=n; for (const u of ['B','KB','MB','GB']) { if (v<1024) return v.toFixed(1)+u; v/=1024; } return v.toFixed(1)+'TB'; };
+
+function setBack(fn){ if(!tg) return; if(fn){ tg.BackButton.show(); tg.BackButton.offClick(backHandler); backHandler=fn; tg.BackButton.onClick(backHandler);} else { tg.BackButton.hide(); } }
+let backHandler = ()=>{};
+function go(v){ view=v; render(); }
+function home(){ go({name:'home'}); }
+
+function render(){
+  setBack(view.name==='home' ? null : home);
+  if (!me) return;
+  if (!me.allowed) return renderPending();
+  switch(view.name){
+    case 'methods': return renderMethods();
+    case 'issue': return renderIssue(view);
+    case 'sub': return renderSub(view);
+    case 'admin': return renderAdmin(view);
+    default: return renderHome();
+  }
+}
+
+function renderPending(){
+  app.innerHTML = `<h1>🛡 VPN</h1><div class="card">
+    <p>Доступ выдаёт администратор. Твой ID: <small class="mono">${me.id}</small></p>
+    <p class="hint">${me.pending ? 'Заявка отправлена, ожидай решения.' : 'Нажми, чтобы отправить заявку.'}</p>
+    <button id="req" ${me.pending?'disabled':''}>Запросить доступ</button></div>`;
+  $('#req')?.addEventListener('click', async ()=>{ try{ const r=await post('access/request'); me.pending=true; if(r.allowed){me.allowed=true;} haptic(); render(); }catch(e){ toast(e.message);} });
+}
+
+function renderHome(){
+  const st = me.stats;
+  app.innerHTML = `<h1>🛡 VPN <span class="badge ${st&&st.active?'on':''}">${st&&st.active?'онлайн':'офлайн'}</span></h1>
+    <div class="card list">
+      <div class="item" data-go="methods"><div><div class="t">🔑 Мой конфиг</div><div class="s">Выбрать протокол, получить QR или файл</div></div><span class="chev">›</span></div>
+      <div class="item" data-go="sub"><div><div class="t">🔗 Все методы</div><div class="s">Одна подписка со всеми протоколами, обновляется сама</div></div><span class="chev">›</span></div>
+      ${me.apk ? `<div class="item" data-apk><div><div class="t">📱 Android клиент</div><div class="s">${esc(me.apk.version||'наш форк')}</div></div><span class="chev">↓</span></div>`:''}
+      ${me.admin ? `<div class="item" data-go="admin"><div><div class="t">🛠 Администрирование</div><div class="s">Пользователи, доступ, трафик</div></div><span class="chev">›</span></div>`:''}
+    </div>
+    <h2>Мой трафик</h2>
+    <div class="card">${st ? `<div class="stat"><div><b>${human(st.upload)}</b><span>↑ отдано</span></div><div><b>${human(st.download)}</b><span>↓ получено</span></div><div><b>${st.conns}</b><span>соединений</span></div></div>` : '<span class="hint">Пока нет данных: конфиг не использовался.</span>'}</div>`;
+  app.querySelectorAll('[data-go]').forEach(el=>el.addEventListener('click',()=>go({name:el.dataset.go})));
+  app.querySelector('[data-apk]')?.addEventListener('click',()=>openOut(me.apk.url));
+}
+
+async function renderMethods(){
+  app.innerHTML = `<h1>Выбери протокол</h1><div class="spin">Спрашиваю сервер…</div>`;
+  try { methods = methods || await api('methods'); } catch(e){ app.innerHTML += `<div class="err">${esc(e.message)}</div>`; return; }
+  app.innerHTML = `<h1>Выбери протокол</h1><div class="card list">${methods.map((m,i)=>`
+    <div class="item" data-i="${i}"><div><div class="t">${esc(m.label)}</div><div class="s">Клиент: ${esc(m.client)}</div></div><span class="chev">›</span></div>`).join('')}</div>
+    <p class="hint">Конфиг привязан к твоему Telegram-аккаунту. Повторный запрос выдаёт тот же конфиг.</p>`;
+  app.querySelectorAll('[data-i]').forEach(el=>el.addEventListener('click',()=>go({name:'issue', m:methods[+el.dataset.i]})));
+}
+
+async function renderIssue(v){
+  const m=v.m;
+  app.innerHTML = `<h1>${esc(m.label)}</h1>${m.desc?`<p class="hint">ℹ️ ${esc(m.desc)}</p>`:''}<div class="spin">Генерирую конфиг…</div>`;
+  let r;
+  try { r = v.r || await post('issue',{kind:m.kind,tag:m.tag}); v.r=r; } catch(e){ app.innerHTML=`<h1>${esc(m.label)}</h1><div class="err">❌ ${esc(e.message)}</div>`; return; }
+  haptic();
+  let qr=''; if (r.qr) { try { const b=await post('qr',{text:r.text}); qr=URL.createObjectURL(b);}catch(e){} }
+  const isLink = r.kind==='link';
+  app.innerHTML = `<h1>${esc(r.label)}</h1>
+    ${r.desc?`<p class="hint">ℹ️ ${esc(r.desc)}</p>`:''}
+    <div class="card">
+      ${qr?`<img class="qr" src="${qr}" alt="QR">`:''}
+      <pre id="txt">${esc(isLink?r.text:r.text.slice(0,1500)+(r.text.length>1500?'\n…':''))}</pre>
+      <div class="inline"><button id="copy">📋 Скопировать</button>${isLink?`<button id="open" class="sec">Открыть в клиенте</button>`:''}</div>
+      ${r.ticket?`<button id="dl" class="sec">💾 Скачать ${esc(r.filename)}</button>`:''}
+    </div>
+    <h2>Рекомендуемые клиенты</h2><div class="card hint">${esc(r.apps)}</div>`;
+  $('#copy').addEventListener('click', ()=>copy(r.text));
+  $('#open')?.addEventListener('click', ()=>openOut(r.text));
+  $('#dl')?.addEventListener('click', ()=>download('dl/'+r.ticket, r.filename, ()=>{ v.r=null; renderIssue(v); }));
+}
+
+async function renderSub(v){
+  app.innerHTML = `<h1>🔗 Все методы</h1><div class="spin">Готовлю подписку со всеми методами… (до 30 с)</div>`;
+  let r; try { r = v.r || await post('subscription'); v.r=r; } catch(e){ app.innerHTML=`<h1>🔗 Все методы</h1><div class="err">❌ ${esc(e.message)}</div>`; return; }
+  haptic();
+  const link = (title,url)=> url?`<h2>${title}</h2><div class="card"><pre>${esc(url)}</pre><div class="inline"><button data-copy="${esc(url)}">📋 Скопировать</button><button class="sec" data-open="${esc(url)}">Добавить в клиент</button></div></div>`:'';
+  app.innerHTML = `<h1>🔗 Все методы</h1>
+    <p class="hint">В подписке ${r.nodes} нод: каждый протокол отдельной нодой с твоими ключами. Клиент сам подтянет изменения на сервере. В группе появится нода «🚀 Авто» — выбери её.</p>
+    ${link('Основная (Cloudflare)', r.cf)}${link('Резервная (прямая)', r.direct)}
+    <p class="hint">Ссылки персональные, не передавай их другим.</p>`;
+  app.querySelectorAll('[data-copy]').forEach(b=>b.addEventListener('click',()=>copy(b.dataset.copy)));
+  app.querySelectorAll('[data-open]').forEach(b=>b.addEventListener('click',()=>openOut('sing-box://import-remote-profile?url='+encodeURIComponent(b.dataset.open)+'#VPN')));
+}
+
+async function renderAdmin(v){
+  const tab = v.tab||'users';
+  app.innerHTML = `<h1>🛠 Администрирование</h1><div class="tabs">
+    <button data-tab="users" class="${tab==='users'?'':'off'}">Пользователи</button><button data-tab="access" class="${tab==='access'?'':'off'}">Доступ</button></div><div id="pane" class="spin">…</div>`;
+  app.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>go({name:'admin',tab:b.dataset.tab})));
+  const pane=$('#pane');
+  try {
+    if (tab==='users') {
+      const rows = await api('admin/users'); let up=0,down=0;
+      pane.className='card list'; pane.innerHTML = rows.map(u=>{ up+=u.upload; down+=u.download; return `<div class="item"><div><div class="t">${u.active?'🟢':'⚪️'} ${esc(u.display||u.name)} <small class="mono">${esc(u.name)}</small></div><div class="s">↑${human(u.upload)} ↓${human(u.download)} · ${esc(u.inbounds.join(', '))}</div></div></div>`;}).join('')
+        + `<div class="item"><div class="t">Σ ↑${human(up)} ↓${human(down)}</div></div>`;
+    } else {
+      const a = await api('admin/access');
+      const row=(e,btns)=>`<div class="item"><div><div class="t">${esc(e.display)}</div><div class="s"><small class="mono">${e.id}</small></div></div><div class="inline">${btns}</div></div>`;
+      pane.className='';
+      pane.innerHTML = `<h2>Ждут (${a.pending.length})</h2><div class="card list">${a.pending.map(e=>row(e,`<button class="ok" data-act="approve" data-id="${e.id}">✅</button><button class="danger" data-act="reject" data-id="${e.id}">🚫</button>`)).join('')||'<div class="item hint">никого</div>'}</div>
+        <h2>Разрешены (${a.whitelist.length})</h2><div class="card list">${a.whitelist.map(e=>row(e,`<button class="danger" data-act="revoke" data-id="${e.id}">🗑</button>`)).join('')||'<div class="item hint">пусто</div>'}</div>`;
+      pane.querySelectorAll('[data-act]').forEach(b=>b.addEventListener('click', async ()=>{
+        if (b.dataset.act!=='approve' && !(await confirm('Точно?'))) return;
+        try{ await post('admin/decide',{id:+b.dataset.id,action:b.dataset.act}); haptic(); renderAdmin(v);}catch(e){toast(e.message);} }));
+    }
+  } catch(e){ pane.className='err'; pane.textContent='❌ '+e.message; }
+}
+
+function confirm(msg){ return new Promise(res=>{ if (tg && tg.showConfirm) tg.showConfirm(msg, ok=>res(ok)); else res(window.confirm(msg)); }); }
+async function copy(text){
+  try { await navigator.clipboard.writeText(text); toast('Скопировано'); haptic(); return; } catch(e){}
+  const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select();
+  try{ document.execCommand('copy'); toast('Скопировано'); }catch(e){ toast('Не удалось скопировать, выдели текст вручную'); } ta.remove();
+}
+function openOut(url){
+  if (/^https?:/.test(url)) { tg ? tg.openLink(url) : window.open(url,'_blank'); return; }
+  if (/^tg:/.test(url) && tg) { tg.openTelegramLink(url.replace(/^tg:\/\//,'https://t.me/')); return; }
+  // A protocol scheme (vless://, hysteria2://, sing-box://): the webview hands it
+  // to whichever client registered it. Nothing happens when none did, so say so.
+  const t=setTimeout(()=>toast('Клиент не открылся — установи его или скопируй ссылку'),1500);
+  window.addEventListener('blur',()=>clearTimeout(t),{once:true});
+  window.location.href = url;
+}
+function download(path, filename, after){
+  const url = new URL(path, window.location.href).href;
+  if (tg && tg.downloadFile) { tg.downloadFile({url, file_name: filename}, ok=>{ if(!ok) toast('Скачивание отменено'); }); return; }
+  const a=document.createElement('a'); a.href=url; a.download=filename; a.click();
+}
+
+(async function start(){
+  if (!initData) { app.innerHTML = `<h1>🛡 VPN</h1><div class="card">Открой эту страницу из Telegram: кнопка меню бота или «🌐 Приложение».</div>`; return; }
+  try { me = await api('me'); } catch(e) { app.innerHTML = `<h1>🛡 VPN</h1><div class="err">${esc(e.message)}</div><button onclick="location.reload()">Повторить</button>`; return; }
+  render();
+})();
+})();
+</script>
+</body>
+</html>

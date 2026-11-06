@@ -29,6 +29,19 @@ type Store interface {
 type Server struct {
 	store Store
 	log   *slog.Logger
+
+	mounts map[string]http.Handler
+}
+
+// Mount serves another handler under a path prefix on the same port. The
+// Mini App uses it: the port is already reachable from the internet through
+// the tunnel, and a second listener would need a second front door.
+func (s *Server) Mount(prefix string, h http.Handler) *Server {
+	if s.mounts == nil {
+		s.mounts = map[string]http.Handler{}
+	}
+	s.mounts[prefix] = h
+	return s
 }
 
 // New builds a server over a cache.
@@ -45,6 +58,9 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.health)
 	mux.HandleFunc("/sub/", s.subscription)
+	for prefix, h := range s.mounts {
+		mux.Handle(prefix, h)
+	}
 	// Anything else, including "/", answers ok rather than 404: this port sits
 	// behind a tunnel and a reverse proxy, both of which probe the root, and a
 	// 404 there reads as the service being down.

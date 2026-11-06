@@ -511,8 +511,20 @@ installer's true footprint, the pcap corpus's actual home and resolved status).
    admin chat, re-published on `/claim`) plus the bot description; `/help` as
    a rich message with the old greeting as fallback. New `ui` keys:
    `description`, `short_description`, `commands`, `help`. Verified live via
-   `getMyCommands` in both scopes. A Mini App for the web UI stays out until
-   the web UI is reachable over public HTTPS.
+   `getMyCommands` in both scopes.
+   **Mini App (2026-11-06, later):** `internal/bot/webapp`, served by the bot
+   on the subscription port under `/app/` and reached through the Cloudflare
+   subscription host, so it needed no new front door. Authentication is the
+   `initData` signature (HMAC over the sorted fields, keyed by the bot token,
+   12-hour age limit; the library's validator unescapes twice and ignores
+   `auth_date`, so it is not used). The page is one embedded HTML file on
+   Telegram's theme variables: methods → QR / copy / open-in-client /
+   one-time download ticket, the all-methods subscription, own traffic, and
+   for admins the user list and the access queue with approve/reject/revoke.
+   The bot's menu button and a «Приложение» row open it; `web_app.url`
+   overrides the derived address, `web_app.disabled` hides it. The
+   admin-side *control plane* (web UI in `internal/web`) is a different
+   thing and is still not deployed.
    Published as the snapshot `29b57a6` on GitHub and release v0.1.2 (signed,
    with source tarball). Forgejo remains the working repository; its history
    carries deployment data in old commits and is never pushed to GitHub.

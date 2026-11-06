@@ -278,6 +278,30 @@ func TestTheMainMenuDoesNotOfferVKSubmission(t *testing.T) {
 	}
 }
 
+// TestTheMenuOpensTheMiniAppOnlyWhereOneIsServed: the button must point at a
+// public HTTPS address or not exist, because Telegram refuses anything else.
+func TestTheMenuOpensTheMiniAppOnlyWhereOneIsServed(t *testing.T) {
+	cfg := botcfg.ExampleConfig()
+	store := newStore(t)
+	find := func(u *UI) *models.WebAppInfo {
+		for _, row := range u.mainMenu(42).InlineKeyboard {
+			for _, b := range row {
+				if b.WebApp != nil {
+					return b.WebApp
+				}
+			}
+		}
+		return nil
+	}
+	if got := find(New(cfg, nil, NewAccess(store, quiet()), store, quiet())); got == nil || got.URL != "https://sub.example.com/app/" {
+		t.Errorf("the menu does not open the app on the subscription host: %+v", got)
+	}
+	cfg.WebApp.Disabled = true
+	if got := find(New(cfg, nil, NewAccess(store, quiet()), store, quiet())); got != nil {
+		t.Errorf("a disabled app still has a button: %+v", got)
+	}
+}
+
 // TestThePendingCountReachesTheAdmin: an access request that shows up nowhere
 // is a user waiting forever.
 func TestThePendingCountReachesTheAdmin(t *testing.T) {

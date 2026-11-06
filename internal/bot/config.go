@@ -42,7 +42,17 @@ type Config struct {
 	TelegramAPIURL string `json:"telegram_api_url,omitempty"`
 	// Web lets admins ask for a one-time login link to the web UI.
 	Web Web `json:"web,omitempty"`
-	UI  UI  `json:"ui"`
+	// WebApp is the Telegram Mini App served by the bot itself under /app/.
+	WebApp WebApp `json:"web_app,omitempty"`
+	UI     UI     `json:"ui"`
+}
+
+// WebApp configures the Mini App. With nothing set it is served through the
+// Cloudflare-fronted subscription host, which already reaches the bot's port
+// over HTTPS; URL overrides that, Disabled turns the button off.
+type WebApp struct {
+	URL      string `json:"url,omitempty"`
+	Disabled bool   `json:"disabled,omitempty"`
 }
 
 // Core is how to reach the running sing-box. Only the config path is given:
@@ -393,6 +403,7 @@ func defaultUI() UI {
 			"srv_apply":       "✅ Применить",
 			"srv_cancel":      "✖️ Отмена",
 			"open_menu":       "🛡 Открыть меню",
+			"webapp":          "🌐 Приложение",
 			"copy":            "📋 Скопировать ссылку",
 			"copy_cf":         "📋 Основная",
 			"copy_direct":     "📋 Резервная",

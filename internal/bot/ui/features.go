@@ -7,6 +7,8 @@ import (
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
+
+	"github.com/spaiter/spaiter-vpn/internal/bot/webapp"
 )
 
 // The newer Bot API surface the bot leans on: copy buttons under secrets,
@@ -134,6 +136,18 @@ func (u *UI) Announce(ctx context.Context) {
 	}
 	for _, admin := range u.access.Admins() {
 		u.publishAdminCommands(ctx, admin)
+	}
+	// The menu button beside the input opens the Mini App where there is
+	// one; otherwise Telegram's default command list stays.
+	if url := webapp.URL(u.cfg); url != "" {
+		if _, err := u.client.SetChatMenuButton(ctx, &bot.SetChatMenuButtonParams{
+			MenuButton: &models.MenuButtonWebApp{
+				Type: models.MenuButtonTypeWebApp, Text: truncate(u.label("webapp"), 16),
+				WebApp: models.WebAppInfo{URL: url},
+			},
+		}); err != nil {
+			u.log.Warn("could not set the menu button", "error", err)
+		}
 	}
 	if d := u.cfg.UI.Description; d != "" {
 		if _, err := u.client.SetMyDescription(ctx, &bot.SetMyDescriptionParams{Description: d}); err != nil {

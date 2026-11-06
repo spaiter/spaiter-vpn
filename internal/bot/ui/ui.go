@@ -282,6 +282,13 @@ func (u *UI) notifyAdminsOfRequest(ctx context.Context, uid int64) {
 	}
 }
 
+// NotifyAccessRequest is notifyAdminsOfRequest for the Mini App, which has
+// no way to reach the admins on its own.
+func (u *UI) NotifyAccessRequest(ctx context.Context, uid int64) { u.notifyAdminsOfRequest(ctx, uid) }
+
+// Tell is the courtesy notice for the Mini App's access decisions.
+func (u *UI) Tell(ctx context.Context, uid int64, text string) { u.tell(ctx, uid, text) }
+
 // handleAccessDecision applies an approve, reject or revoke.
 func (u *UI) handleAccessDecision(ctx context.Context, query *models.CallbackQuery, data string) {
 	action, target, ok := splitCallback(data, cbWL)

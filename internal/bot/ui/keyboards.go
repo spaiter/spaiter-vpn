@@ -6,6 +6,8 @@ import (
 	"strconv"
 
 	"github.com/go-telegram/bot/models"
+
+	"github.com/spaiter/spaiter-vpn/internal/bot/webapp"
 )
 
 // Callback data. Short because Telegram caps it at 64 bytes, and a tag travels
@@ -82,6 +84,11 @@ func (u *UI) mainMenu(uid int64) *models.InlineKeyboardMarkup {
 		row(styled(button(u.label("getcfg"), cbGetConfig), stylePrimary)),
 		row(button(u.label("allsub"), cbAllMethods)),
 		row(button(u.label("mystats"), cbMyStats)),
+	}
+	if url := webapp.URL(u.cfg); url != "" {
+		rows = append(rows, row(models.InlineKeyboardButton{
+			Text: u.label("webapp"), WebApp: &models.WebAppInfo{URL: url},
+		}))
 	}
 
 	switch {

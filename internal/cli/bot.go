@@ -27,6 +27,7 @@ import (
 	"github.com/spaiter/spaiter-vpn/internal/bot/subserver"
 	"github.com/spaiter/spaiter-vpn/internal/bot/telegram"
 	"github.com/spaiter/spaiter-vpn/internal/bot/ui"
+	"github.com/spaiter/spaiter-vpn/internal/bot/webapp"
 	"github.com/spaiter/spaiter-vpn/internal/control"
 	"github.com/spaiter/spaiter-vpn/internal/guide"
 	"github.com/spaiter/spaiter-vpn/internal/manage"
@@ -267,8 +268,18 @@ func runBotServices(ctx context.Context, out io.Writer, cfg botcfg.Config,
 	}
 
 	start("subscription server", func() error {
-		return subserver.New(parts.store, log).
-			Run(ctx, fmt.Sprintf(":%d", cfg.Subscription.Port))
+		server := subserver.New(parts.store, log)
+		// The Mini App rides on the subscription port. It needs the bot
+		// token to check Telegram's signature, so without Telegram there is
+		// nothing it could authenticate and it is not mounted.
+		if token != "" && webapp.URL(cfg) != "" {
+			app := webapp.New(cfg, parts.svc, parts.access, parts.store, token, log)
+			app.OnAccessRequest = parts.face.NotifyAccessRequest
+			app.Tell = parts.face.Tell
+			server.Mount(webapp.Prefix, app.Handler())
+			log.Info("mini app mounted", "url", webapp.URL(cfg))
+		}
+		return server.Run(ctx, fmt.Sprintf(":%d", cfg.Subscription.Port))
 	})
 	start("subscription refresh", func() error {
 		return parts.refresher.RunRefresh(ctx,
