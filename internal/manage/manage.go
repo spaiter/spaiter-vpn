@@ -142,6 +142,9 @@ func (c *Client) do(ctx context.Context, method, path string, body []byte) ([]by
 		// arrive here as a non-2xx response, and only one of them is normal.
 		return nil, fmt.Errorf("%s %s: %w: %s", method, path, ErrNotFound, truncate(raw))
 	}
+	if resp.StatusCode == http.StatusBadRequest {
+		return nil, fmt.Errorf("%s %s: %w: %s", method, path, ErrBadRequest, truncate(raw))
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("%s %s: HTTP %d: %s", method, path, resp.StatusCode, truncate(raw))
 	}

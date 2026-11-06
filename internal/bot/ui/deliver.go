@@ -40,7 +40,7 @@ func (u *UI) deliver(ctx context.Context, query *models.CallbackQuery, uid int64
 			u.fail(ctx, query, err)
 			return
 		}
-		u.sendPhoto(ctx, chat, conf, u.text("caption_awg"))
+		u.sendPhoto(ctx, chat, conf, u.text("caption_awg"), nil)
 		// WireGuard and Amnezia take the tunnel's name from the filename and
 		// accept at most 15 characters of [a-zA-Z0-9_=+.-], so a full numeric
 		// id does not fit and the import fails with "Invalid name".
@@ -74,7 +74,7 @@ func (u *UI) deliver(ctx context.Context, query *models.CallbackQuery, uid int64
 			}
 			client := u.clientHint(tag)
 			u.sendPhoto(ctx, chat, string(config),
-				u.text("caption_json", u.tagLabel(tag, tag), client))
+				u.text("caption_json", u.tagLabel(tag, tag), client), nil)
 			u.sendDocument(ctx, chat, config, tag+"-"+name+".json", "")
 			break
 		}
@@ -86,7 +86,8 @@ func (u *UI) deliver(ctx context.Context, query *models.CallbackQuery, uid int64
 		// The link travels in the caption as well as the QR: a desktop user
 		// copies it, a phone user scans it.
 		caption := u.text("caption_link", u.tagLabel(tag, tag), link)
-		u.sendPhoto(ctx, chat, link, truncate(caption, 1024))
+		u.sendPhoto(ctx, chat, link, truncate(caption, 1024),
+			withRows(nil, copyRow(copyEntry{u.label("copy"), link})))
 	}
 
 	u.reply(ctx, chat, u.readyText(tag), u.mainMenu(uid))
@@ -153,7 +154,11 @@ func (u *UI) deliverSubscription(ctx context.Context, query *models.CallbackQuer
 	}
 
 	cf, direct := u.SubscriptionURLs(token)
-	u.reply(ctx, chat, u.text("subscription", countNodes(bundle), cf, direct), u.backKeyboard())
+	u.replyProtected(ctx, chat, u.text("subscription", countNodes(bundle), cf, direct),
+		withRows(u.backKeyboard(), copyRow(
+			copyEntry{u.label("copy_cf"), cf},
+			copyEntry{u.label("copy_direct"), direct},
+		)))
 }
 
 // SubscriptionURLs are the two ways to the same subscription.
@@ -291,22 +296,29 @@ func (u *UI) showAllStats(ctx context.Context, query *models.CallbackQuery) {
 // A failure here is reported rather than swallowed: the QR is the part a phone
 // user actually uses, and a silent miss leaves them with a caption about a
 // picture that never arrived.
-func (u *UI) sendPhoto(ctx context.Context, chat int64, encode, caption string) {
+//
+// The QR encodes credentials, so the message is protected from forwarding. The
+// configuration files are deliberately not: a protected document cannot be
+// opened in another application on a phone, and that is how a .conf or .json
+// gets imported.
+func (u *UI) sendPhoto(ctx context.Context, chat int64, encode, caption string, markup models.ReplyMarkup) {
 	png, err := qrcode.Encode(encode, qrcode.Medium, 512)
 	if err != nil {
 		// Too much data for a QR is normal for a long config, and not worth an
 		// error message: the file follows either way.
 		u.log.Info("no QR for this artefact", "bytes", len(encode), "error", err)
 		if caption != "" {
-			u.reply(ctx, chat, caption, nil)
+			u.replyProtected(ctx, chat, caption, markup)
 		}
 		return
 	}
 	if _, err := u.client.SendPhoto(ctx, &bot.SendPhotoParams{
-		ChatID:    chat,
-		Photo:     &models.InputFileUpload{Filename: "qr.png", Data: bytes.NewReader(png)},
-		Caption:   caption,
-		ParseMode: telegram.DefaultParseMode,
+		ChatID:         chat,
+		Photo:          &models.InputFileUpload{Filename: "qr.png", Data: bytes.NewReader(png)},
+		Caption:        caption,
+		ParseMode:      telegram.DefaultParseMode,
+		ProtectContent: true,
+		ReplyMarkup:    markup,
 	}); err != nil {
 		u.log.Warn("could not send a QR code", "chat", chat, "error", err)
 	}

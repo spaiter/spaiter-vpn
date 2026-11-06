@@ -81,7 +81,7 @@ func (u *UI) Options() []bot.Option {
 	return []bot.Option{
 		bot.WithDefaultHandler(u.onUpdate),
 		bot.WithMessageTextHandler("/start", exact, u.onStart),
-		bot.WithMessageTextHandler("/help", exact, u.onStart),
+		bot.WithMessageTextHandler("/help", exact, u.onHelp),
 		bot.WithMessageTextHandler("/menu", exact, u.onStart),
 		bot.WithMessageTextHandler("/whitelist", exact, u.onWhitelist),
 		bot.WithMessageTextHandler("/claim", bot.MatchTypePrefix, u.onClaim),
@@ -120,6 +120,7 @@ func (u *UI) onUpdate(ctx context.Context, client *bot.Bot, update *models.Updat
 	if m := update.Message; m != nil && sixDigits(m.Text) != "" {
 		uid := u.caller(m.From)
 		if u.access.IsAdmin(uid) && u.vkReloginAwaitingCode() {
+			u.ack(ctx, m)
 			u.reply(ctx, uid, u.deliverVKReloginCode(m.Text), nil)
 		}
 	}
@@ -182,8 +183,15 @@ func (u *UI) onCallback(ctx context.Context, client *bot.Bot, update *models.Upd
 	}
 
 	switch {
+	case data == cbNoop:
+		// A disabled button; a client old enough to let it be pressed gets
+		// nothing, which is what the button says.
+
 	case data == cbMenu:
 		u.edit(ctx, query, u.cfg.UI.Hello, u.mainMenu(uid))
+
+	case data == cbMenuNew:
+		u.reply(ctx, queryChat(query), u.cfg.UI.Hello, u.mainMenu(uid))
 
 	case data == cbGetConfig:
 		menu, err := u.protoMenu(ctx)
@@ -263,10 +271,11 @@ func (u *UI) notifyAdminsOfRequest(ctx context.Context, uid int64) {
 	text := u.text("access_request", formatID(uid), u.access.DisplayName(uid))
 	for _, admin := range u.access.Admins() {
 		if _, err := u.client.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID:      admin,
-			Text:        text,
-			ParseMode:   telegram.DefaultParseMode,
-			ReplyMarkup: u.requestKeyboard(uid),
+			ChatID:             admin,
+			Text:               text,
+			ParseMode:          telegram.DefaultParseMode,
+			LinkPreviewOptions: noPreview(),
+			ReplyMarkup:        u.requestKeyboard(uid),
 		}); err != nil {
 			u.log.Warn("could not pass on an access request", "admin", admin, "error", err)
 		}
@@ -319,11 +328,25 @@ func (u *UI) handleAccessDecision(ctx context.Context, query *models.CallbackQue
 
 // reply sends a message to a user.
 func (u *UI) reply(ctx context.Context, chat int64, text string, markup models.ReplyMarkup) {
+	u.send(ctx, chat, text, markup, false)
+}
+
+// replyProtected sends a message that carries credentials: Telegram will not
+// let it be forwarded or saved from the chat. Copying is still possible, by
+// design -- the copy buttons are how the text reaches a client -- so this
+// stops the casual forward, not a determined leak.
+func (u *UI) replyProtected(ctx context.Context, chat int64, text string, markup models.ReplyMarkup) {
+	u.send(ctx, chat, text, markup, true)
+}
+
+func (u *UI) send(ctx context.Context, chat int64, text string, markup models.ReplyMarkup, protect bool) {
 	if _, err := u.client.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID:      chat,
-		Text:        text,
-		ParseMode:   telegram.DefaultParseMode,
-		ReplyMarkup: markup,
+		ChatID:             chat,
+		Text:               text,
+		ParseMode:          telegram.DefaultParseMode,
+		LinkPreviewOptions: noPreview(),
+		ProtectContent:     protect,
+		ReplyMarkup:        markup,
 	}); err != nil {
 		u.log.Warn("could not send a message", "chat", chat, "error", err)
 	}
@@ -337,6 +360,7 @@ func (u *UI) tell(ctx context.Context, chat int64, text string) {
 	}
 	if _, err := u.client.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID: chat, Text: text, ParseMode: telegram.DefaultParseMode,
+		LinkPreviewOptions: noPreview(),
 	}); err != nil {
 		u.log.Debug("a courtesy notice did not arrive", "chat", chat, "error", err)
 	}
@@ -349,11 +373,12 @@ func (u *UI) edit(ctx context.Context, query *models.CallbackQuery, text string,
 		return
 	}
 	if _, err := u.client.EditMessageText(ctx, &bot.EditMessageTextParams{
-		ChatID:      query.Message.Message.Chat.ID,
-		MessageID:   query.Message.Message.ID,
-		Text:        text,
-		ParseMode:   telegram.DefaultParseMode,
-		ReplyMarkup: markup,
+		ChatID:             query.Message.Message.Chat.ID,
+		MessageID:          query.Message.Message.ID,
+		Text:               text,
+		ParseMode:          telegram.DefaultParseMode,
+		LinkPreviewOptions: noPreview(),
+		ReplyMarkup:        markup,
 	}); err != nil {
 		// Editing fails when the text is unchanged, which happens whenever
 		// someone presses the same button twice. Not worth a warning.

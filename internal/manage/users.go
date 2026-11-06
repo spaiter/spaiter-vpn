@@ -16,6 +16,12 @@ import (
 // and both arrive as a non-2xx response.
 var ErrNotFound = errors.New("not found")
 
+// ErrBadRequest is returned when the core rejects the request itself (HTTP
+// 400) rather than failing to serve it. For an inbound's users resource that
+// is the core saying "protocol X does not support users": a core built before
+// a protocol gained per-user accounts answers this for it.
+var ErrBadRequest = errors.New("bad request")
+
 // InboundRef is the shape of the inbound list: enough to decide what to do with
 // one, without claiming to understand its protocol options.
 type InboundRef struct {

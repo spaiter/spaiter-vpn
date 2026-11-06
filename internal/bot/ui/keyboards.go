@@ -25,6 +25,15 @@ const (
 	cbGen  = "gen:"
 	// cbWL carries an action and a user id: "wl:add:4242".
 	cbWL = "wl:"
+
+	// cbMenuNew opens the menu as a fresh message rather than by editing the
+	// one the button is on. Rich messages (the /help page) are not edited into
+	// a plain menu.
+	cbMenuNew = "menu:new"
+	// cbNoop is the data on a disabled button. Never delivered, because the
+	// client does not let it be pressed; present because the API requires
+	// every button to have some action.
+	cbNoop = "noop"
 )
 
 // Kinds of method, which decide how a configuration is delivered and which
@@ -70,7 +79,7 @@ func (u *UI) label(key string) string {
 // its data, so every admin action checks again when it runs.
 func (u *UI) mainMenu(uid int64) *models.InlineKeyboardMarkup {
 	rows := [][]models.InlineKeyboardButton{
-		row(button(u.label("getcfg"), cbGetConfig)),
+		row(styled(button(u.label("getcfg"), cbGetConfig), stylePrimary)),
 		row(button(u.label("allsub"), cbAllMethods)),
 		row(button(u.label("mystats"), cbMyStats)),
 	}
@@ -82,6 +91,11 @@ func (u *UI) mainMenu(uid int64) *models.InlineKeyboardMarkup {
 		// No file to upload, but a published build to point at: better than a
 		// button that fails.
 		rows = append(rows, row(urlButton(u.label("apk"), u.cfg.Paths.APKURL)))
+	default:
+		// Shown greyed out rather than hidden: a user who installed the
+		// client last month should see that the download exists and is
+		// merely out right now, not conclude the feature was removed.
+		rows = append(rows, row(disabledButton(u.label("apk_unavailable"))))
 	}
 
 	if u.access.IsAdmin(uid) {
@@ -157,16 +171,16 @@ func (u *UI) accessMenu() *models.InlineKeyboardMarkup {
 	var rows [][]models.InlineKeyboardButton
 	for _, uid := range u.access.Pending() {
 		rows = append(rows, row(
-			button(truncate(fmt.Sprintf("✅ %d %s", uid, u.access.DisplayName(uid)), 60),
-				cbWL+"add:"+strconv.FormatInt(uid, 10)),
-			button("🚫", cbWL+"no:"+strconv.FormatInt(uid, 10)),
+			styled(button(truncate(fmt.Sprintf("✅ %d %s", uid, u.access.DisplayName(uid)), 60),
+				cbWL+"add:"+strconv.FormatInt(uid, 10)), styleSuccess),
+			styled(button("🚫", cbWL+"no:"+strconv.FormatInt(uid, 10)), styleDanger),
 		))
 	}
 	for _, uid := range u.access.Whitelist() {
-		rows = append(rows, row(button(
+		rows = append(rows, row(styled(button(
 			truncate(fmt.Sprintf("🗑 %d %s", uid, u.access.DisplayName(uid)), 60),
 			cbWL+"del:"+strconv.FormatInt(uid, 10),
-		)))
+		), styleDanger)))
 	}
 	rows = append(rows, row(button(u.label("menu"), cbMenu)))
 	return keyboard(rows...)
@@ -177,15 +191,15 @@ func (u *UI) accessMenu() *models.InlineKeyboardMarkup {
 func (u *UI) requestKeyboard(uid int64) *models.InlineKeyboardMarkup {
 	id := strconv.FormatInt(uid, 10)
 	return keyboard(row(
-		button(u.label("approve"), cbWL+"add:"+id),
-		button(u.label("deny"), cbWL+"no:"+id),
+		styled(button(u.label("approve"), cbWL+"add:"+id), styleSuccess),
+		styled(button(u.label("deny"), cbWL+"no:"+id), styleDanger),
 	))
 }
 
 // pickKeyboard offers to generate the method the user just chose.
 func (u *UI) pickKeyboard(kind, tag string) *models.InlineKeyboardMarkup {
 	rows := [][]models.InlineKeyboardButton{
-		row(button(u.label("generate"), cbGen+kind+":"+tag)),
+		row(styled(button(u.label("generate"), cbGen+kind+":"+tag), styleSuccess)),
 	}
 	if kind == kindWDTT {
 		// Whoever reaches for the censorship-bypass method is the user most

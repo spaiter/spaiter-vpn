@@ -95,6 +95,9 @@ func (n *Notifier) send(ctx context.Context, chatID int64, text string) error {
 		ChatID:    chatID,
 		Text:      text,
 		ParseMode: n.ParseMode,
+		// The moved-subscription notice carries the new URLs; a preview of a
+		// subscription URL is a token handed to a preview fetcher.
+		LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: bot.True()},
 	})
 	if err != nil {
 		return fmt.Errorf("telegram: send to %d: %w", chatID, err)

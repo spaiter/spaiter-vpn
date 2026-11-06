@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -28,6 +29,7 @@ type fakeAPI struct {
 	inbounds  map[string]map[string]any
 	order     []string
 	users     map[string][]json.RawMessage
+	noUsers   map[string]bool // inbounds whose protocol has no users on this core
 	endpoints map[string]map[string]any
 	stats     []manage.UserStat
 
@@ -60,6 +62,10 @@ func (f *fakeAPI) Inbound(_ context.Context, tag string) (json.RawMessage, error
 func (f *fakeAPI) Users(_ context.Context, tag string) ([]json.RawMessage, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.noUsers[tag] {
+		// What the core answers for a protocol without per-user accounts.
+		return nil, fmt.Errorf("GET /manage/inbounds/%s/users: %w: protocol does not support users", tag, manage.ErrBadRequest)
+	}
 	return f.users[tag], nil
 }
 
@@ -206,9 +212,10 @@ func newAPI(t *testing.T) *fakeAPI {
 				"type": "hysteria2", "tag": "hysteria-in", "listen_port": float64(10862),
 				"tls": map[string]any{"enabled": true, "server_name": "www.example.com"},
 			},
-			// Not a user type: it must never reach the protocol menu, because
-			// it has no account to hand out.
-			"mtproto-in": {"type": "mtproto", "tag": "mtproto-in", "listen_port": float64(10863)},
+			// Per-user on this fake core (its users resource answers), with
+			// nobody provisioned yet: the normal start of a deployment that
+			// kept only its shared secret.
+			"mtproto-in": {"type": "mtproto", "tag": "mtproto-in", "listen_port": float64(10863), "secret": "ee" + strings.Repeat("0", 32) + "7777772e6578616d706c652e636f6d"},
 		},
 		users: map[string][]json.RawMessage{},
 		endpoints: map[string]map[string]any{
@@ -244,8 +251,30 @@ func newService(t *testing.T) (*Service, *fakeAPI, *countingBatcher, *state.Stor
 	return New(cfg, api, prov, store, batch, registrar, quiet()), api, batch, store, registrar
 }
 
-func TestUserInboundsLeavesOutWhatHasNoAccounts(t *testing.T) {
+func TestUserInboundsOffersMTProtoWhereTheCoreHasUsers(t *testing.T) {
 	s, _, _, _, _ := newService(t)
+
+	inbounds, err := s.UserInbounds(context.Background())
+	if err != nil {
+		t.Fatalf("UserInbounds: %v", err)
+	}
+	// Nobody is provisioned on mtproto-in yet; the method is offered anyway,
+	// because the first account is minted on request.
+	var offered bool
+	for _, inbound := range inbounds {
+		offered = offered || inbound.Type == "mtproto"
+	}
+	if !offered {
+		t.Error("mtproto missing from the menu although the core has a users resource for it")
+	}
+	if len(inbounds) != 3 {
+		t.Errorf("inbounds = %d, want all three user types", len(inbounds))
+	}
+}
+
+func TestUserInboundsLeavesOutMTProtoOnACoreWithoutUsers(t *testing.T) {
+	s, api, _, _, _ := newService(t)
+	api.noUsers = map[string]bool{"mtproto-in": true}
 
 	inbounds, err := s.UserInbounds(context.Background())
 	if err != nil {
@@ -253,7 +282,7 @@ func TestUserInboundsLeavesOutWhatHasNoAccounts(t *testing.T) {
 	}
 	for _, inbound := range inbounds {
 		if inbound.Type == "mtproto" {
-			t.Error("mtproto reached the menu; it has no per-user account to hand out")
+			t.Error("mtproto reached the menu on a core that cannot hold its users; provisioning there would be rejected")
 		}
 	}
 	if len(inbounds) != 2 {

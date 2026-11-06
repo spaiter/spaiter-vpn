@@ -124,8 +124,8 @@ func (u *UI) prepare(ctx context.Context, uid int64, change control.Change) {
 		return
 	}
 	u.reply(ctx, uid, u.text("srv_plan", change.Summary(), codeBlock(renderPlan(ticket.Plan))), keyboard(row(
-		button(u.label("srv_apply"), cbConfirm+ticket.ID),
-		button(u.label("srv_cancel"), cbAbort+ticket.ID),
+		styled(button(u.label("srv_apply"), cbConfirm+ticket.ID), styleSuccess),
+		styled(button(u.label("srv_cancel"), cbAbort+ticket.ID), styleDanger),
 	)))
 }
 

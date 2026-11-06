@@ -264,6 +264,17 @@ type UI struct {
 	// which names the one application a user is pointed at while generating:
 	// this is the longer answer to "what do I install".
 	ClientApps map[string]string `json:"client_apps,omitempty"`
+	// Description and ShortDescription are what Telegram shows on the bot's
+	// profile and in an empty chat; published at startup. Limits are the
+	// API's: 512 and 120 characters.
+	Description      string `json:"description,omitempty"`
+	ShortDescription string `json:"short_description,omitempty"`
+	// Commands describes each slash command for the "/" menu and the help
+	// page, keyed by command name without the slash. A command with no entry
+	// is not published.
+	Commands map[string]string `json:"commands,omitempty"`
+	// Help is the text of the rich /help page, keyed by section.
+	Help map[string]string `json:"help,omitempty"`
 }
 
 // Duration is a time.Duration that reads as "60s" in JSON rather than as a
@@ -363,27 +374,34 @@ func Defaults() Config {
 func defaultUI() UI {
 	return UI{
 		Buttons: map[string]string{
-			"getcfg":       "🔑 Мой конфиг",
-			"allsub":       "🔗 Все методы (авто-обновление)",
-			"mystats":      "📊 Мой трафик",
-			"apk":          "📱 Android клиент",
-			"a:list":       "👥 Все юзеры",
-			"a:stats":      "📈 Общий трафик",
-			"menu":         "⬅️ Меню",
-			"back":         "⬅️ Назад",
-			"warp":         "WARP → сервер (обход белых списков)",
-			"wdtt":         "WG-over-VK (обход БС, все операторы)",
-			"approve":      "✅ Одобрить",
-			"deny":         "🚫 Отклонить",
-			"a:wl":         "🔐 Доступ",
-			"a:srv":        "🛠 Сервер",
-			"a:gens":       "🗂 Поколения",
-			"a:rb":         "⏪ Откатить",
-			"srv_apply":    "✅ Применить",
-			"srv_cancel":   "✖️ Отмена",
-			"usage_rotate": "Использование: /rotate <uid> [uid…] — перевыпустить все креды пользователей",
-			"usage_port":   "Использование: /port <протокол> <порт>, например /port awg-in 10870",
-			"usage_image":  "Использование: /image <тот же репозиторий>:<тег>",
+			"getcfg":          "🔑 Мой конфиг",
+			"allsub":          "🔗 Все методы (авто-обновление)",
+			"mystats":         "📊 Мой трафик",
+			"apk":             "📱 Android клиент",
+			"a:list":          "👥 Все юзеры",
+			"a:stats":         "📈 Общий трафик",
+			"menu":            "⬅️ Меню",
+			"back":            "⬅️ Назад",
+			"warp":            "WARP → сервер (обход белых списков)",
+			"wdtt":            "WG-over-VK (обход БС, все операторы)",
+			"approve":         "✅ Одобрить",
+			"deny":            "🚫 Отклонить",
+			"a:wl":            "🔐 Доступ",
+			"a:srv":           "🛠 Сервер",
+			"a:gens":          "🗂 Поколения",
+			"a:rb":            "⏪ Откатить",
+			"srv_apply":       "✅ Применить",
+			"srv_cancel":      "✖️ Отмена",
+			"open_menu":       "🛡 Открыть меню",
+			"copy":            "📋 Скопировать ссылку",
+			"copy_cf":         "📋 Основная",
+			"copy_direct":     "📋 Резервная",
+			"col_command":     "Команда",
+			"col_action":      "Что делает",
+			"apk_unavailable": "📱 Android клиент (временно недоступен)",
+			"usage_rotate":    "Использование: /rotate <uid> [uid…] — перевыпустить все креды пользователей",
+			"usage_port":      "Использование: /port <протокол> <порт>, например /port awg-in 10870",
+			"usage_image":     "Использование: /image <тот же репозиторий>:<тег>",
 			// Leaf screens and verdicts. Every one of these was a literal in
 			// bot.py, which is why the deployment could not be re-branded.
 			"generate":            "🔳 Сгенерировать",
@@ -415,6 +433,44 @@ func defaultUI() UI {
 		},
 		Hello: "🛡 *VPN*\n\nНажми «Мой конфиг», выбери протокол — бот выдаст персональную " +
 			"ссылку (конфиг привязан к твоему Telegram‑аккаунту).",
+		ShortDescription: "Персональный VPN: конфиги, подписка со всеми методами, обход блокировок.",
+		Description: "Выдаёт персональные VPN-конфиги (VLESS Reality, Hysteria2, AmneziaWG и другие), " +
+			"подписку со всеми методами и авто-обновлением, обходные пути для белых списков. " +
+			"Доступ — по одобрению администратора: нажми /start.",
+		Commands: map[string]string{
+			"start":     "Начать / главное меню",
+			"menu":      "Главное меню",
+			"help":      "Справка: как получить конфиг",
+			"whitelist": "Кто допущен и кто ждёт",
+			"allow":     "Одобрить доступ: /allow <id>",
+			"deny":      "Отозвать доступ: /deny <id>",
+			"add":       "Добавить аккаунт: /add <inbound> <name>",
+			"del":       "Удалить аккаунт: /del <inbound> <name>",
+			"reset":     "Сбросить счётчики: /reset <name>",
+			"rotate":    "Перевыпустить креды: /rotate <uid>…",
+			"port":      "Сменить порт: /port <inbound> <порт>",
+			"image":     "Сменить образ ядра: /image <repo>:<tag>",
+			"pushcfg":   "Пересобрать подписки и уведомить",
+			"vkhash":    "VK-пул: list | add | del | check",
+			"vkcode":    "Код из VK-звонка при релогине",
+			"weblogin":  "Одноразовая ссылка в веб-интерфейс",
+		},
+		Help: map[string]string{
+			"title": "🛡 VPN — справка",
+			"intro": "Бот выдаёт персональные конфиги: каждый привязан к твоему Telegram-аккаунту, " +
+				"трафик считается по нему же. Ссылки и файлы никому не пересылай.",
+			"steps_title": "Как подключиться",
+			"steps": "Нажми «Мой конфиг» и выбери протокол — придут QR-код и ссылка или файл.\n" +
+				"Отсканируй QR в клиенте на телефоне или скопируй ссылку кнопкой под сообщением.\n" +
+				"Лучше взять «Все методы»: одна подписка со всеми протоколами, обновляется сама, " +
+				"нода «Авто» переключается на рабочий метод при блокировке.\n" +
+				"Если ничего не подключается — «WARP → сервер» или «WG-over-VK» обходят белые списки.",
+			"commands_title": "Команды",
+			"admin_title":    "Команды администратора",
+			"admin_hint": "Кнопки в меню дублируют большинство из них; команды нужны там, где " +
+				"требуется аргумент — имя аккаунта, id, порт.",
+			"footer": "Статистика трафика — «Мой трафик». Вопросы по доступу — администратору сервера.",
+		},
 		AccessGranted: "✅ Доступ к VPN открыт! Нажми /start.",
 		AccessRefused: "🚫 В доступе к VPN отказано.",
 		ClientApps: map[string]string{
@@ -635,6 +691,8 @@ func mergeUI(base, over UI) UI {
 		{&out.Hello, over.Hello},
 		{&out.AccessGranted, over.AccessGranted},
 		{&out.AccessRefused, over.AccessRefused},
+		{&out.Description, over.Description},
+		{&out.ShortDescription, over.ShortDescription},
 	} {
 		if text.src != "" {
 			*text.dst = text.src
@@ -648,6 +706,8 @@ func mergeUI(base, over UI) UI {
 		{&out.ProtoDesc, &over.ProtoDesc},
 		{&out.ClientHint, &over.ClientHint},
 		{&out.ClientApps, &over.ClientApps},
+		{&out.Commands, &over.Commands},
+		{&out.Help, &over.Help},
 	} {
 		if len(*m.src) == 0 {
 			continue

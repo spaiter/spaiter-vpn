@@ -16,6 +16,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -90,16 +91,18 @@ func (s *Service) UserInbounds(ctx context.Context) ([]manage.InboundRef, error)
 		// MTProto has users only on a core that matches secrets to them. On
 		// an older one it is a single shared secret, which nobody can be
 		// provisioned on: offering it would mint accounts that core rejects.
+		// Ask the core rather than count accounts: its users resource answers
+		// 400 "does not support users" on such a core, and a list -- empty
+		// included -- on one that has them. An empty list is the normal start
+		// of a deployment that kept only its shared secret; the first user is
+		// provisioned on request, so hiding the method until someone already
+		// has an account would mean nobody ever could.
 		if inbound.Type == "mtproto" {
-			raw, err := s.api.Inbound(ctx, inbound.Tag)
-			if err != nil {
-				return nil, fmt.Errorf("service: inbound %s: %w", inbound.Tag, err)
-			}
-			var shape struct {
-				Users []json.RawMessage `json:"users"`
-			}
-			if json.Unmarshal(raw, &shape) != nil || len(shape.Users) == 0 {
-				continue
+			if _, err := s.api.Users(ctx, inbound.Tag); err != nil {
+				if errors.Is(err, manage.ErrBadRequest) {
+					continue
+				}
+				return nil, fmt.Errorf("service: users of %s: %w", inbound.Tag, err)
 			}
 		}
 		out = append(out, inbound)

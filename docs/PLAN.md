@@ -434,10 +434,12 @@ The publication step itself, in order — status as of 2026-11-06:
    `revision` and `licenses` labels) and pushed as
    `ghcr.io/spaiter/spaiter-vpn-core:19419c49`; `singbox.DefaultImage` and
    `DefaultImageRegistry` point at it and the plan goldens are regenerated.
-   ⏳ The GHCR package is still **private**: GitHub exposes no API to flip a
-   container package's visibility, so the owner makes it public in the web UI
-   (package → settings → change visibility). Until then an anonymous pull is
-   401 and a fresh install cannot fetch the default image.
+   ✅ The GHCR package is **public** (owner flipped it in the web UI on
+   2026-11-06; GitHub exposes no API for that). Verified the way a fresh
+   install does it: `docker pull` with an empty docker config succeeded and
+   returned the pushed digest `sha256:dfa8b89f…`; the anonymous registry
+   manifest answers 200 as an OCI image index (ask for the docker-v2 schema
+   alone and the registry says 404 — that is the media type, not the ACL).
    ✅ `leaks` is in `check.sh all` (2026-11-06): it runs where the denylist
    is and skips with a visible notice elsewhere (no denylist, or no ripgrep) —
    a skip is not a pass, and `check: ok` on another machine does not vouch
@@ -460,6 +462,13 @@ The publication step itself, in order — status as of 2026-11-06:
    `SHA256SUMS`, `SHA256SUMS.asc`. The download layout is what
    `bootstrap cloudinit -release` expects; verified anonymously end to end
    (`release.sh --verify` on the downloaded directory).
+   ✅ **v0.1.1** (2026-11-06), from the public snapshot `3fc690b0`:
+   <https://github.com/spaiter/spaiter-vpn/releases/tag/v0.1.1>. It is the
+   first release whose binary renders cloud-init user-data for its own
+   release with no flags, and whose `bootstrap state` writes per-user MTProto
+   on by default. Same four artifacts, same key, verified anonymously the
+   same way; the released binary itself was exercised before publishing
+   (`version`, `bootstrap state`, `bootstrap cloud-init` with no flags).
 5. ✅ Provider one-click is wired to the release (2026-11-06): a released
    binary's `bootstrap cloud-init` defaults to its own tag's directory under
    `https://github.com/spaiter/spaiter-vpn/releases/download`, and the README
@@ -480,16 +489,30 @@ and `core/NOTICE.md` were rewritten to the real tree (psiphon gone, `replace/`
 → `core/thirdparty/` with the five unlisted modules, the sagernet GPL set, the
 installer's true footprint, the pcap corpus's actual home and resolved status).
 
-1. **Per-user MTProto in production — decided against (2026-11-06).** The
-   code is done and is the default for new deployments, but the live host
-   keeps its single shared MTProto secret on purpose: its core config is
-   managed by hand, the bot hands out only the shared `tg://proxy` link, and
-   the owner chose not to migrate those users. The per-user `users` list that
-   had been added to its `mtproto-in` that morning was removed again through
-   the management API (`DELETE …/users/{name}` ×10, then `apply`, with a
-   backup of the live config taken first). Nothing is
-   pending here unless that decision changes; `retireSharedMtproto` does not
-   apply to a deployment with no per-user secrets.
+1. **Per-user MTProto in production — on request (2026-11-06).** The live
+   host keeps its shared MTProto secret, and the bot now hands out personal
+   ones beside it: `UserInbounds` asks the core whether the inbound has a
+   users resource (a list, empty included, means yes; 400 means an older core)
+   instead of hiding the method until someone already had an account — on a
+   deployment that kept only the shared secret nobody could ever have been
+   the first. A user who picks Telegram-прокси gets a secret minted from the
+   shared one's front domain and their own `tg://proxy` link; the shared
+   secret stays for whoever has it. Deployed as the bot binary
+   `dev+bf3fa08`. Nothing further is pending; `retireSharedMtproto` remains
+   the owner's call for the day everyone has moved.
+   **Telegram UI on the newer Bot API (2026-11-06, bot `dev+9197310`):** copy
+   buttons under share links, subscription URLs and `/add` output (omitted
+   over 256 characters rather than failing the message); `protect_content`
+   on QR photos and credential texts but *not* on config files, which a phone
+   must still open in another app; link previews off everywhere (a preview of
+   a subscription URL hands the token to a fetcher); coloured buttons and a
+   greyed-out APK button instead of a missing one; a ✅ reaction as the receipt
+   on admin commands; `setMyCommands` (user scope by default, the full set per
+   admin chat, re-published on `/claim`) plus the bot description; `/help` as
+   a rich message with the old greeting as fallback. New `ui` keys:
+   `description`, `short_description`, `commands`, `help`. Verified live via
+   `getMyCommands` in both scopes. A Mini App for the web UI stays out until
+   the web UI is reachable over public HTTPS.
 2. **Retire the shared naive account:** every code path already issues
    per-user naive and mieru accounts (generator, Go bot, guide), and mieru has
    no shared account (confirmed with the owner 2026-11-05). The one shared

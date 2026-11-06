@@ -26,6 +26,10 @@ func (u *UI) adminOnly(handler func(ctx context.Context, uid int64, args []strin
 			u.reply(ctx, uid, u.text("admin_only", formatID(uid)), nil)
 			return
 		}
+		// The receipt goes on before the work: an admin command that takes a
+		// while (a rebuild of every subscription) should look accepted, not
+		// lost, and the outcome arrives as its own message either way.
+		u.ack(ctx, update.Message)
 		handler(ctx, uid, commandArgs(update.Message.Text))
 	}
 }
@@ -43,6 +47,8 @@ func (u *UI) onClaim(ctx context.Context, _ *bot.Bot, update *models.Update) {
 		u.reply(ctx, uid, u.text("claim_refused"), nil)
 		return
 	}
+	u.ack(ctx, update.Message)
+	u.publishAdminCommands(ctx, uid)
 	u.reply(ctx, uid, u.text("claim_accepted"), u.mainMenu(uid))
 }
 
@@ -80,7 +86,8 @@ func (u *UI) onAdd(ctx context.Context, client *bot.Bot, update *models.Update) 
 				u.text("added", name, tag))
 			return
 		}
-		u.reply(ctx, uid, u.text("added_link", name, tag, link), nil)
+		u.replyProtected(ctx, uid, u.text("added_link", name, tag, link),
+			withRows(nil, copyRow(copyEntry{u.label("copy"), link})))
 	})(ctx, client, update)
 }
 

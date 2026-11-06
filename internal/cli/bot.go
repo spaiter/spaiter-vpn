@@ -246,6 +246,9 @@ func runBotServices(ctx context.Context, out io.Writer, cfg botcfg.Config,
 		}
 		parts.face.Attach(client)
 		parts.notifier.set(telegram.NewNotifier(client, parts.store, log))
+		// The command menu and description are a courtesy, published in the
+		// background so a slow or old API server does not hold up startup.
+		go parts.face.Announce(ctx)
 	}
 
 	type result struct {

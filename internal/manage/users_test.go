@@ -112,6 +112,24 @@ func TestNotFoundIsDistinguishable(t *testing.T) {
 	}
 }
 
+// A protocol without per-user accounts makes the core answer 400 "does not
+// support users". That is the core's own verdict on the request, and callers
+// (the bot's method menu) act on it, so it must be distinguishable from both an
+// unknown tag and a broken API.
+func TestUsersOfProtocolWithoutUsersIsBadRequest(t *testing.T) {
+	s := newStub(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message":"protocol mtproto does not support users"}`))
+	})
+	_, err := clientFor(t, s).Users(context.Background(), "mtproto-in")
+	if !errors.Is(err, ErrBadRequest) {
+		t.Fatalf("error should wrap ErrBadRequest, got %v", err)
+	}
+	if errors.Is(err, ErrNotFound) {
+		t.Fatal("a 400 must not read as an absent tag")
+	}
+}
+
 func TestServerErrorIsNotMistakenForNotFound(t *testing.T) {
 	s := newStub(t, func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
