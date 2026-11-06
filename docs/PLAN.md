@@ -980,6 +980,23 @@ dependency. Three upstreams are deliberately excluded and the file says why.
 
 ## 9. Open risks
 
+**Closed 2026-11-06 — the core listened on MPTCP (CVE-2026-98432).** Found
+while reviewing what the former upstreams shipped: hiddify's v5 carried a
+security fix for exactly this. Go 1.24+ opens listeners as Multipath TCP; the
+`-X internal/godebug.defaultGODEBUG=multipathtcp=0` link flag the build
+carried names a symbol that does not exist, so `go version -m` of the live
+core showed no `multipathtcp` default and `ss -M` showed every public inbound
+and the bot's subscription port as MPTCP listeners, on a kernel built before
+the disclosure. Mitigated on the host at once (`net.mptcp.enabled=0`
+persisted, an nftables rule dropping IPv4 TCP with IP options in its own
+unit, services restarted so the listeners reopened as plain TCP), then fixed
+in the build: `godebug multipathtcp=0` in every main module's `go.mod`,
+explicit `SetMultipathTCP(tcp_multi_path)` in the listener and dialer, the
+dead flag removed everywhere, a Linux test that the default listener is not
+MPTCP. Ubuntu had no fixed 7.0 HWE kernel in the archive that day; the host
+mitigations stay until it does.
+
+
 - **The fresh-host path is not proven end to end.** The generator, Compose,
   preflight and self-test work independently, but production still runs a
   hand-built core stack. Phase 7 needs a disposable clean-host test matrix and

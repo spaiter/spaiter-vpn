@@ -202,9 +202,9 @@ func NewDefault(ctx context.Context, options option.DialerOptions) (*DefaultDial
 		udpDialer6.LocalAddr = &net.UDPAddr{IP: bindAddr.AsSlice()}
 		udpAddr6 = M.SocksaddrFrom(bindAddr, 0).String()
 	}
-	if options.TCPMultiPath {
-		dialer4.SetMultipathTCP(true)
-	}
+	// Never by the Go default, only when asked; see listener_tcp.go.
+	dialer4.SetMultipathTCP(options.TCPMultiPath)
+	dialer6.SetMultipathTCP(options.TCPMultiPath)
 	tcpDialer4 := tfo.Dialer{Dialer: dialer4, DisableTFO: !options.TCPFastOpen}
 	tcpDialer6 := tfo.Dialer{Dialer: dialer6, DisableTFO: !options.TCPFastOpen}
 	return &DefaultDialer{

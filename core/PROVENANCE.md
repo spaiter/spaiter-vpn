@@ -191,3 +191,14 @@ version embedded in the build info contains the commit. Comparing symbol names
 and sizes is the stable form of this check; comparing addresses is not, as
 read-only data shifts by an alignment boundary whenever `modinfo` changes
 length.
+
+## 2026-11-06: `godebug multipathtcp=0` in go.mod (deps digest refreshed)
+
+The module graph did not move; `go.mod` gained a `godebug multipathtcp=0`
+directive, which the digest covers. Go 1.24+ listens on Multipath TCP by
+default and CVE-2026-98432 made an IPv4 MPTCP listener a remote root. The
+`-X internal/godebug.defaultGODEBUG=multipathtcp=0` link flag inherited from
+upstream named a symbol that does not exist, so every published core listened
+on MPTCP; the directive reaches every build of the module, and
+`common/listener` now sets MPTCP off explicitly unless `tcp_multi_path` asks.
+Ported from hiddify-sing-box `9aca6c8c1`.

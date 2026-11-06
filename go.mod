@@ -2,6 +2,14 @@ module github.com/spaiter/spaiter-vpn
 
 go 1.25.6
 
+// MPTCP only where tcp_multi_path asks for it. Go 1.24+ listens on Multipath
+// TCP by default on Linux, and CVE-2026-98432 let a remote root listen on IPv4
+// MPTCP. A go.mod directive reaches every build of this module; the
+// -X internal/godebug.defaultGODEBUG link flag the build carried before named
+// a symbol that does not exist and did nothing, which is how the production
+// core listened on MPTCP (found 2026-11-06).
+godebug multipathtcp=0
+
 require (
 	fyne.io/systray v1.11.1-0.20250812065214-4856ac3adc3c
 	github.com/9seconds/mtg/v2 v2.1.7
