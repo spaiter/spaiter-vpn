@@ -105,10 +105,11 @@ func AWGNode(ep Endpoint, peer state.Peer, label, peerAddress string) (Node, err
 		"private_key": peer.Priv,
 		"address":     []string{peer.IP + "/32"},
 		"mtu":         mtu,
+		// No persistent keepalive in the bundle: an unselected node must not wake
+		// the phone's radio every 25 s. The client re-handshakes on the next packet.
 		"peers": []any{map[string]any{
 			"address": peerAddress, "port": ep.ListenPort, "public_key": serverPub,
-			"allowed_ips":                   []string{"0.0.0.0/0", "::/0"},
-			"persistent_keepalive_interval": 25,
+			"allowed_ips": []string{"0.0.0.0/0", "::/0"},
 		}},
 	}
 	for _, key := range awgOutboundKeys {

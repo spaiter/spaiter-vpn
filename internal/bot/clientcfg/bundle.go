@@ -22,8 +22,10 @@ const AutoTag = "🚀 Авто (лучший)"
 // AutoURL is probed to decide which node is fastest.
 const AutoURL = "https://www.gstatic.com/generate_204"
 
-// AutoInterval is how often the client re-races the group.
-const AutoInterval = "3m0s"
+// AutoInterval is how often the client re-races the group. Every race opens a
+// connection through each node, so on a phone this is paid in radio wake-ups;
+// ten minutes keeps the pick fresh without racing all day.
+const AutoInterval = "10m0s"
 
 // Assemble puts the url-test group on top of the nodes it is given.
 //
