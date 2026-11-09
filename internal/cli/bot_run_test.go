@@ -443,6 +443,16 @@ func TestRunBotRoutesItsSubcommands(t *testing.T) {
 	if err := runBot(context.Background(), &out, []string{"claim-code", "-data-dir", t.TempDir()}); err != nil {
 		t.Errorf("claim-code: %v", err)
 	}
+	t.Setenv("TELEGRAM_TOKEN", "")
+	if err := runBot(context.Background(), &out, []string{"notify"}); !errors.Is(err, ErrUsage) {
+		t.Errorf("notify without text: %v", err)
+	}
+	if err := runBot(context.Background(), &out, []string{"notify", "-text", "hello"}); !errors.Is(err, ErrUsage) {
+		t.Errorf("notify without a token: %v", err)
+	}
+	if err := runBot(context.Background(), &out, []string{"notify", "-text", "hello", "extra"}); !errors.Is(err, ErrUsage) {
+		t.Errorf("notify with a stray argument: %v", err)
+	}
 }
 
 // guideSetup points a bot.json at the fixture's fake core, served over HTTP.

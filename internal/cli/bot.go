@@ -50,6 +50,9 @@ func runBot(ctx context.Context, out io.Writer, args []string) error {
 	if len(args) > 0 && args[0] == "guide" {
 		return runBotGuide(ctx, out, args[1:])
 	}
+	if len(args) > 0 && args[0] == "notify" {
+		return runBotNotify(ctx, out, args[1:])
+	}
 	fs := newFlagSet("bot", out)
 	configPath := fs.String("config", "", "path to bot.json (defaults are this deployment's)")
 	checkOnly := fs.Bool("check-config", false, "load the config, report it and exit")
@@ -657,6 +660,62 @@ func runBotClaimCode(out io.Writer, args []string) error {
 // their connection guide. Run where the bot runs, with its configuration:
 //
 //	docker exec vpn-bot spaiter-vpn bot guide -config /etc/spaiter-vpn/bot.json -user alice -o /data/guide-alice.html
+//
+// runBotNotify is /notify from the server: one message to every approved user
+// and admin, the APK button under it. It needs the same TELEGRAM_TOKEN the
+// bot runs with and sends through the Bot API without polling, so it can run
+// beside the live bot (`docker exec vpn-bot spaiter-vpn bot notify ...`).
+func runBotNotify(ctx context.Context, out io.Writer, args []string) error {
+	fs := newFlagSet("bot notify", out)
+	configPath := fs.String("config", "", "path to bot.json (defaults are this deployment's)")
+	text := fs.String("text", "", "the message, in the bot's Markdown; \"-\" reads it from stdin")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("%w: bot notify takes -text, not arguments", ErrUsage)
+	}
+	message := strings.TrimSpace(*text)
+	if message == "-" {
+		raw, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("bot notify: read stdin: %w", err)
+		}
+		message = strings.TrimSpace(string(raw))
+	}
+	if message == "" {
+		return fmt.Errorf("%w: bot notify needs -text (or -text - with the message on stdin)", ErrUsage)
+	}
+	token := os.Getenv("TELEGRAM_TOKEN")
+	if token == "" {
+		return fmt.Errorf("%w: TELEGRAM_TOKEN is not set", ErrUsage)
+	}
+	cfg, err := botcfg.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	parts, err := buildBot(cfg, log)
+	if err != nil {
+		return err
+	}
+	var options []tgbot.Option
+	if cfg.TelegramAPIURL != "" {
+		options = append(options, tgbot.WithServerURL(cfg.TelegramAPIURL))
+	}
+	client, err := tgbot.New(token, options...)
+	if err != nil {
+		return fmt.Errorf("bot notify: build the Telegram client: %w", err)
+	}
+	parts.face.Attach(client)
+	sent, failed := parts.face.Broadcast(ctx, message)
+	fmt.Fprintf(out, "notified %d user(s), %d failed\n", sent, failed)
+	if failed > 0 && sent == 0 {
+		return fmt.Errorf("bot notify: nothing was delivered")
+	}
+	return nil
+}
+
 func runBotGuide(ctx context.Context, out io.Writer, args []string) error {
 	fs := newFlagSet("bot guide", out)
 	configPath := fs.String("config", "", "path to bot.json (defaults are this deployment's)")

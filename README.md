@@ -319,6 +319,10 @@ A bot started without `bot.adminIds` has no admin until its owner claims it:
 `spaiter-vpn bot claim-code` on the server prints a one-time code, and
 `/claim <code>` to the bot grants the role.
 
+`/notify <text>` from an admin sends one message to every approved user with
+the APK button under it; `spaiter-vpn bot notify -text "<text>"` does the same
+from the server (run where the bot runs, with its `TELEGRAM_TOKEN`).
+
 `spaiter-vpn bot guide -user NAME -o guide.html` provisions a user on every
 method and writes one offline HTML guide with links, files and QR codes. With
 `-bundle-out`, `spaiter-vpn verify -bundle FILE` then fetches a URL through

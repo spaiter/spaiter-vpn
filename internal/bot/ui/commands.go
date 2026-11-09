@@ -312,6 +312,12 @@ func notifyText(message string) string {
 	return strings.TrimSpace(rest)
 }
 
+// Broadcast is broadcast for a caller outside Telegram: the `bot notify`
+// subcommand, run on the server when the admin's phone is not at hand.
+func (u *UI) Broadcast(ctx context.Context, text string) (sent, failed int) {
+	return u.broadcast(ctx, text)
+}
+
 // broadcast delivers text to every approved user and admin once each.
 // A blocked chat is counted, logged and skipped: one refusal must not stop
 // the rest.
