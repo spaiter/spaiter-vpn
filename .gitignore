@@ -1,0 +1,63 @@
+# ===== Runtime state and secrets (never commit) =====
+# Secrets live in `pass` (~/.password-store) and are injected at deploy time.
+.env
+*.env
+!example.env
+secrets/
+passwords.json
+*.key
+*.pem
+*.keystore
+*.jks
+# Public signing roots that tailscale embeds (go:embed roots): not secrets, and
+# without them the tree does not compile. Found when the first clean clone of
+# the public repository failed to build -- the private checkout had them on
+# disk, untracked, and every release before v0.1.3 shipped a source tarball
+# missing them.
+!core/thirdparty/tailscale/clientupdate/distsign/roots/*.pem
+
+# ===== Generated deploy artifacts =====
+/build/
+/dist/
+# Core binaries the contract gate builds for itself, see scripts/check.sh.
+/.cache/
+*.tar.gz
+*.tar.zst
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ===== Misc =====
+*.log
+*.tmp
+*.bak
+*.bak-*
+
+# ===== Go =====
+/spaiter-vpn
+secrets.json
+
+# ===== Absorbed core: build artifacts it produces in-tree =====
+/core/sing-box
+/core/sing-box-*
+/core/libcore.aar
+
+# ===== Imported host-side trees =====
+
+# Python bytecode from running ops/bin tools
+__pycache__/
+
+# ===== Private ops snapshot: its own repository, cloned here, never public =====
+/ops/
+
+# design notes and the handover plan stay local
+/docs/

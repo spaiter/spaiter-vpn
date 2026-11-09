@@ -1,0 +1,38 @@
+_htest/
+/data/*
+*.log
+*.db
+/.idea/
+/vendor/
+/*.json
+/*.srs
+/*.db
+/site/
+/bin/
+/dist/
+/sing-box
+/sing-box.exe
+/build/
+/*.jar
+/*.aar
+/*.xcframework/
+/experimental/libbox/*.aar
+/experimental/libbox/*.xcframework/
+/experimental/libbox/*.nupkg
+.DS_Store
+/config.d/
+/venv/
+CLAUDE.md
+AGENTS.md
+/.claude/
+
+# local build artifacts
+/sing-box-static
+/sing-box-new
+
+# Python bytecode from the pcap fixture tooling
+__pycache__/
+*.pyc
+
+# Local pre-migration backups (snell, awg3): keep out of the fork
+*.bak-*

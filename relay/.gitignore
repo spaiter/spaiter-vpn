@@ -1,0 +1,45 @@
+# ===== Go =====
+# NOTE: go.sum is intentionally NOT ignored. It is the dependency checksum
+# lockfile and must be committed for reproducible, verifiable builds. The
+# previous version of this file ignored it, inherited from the Android project
+# this repository was forked from.
+/wdtt-relay
+/shim
+*.test
+*.out
+coverage*.out
+coverage*.html
+
+# ===== Compiled native libraries =====
+*.so
+*.dll
+*.dylib
+
+# ===== Runtime state (never commit: contains per-user WRAP passwords) =====
+passwords.json
+*.pid
+
+# ===== Keys / secrets =====
+*.keystore
+*.jks
+*.key
+*.pem
+
+# ===== IDE =====
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ===== Misc =====
+*.log
+*.tmp
+*.bak
+*.bak-*

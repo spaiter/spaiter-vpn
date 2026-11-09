@@ -1,0 +1,29 @@
+package option
+
+import (
+	"context"
+	"testing"
+
+	"github.com/sagernet/sing/common/json"
+	C "github.com/spaiter/spaiter-vpn/core/constant"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestDNSRuleActionRespondUnmarshalJSON(t *testing.T) {
+	t.Parallel()
+
+	var action DNSRuleAction
+	err := json.UnmarshalContext(context.Background(), []byte(`{"action":"respond"}`), &action)
+	require.NoError(t, err)
+	require.Equal(t, C.RuleActionTypeRespond, action.Action)
+	require.Equal(t, DNSRouteActionOptions{}, action.RouteOptions)
+}
+
+func TestDNSRuleActionRespondRejectsUnknownFields(t *testing.T) {
+	t.Parallel()
+
+	var action DNSRuleAction
+	err := json.UnmarshalContext(context.Background(), []byte(`{"action":"respond","disable_cache":true}`), &action)
+	require.ErrorContains(t, err, "unknown field")
+}

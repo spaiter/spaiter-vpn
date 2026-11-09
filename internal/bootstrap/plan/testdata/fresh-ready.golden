@@ -1,0 +1,21 @@
+apiVersion: spaiter-vpn/plan/v1alpha1
+desiredDigest: 07cce42a5edf8a114e593feded126924016733d12e1ce5e94e744a8ec2c20b4b
+observationDigest: e9cb5af5c87d6c1ff96aa316b8a43a01ab08bc35354f7d5a9a69462f02780503
+mode: fresh
+blocked: false
+changes:
+actions:
+- platform | verify | mutates=false | use supported ubuntu 24.04 on amd64
+- root | verify | mutates=false | re-run apply as root (current euid 1000)
+- docker | verify | mutates=false | use Docker 27.5.1 directly
+- xdp-interface | verify | mutates=false | resolve XDP auto to eth0
+- preflight | verify | mutates=false | run the complete host preflight
+- stage-deployment | apply | mutates=true | generate credentials and stage the deployment once
+- logrotate | apply | mutates=true | install or reconcile the logrotate configuration
+- firewall | verify | mutates=false | keep existing UFW allow rules
+- desired-state | apply | mutates=true | persist canonical desired.json
+- compose-pull | apply | mutates=true | pull the immutable core image
+- compose-up | apply | mutates=true | converge the Compose project
+- health | verify | mutates=false | wait for the local management endpoint
+- selftest | verify | mutates=false | run the live BitTorrent self-test
+- external-checks | manual | mutates=false | verify reachability from another network

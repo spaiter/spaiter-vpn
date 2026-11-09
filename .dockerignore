@@ -1,0 +1,16 @@
+.git/
+.github/
+dist/
+third_party/
+core/.git/
+core/.github/
+core/test/
+core/docs/
+core/examples/
+core/release/
+*.exe
+
+# 64 MB of packet captures that are test fixtures for the BitTorrent detector
+# and never reach the binary. Without this the build context carries them on
+# every build.
+core/common/sniff/testdata/

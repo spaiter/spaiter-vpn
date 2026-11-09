@@ -1,0 +1,16 @@
+{
+ "vless-reality-in": "vless://00000000-0000-4000-8000-000000000001@vpn.example.com:10861?encryption=none&type=http&security=reality&sni=ae-pic-a1.aliexpress-media.com&fp=chrome&pbk=cD8s7yLAWX4NrNQ9qO_Zijm8Z8bQ7Elox3HGTcTth1o&sid=0123456789abcdef&path=%2Fkf#user1",
+ "hysteria-in": "hysteria2://pw-password-1@vpn.example.com:10862?sni=vpn.example.com&obfs=salamander&obfs-password=redacted-password#user1",
+ "mtproto-in": "tg://proxy?server=vpn.example.com&port=10868&secret=redacted-secret",
+ "tuic-in": "tuic://00000000-0000-4000-8000-000000000001:pw-password-1@vpn.example.com:10869?congestion_control=bbr&alpn=h3&sni=vpn.example.com#user1",
+ "ss-stls-in": "",
+ "shadowtls-in": "",
+ "vless-xhttp-in": "vless://00000000-0000-4000-8000-000000000001@vpn.example.com:10871?encryption=none&type=xhttp&security=reality&sni=ae-pic-a1.aliexpress-media.com&fp=chrome&pbk=cD8s7yLAWX4NrNQ9qO_Zijm8Z8bQ7Elox3HGTcTth1o&sid=0123456789abcdef&path=%2Fxh#user1",
+ "vless-xhttp-obfs-in": "vless://00000000-0000-4000-8000-000000000001@vpn.example.com:10865?encryption=none&type=xhttp&security=reality&sni=ae-pic-a1.aliexpress-media.com&fp=chrome&pbk=cD8s7yLAWX4NrNQ9qO_Zijm8Z8bQ7Elox3HGTcTth1o&sid=0123456789abcdef&path=%2Fxh#user1",
+ "vless-ws-cdn-in": "vless://00000000-0000-4000-8000-000000000001@cdn.example.com:443?encryption=none&type=ws&security=tls&sni=cdn.example.com&host=cdn.example.com&path=%2Fcdnws&fp=chrome#user1",
+ "naive-in": "",
+ "mieru-in": "",
+ "anytls-in": "anytls://pw-password-1@vpn.example.com:10874?sni=vpn.example.com#user1",
+ "snell-in": "",
+ "masque-wg-in": ""
+}

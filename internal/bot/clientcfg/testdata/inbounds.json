@@ -1,0 +1,436 @@
+{
+ "inbounds": [
+  {
+   "type": "vless",
+   "tag": "vless-reality-in",
+   "listen": "::",
+   "listen_port": 10861,
+   "users": [
+    {
+     "name": "user1",
+     "uuid": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+     "name": "user2",
+     "uuid": "00000000-0000-4000-8000-000000000002"
+    }
+   ],
+   "tls": {
+    "enabled": true,
+    "server_name": "ae-pic-a1.aliexpress-media.com",
+    "reality": {
+     "enabled": true,
+     "handshake": {
+      "server": "ae-pic-a1.aliexpress-media.com",
+      "server_port": 443
+     },
+     "private_key": "YGueZRtwPE2JUhqJQPDqNB+2xEtMcVySq9o6c1yZJFY=",
+     "short_id": "0123456789abcdef"
+    }
+   },
+   "transport": {
+    "type": "http",
+    "path": "/kf",
+    "idle_timeout": "5m0s"
+   }
+  },
+  {
+   "type": "hysteria2",
+   "tag": "hysteria-in",
+   "listen": "::",
+   "listen_port": 10862,
+   "obfs": {
+    "type": "salamander",
+    "password": "redacted-password"
+   },
+   "users": [
+    {
+     "name": "user1",
+     "password": "pw-password-1"
+    },
+    {
+     "name": "user2",
+     "password": "pw-password-2"
+    }
+   ],
+   "tls": {
+    "enabled": true,
+    "server_name": "vpn.example.com",
+    "certificate_path": "/etc/certs/live/npm-2/fullchain.pem",
+    "key_path": "/etc/certs/live/npm-2/privkey.pem"
+   },
+   "stream_receive_window": 0,
+   "connection_receive_window": 0
+  },
+  {
+   "type": "mtproto",
+   "tag": "mtproto-in",
+   "listen": "::",
+   "listen_port": 10868,
+   "secret": "redacted-secret"
+  },
+  {
+   "type": "tuic",
+   "tag": "tuic-in",
+   "listen": "::",
+   "listen_port": 10869,
+   "users": [
+    {
+     "name": "user1",
+     "uuid": "00000000-0000-4000-8000-000000000001",
+     "password": "pw-password-1"
+    },
+    {
+     "name": "user2",
+     "uuid": "00000000-0000-4000-8000-000000000002",
+     "password": "pw-password-2"
+    }
+   ],
+   "congestion_control": "bbr",
+   "tls": {
+    "enabled": true,
+    "server_name": "vpn.example.com",
+    "alpn": "h3",
+    "certificate_path": "/etc/certs/live/npm-2/fullchain.pem",
+    "key_path": "/etc/certs/live/npm-2/privkey.pem"
+   },
+   "stream_receive_window": 0,
+   "connection_receive_window": 0
+  },
+  {
+   "type": "shadowsocks",
+   "tag": "ss-stls-in",
+   "listen": "127.0.0.1",
+   "listen_port": 10041,
+   "method": "2022-blake3-aes-128-gcm",
+   "password": "redacted-password",
+   "multiplex": {
+    "enabled": true
+   }
+  },
+  {
+   "type": "shadowtls",
+   "tag": "shadowtls-in",
+   "listen": "::",
+   "listen_port": 10870,
+   "detour": "ss-stls-in",
+   "version": 3,
+   "users": [
+    {
+     "name": "user1",
+     "password": "pw-password-1"
+    },
+    {
+     "name": "user2",
+     "password": "pw-password-2"
+    }
+   ],
+   "handshake": {
+    "server": "www.microsoft.com",
+    "server_port": 443
+   }
+  },
+  {
+   "type": "vless",
+   "tag": "vless-xhttp-in",
+   "listen": "::",
+   "listen_port": 10871,
+   "users": [
+    {
+     "name": "user1",
+     "uuid": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+     "name": "user2",
+     "uuid": "00000000-0000-4000-8000-000000000002"
+    }
+   ],
+   "tls": {
+    "enabled": true,
+    "server_name": "ae-pic-a1.aliexpress-media.com",
+    "reality": {
+     "enabled": true,
+     "handshake": {
+      "server": "ae-pic-a1.aliexpress-media.com",
+      "server_port": 443
+     },
+     "private_key": "YGueZRtwPE2JUhqJQPDqNB+2xEtMcVySq9o6c1yZJFY=",
+     "short_id": "0123456789abcdef"
+    }
+   },
+   "transport": {
+    "type": "xhttp",
+    "mode": "auto",
+    "path": "/xh",
+    "x_padding_bytes": "100-1000",
+    "sc_max_each_post_bytes": "",
+    "sc_min_posts_interval_ms": "",
+    "sc_stream_up_server_secs": "",
+    "xmux": {
+     "max_concurrency": "1-1",
+     "max_connections": "",
+     "c_max_reuse_times": "",
+     "h_max_request_times": "600-900",
+     "h_max_reusable_secs": "1800-3000",
+     "h_keep_alive_period": 0
+    },
+    "x_padding_key": "x_padding",
+    "x_padding_header": "X-Padding",
+    "x_padding_placement": "queryInHeader",
+    "x_padding_method": "repeat-x",
+    "uplink_http_method": "POST",
+    "session_placement": "path",
+    "seq_placement": "path",
+    "uplink_data_placement": "body",
+    "download": null
+   }
+  },
+  {
+   "type": "vless",
+   "tag": "vless-xhttp-obfs-in",
+   "listen": "::",
+   "listen_port": 10865,
+   "users": [
+    {
+     "name": "user1",
+     "uuid": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+     "name": "user2",
+     "uuid": "00000000-0000-4000-8000-000000000002"
+    }
+   ],
+   "tls": {
+    "enabled": true,
+    "server_name": "ae-pic-a1.aliexpress-media.com",
+    "reality": {
+     "enabled": true,
+     "handshake": {
+      "server": "ae-pic-a1.aliexpress-media.com",
+      "server_port": 443
+     },
+     "private_key": "YGueZRtwPE2JUhqJQPDqNB+2xEtMcVySq9o6c1yZJFY=",
+     "short_id": "0123456789abcdef"
+    }
+   },
+   "transport": {
+    "type": "xhttp",
+    "mode": "auto",
+    "path": "/xh",
+    "x_padding_bytes": "100-1000",
+    "sc_max_each_post_bytes": "",
+    "sc_min_posts_interval_ms": "",
+    "sc_stream_up_server_secs": "",
+    "xmux": {
+     "max_concurrency": "1-1",
+     "max_connections": "",
+     "c_max_reuse_times": "",
+     "h_max_request_times": "600-900",
+     "h_max_reusable_secs": "1800-3000",
+     "h_keep_alive_period": 0
+    },
+    "x_padding_key": "x_padding",
+    "x_padding_header": "X-Padding",
+    "x_padding_placement": "queryInHeader",
+    "x_padding_method": "repeat-x",
+    "uplink_http_method": "POST",
+    "session_placement": "path",
+    "seq_placement": "path",
+    "uplink_data_placement": "body",
+    "download": null,
+    "x_padding_obfs_mode": true
+   }
+  },
+  {
+   "type": "vless",
+   "tag": "vless-ws-cdn-in",
+   "listen": "192.168.1.200",
+   "listen_port": 10042,
+   "users": [
+    {
+     "name": "user1",
+     "uuid": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+     "name": "user2",
+     "uuid": "00000000-0000-4000-8000-000000000002"
+    }
+   ],
+   "transport": {
+    "type": "ws",
+    "path": "/cdnws",
+    "early_data_header_name": "Sec-WebSocket-Protocol"
+   }
+  },
+  {
+   "type": "naive",
+   "tag": "naive-in",
+   "listen": "::",
+   "listen_port": 10872,
+   "users": [
+    {
+     "Username": "user1",
+     "Password": "pw-password-1"
+    }
+   ],
+   "tls": {
+    "enabled": true,
+    "server_name": "vpn.example.com",
+    "certificate_path": "/etc/certs/live/npm-2/fullchain.pem",
+    "key_path": "/etc/certs/live/npm-2/privkey.pem"
+   }
+  },
+  {
+   "type": "mieru",
+   "tag": "mieru-in",
+   "listen": "::",
+   "listen_port": 10878,
+   "users": [
+    {
+     "username": "user1",
+     "password": "pw-password-1"
+    },
+    {
+     "username": "user2",
+     "password": "pw-password-2"
+    }
+   ],
+   "portBindings": [
+    {
+     "protocol": "TCP",
+     "port": 10878
+    }
+   ]
+  },
+  {
+   "type": "anytls",
+   "tag": "anytls-in",
+   "listen": "::",
+   "listen_port": 10874,
+   "tls": {
+    "enabled": true,
+    "server_name": "vpn.example.com",
+    "certificate_path": "/etc/certs/live/npm-2/fullchain.pem",
+    "key_path": "/etc/certs/live/npm-2/privkey.pem"
+   },
+   "users": [
+    {
+     "name": "user1",
+     "password": "pw-password-1"
+    },
+    {
+     "name": "user2",
+     "password": "pw-password-2"
+    }
+   ]
+  },
+  {
+   "type": "snell",
+   "tag": "snell-in",
+   "listen": "::",
+   "listen_port": 10875,
+   "version": 6,
+   "psk": "redacted-psk",
+   "users": [
+    {
+     "name": "user1",
+     "userkey": "pw-userkey-1"
+    },
+    {
+     "name": "user2",
+     "userkey": "pw-userkey-2"
+    }
+   ]
+  },
+  {
+   "type": "masque-wg",
+   "tag": "masque-wg-in",
+   "listen": "::",
+   "listen_port": 10876,
+   "tls": {
+    "enabled": true,
+    "server_name": "vpn.example.com",
+    "certificate_path": "/etc/certs/live/npm-2/fullchain.pem",
+    "key_path": "/etc/certs/live/npm-2/privkey.pem"
+   },
+   "target": "127.0.0.1:10877",
+   "path": "/m"
+  }
+ ],
+ "endpoints": [
+  {
+   "type": "awg",
+   "tag": "awg-in",
+   "useIntegratedTun": false,
+   "private_key": "YGueZRtwPE2JUhqJQPDqNB+2xEtMcVySq9o6c1yZJFY=",
+   "address": "10.10.0.1/24",
+   "mtu": 1200,
+   "listen_port": 10863,
+   "awg": {
+    "jc": 7,
+    "jmin": 171,
+    "jmax": 1245,
+    "s1": 74,
+    "s2": 88,
+    "h1": "1719984417",
+    "h2": "3985864902",
+    "h3": "930315672",
+    "h4": "3586313952"
+   },
+   "peers": []
+  },
+  {
+   "type": "awg",
+   "tag": "awg3-in",
+   "useIntegratedTun": false,
+   "private_key": "YGueZRtwPE2JUhqJQPDqNB+2xEtMcVySq9o6c1yZJFY=",
+   "address": "10.40.0.1/24",
+   "mtu": 1180,
+   "listen_port": 10860,
+   "awg": {
+    "jc": 6,
+    "jmin": 64,
+    "jmax": 512,
+    "s1": 16,
+    "s2": 16,
+    "s3": 16,
+    "s4": 16,
+    "h1": "1000000-1999999",
+    "h2": "2000000-2999999",
+    "h3": "3000000-3999999",
+    "h4": "4000000-4999999",
+    "i1": "<b 0x16030100><r 220><t>",
+    "i2": "<b 0x170303><rd 32><rc 64>",
+    "header_protection_key": "6QT30EwtWFLqrPG77GsGi7RABZAoKWqzlvmbhYlt+k8=",
+    "content_padding_addition": "0-48",
+    "rekey_after_time": "110-140",
+    "rekey_timeout": "5-8",
+    "reject_after_time": "170-200",
+    "keepalive_timeout": "9-13",
+    "max_handshake_attempts": "16-20",
+    "random_trailers": true
+   },
+   "peers": []
+  },
+  {
+   "type": "awg",
+   "tag": "wg-masque-in",
+   "useIntegratedTun": false,
+   "private_key": "YGueZRtwPE2JUhqJQPDqNB+2xEtMcVySq9o6c1yZJFY=",
+   "address": "10.20.0.1/24",
+   "mtu": 1100,
+   "listen_port": 10877,
+   "peers": []
+  },
+  {
+   "type": "awg",
+   "tag": "wg-wdtt-in",
+   "useIntegratedTun": false,
+   "private_key": "YGueZRtwPE2JUhqJQPDqNB+2xEtMcVySq9o6c1yZJFY=",
+   "address": "10.30.0.1/24",
+   "mtu": 1000,
+   "listen_port": 10879,
+   "peers": []
+  }
+ ]
+}

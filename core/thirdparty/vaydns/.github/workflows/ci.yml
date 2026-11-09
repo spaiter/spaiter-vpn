@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Build
+        run: go build -v ./...
+
+      - name: Test
+        run: go test -v ./...
+
+      - name: Vet
+        run: go vet ./...
+
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: linux
+            goarch: arm
+            goarm: 7
+          - goos: linux
+            goarch: 386
+          - goos: windows
+            goarch: amd64
+            suffix: .exe
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+        run: |
+          ARCH=${{ matrix.goarch }}
+          if [ "$ARCH" = "arm" ]; then
+            ARCH="armv7"
+          fi
+          SUFFIX="${{ matrix.suffix }}"
+          go build -trimpath -ldflags="-s -w" -o "vaydns-client-${{ matrix.goos }}-${ARCH}${SUFFIX}" ./vaydns-client
+          go build -trimpath -ldflags="-s -w" -o "vaydns-server-${{ matrix.goos }}-${ARCH}${SUFFIX}" ./vaydns-server
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vaydns-${{ matrix.goos }}-${{ matrix.goarch == 'arm' && 'armv7' || matrix.goarch }}
+          path: |
+            vaydns-client-*
+            vaydns-server-*
+          retention-days: 90
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run e2e tests
+        run: bash e2e/run-test.sh
+
+  docker-dev:
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    needs: [test, e2e]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set short SHA
+        run: echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository }}:dev-${{ env.SHORT_SHA }}
+

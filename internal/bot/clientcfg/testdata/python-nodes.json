@@ -1,0 +1,393 @@
+{
+ "configs": {
+  "mieru-in": {
+   "inbounds": [
+    {
+     "listen": "127.0.0.1",
+     "listen_port": 2080,
+     "type": "mixed"
+    }
+   ],
+   "log": {
+    "level": "warn"
+   },
+   "outbounds": [
+    {
+     "password": "pw-password-1",
+     "server": "vpn.example.com",
+     "server_port": 10878,
+     "tag": "proxy",
+     "transport": "TCP",
+     "type": "mieru",
+     "username": "user1"
+    },
+    {
+     "tag": "direct",
+     "type": "direct"
+    }
+   ],
+   "route": {
+    "final": "proxy"
+   }
+  },
+  "naive-in": {
+   "listen": "socks://127.0.0.1:1080",
+   "proxy": "https://user1:pw-password-1@vpn.example.com:10872"
+  },
+  "shadowtls-in": {
+   "inbounds": [
+    {
+     "listen": "127.0.0.1",
+     "listen_port": 2080,
+     "type": "mixed"
+    }
+   ],
+   "log": {
+    "level": "warn"
+   },
+   "outbounds": [
+    {
+     "detour": "stls",
+     "method": "2022-blake3-aes-128-gcm",
+     "multiplex": {
+      "enabled": true
+     },
+     "password": "redacted-password",
+     "server": "vpn.example.com",
+     "server_port": 10870,
+     "tag": "proxy",
+     "type": "shadowsocks"
+    },
+    {
+     "password": "pw-password-1",
+     "server": "vpn.example.com",
+     "server_port": 10870,
+     "tag": "stls",
+     "tls": {
+      "enabled": true,
+      "server_name": "www.microsoft.com",
+      "utls": {
+       "enabled": true,
+       "fingerprint": "chrome"
+      }
+     },
+     "type": "shadowtls",
+     "version": 3
+    },
+    {
+     "tag": "direct",
+     "type": "direct"
+    }
+   ],
+   "route": {
+    "final": "proxy"
+   }
+  },
+  "snell-in": {
+   "inbounds": [
+    {
+     "listen": "127.0.0.1",
+     "listen_port": 2080,
+     "type": "mixed"
+    }
+   ],
+   "log": {
+    "level": "warn"
+   },
+   "outbounds": [
+    {
+     "psk": "redacted-psk",
+     "server": "vpn.example.com",
+     "server_port": 10875,
+     "tag": "proxy",
+     "type": "snell",
+     "userkey": "pw-userkey-1",
+     "version": 6
+    },
+    {
+     "tag": "direct",
+     "type": "direct"
+    }
+   ],
+   "route": {
+    "final": "proxy"
+   }
+  },
+  "vless-xhttp-in": {
+   "inbounds": [
+    {
+     "listen": "127.0.0.1",
+     "listen_port": 2080,
+     "type": "mixed"
+    }
+   ],
+   "log": {
+    "level": "warn"
+   },
+   "outbounds": [
+    {
+     "server": "vpn.example.com",
+     "server_port": 10871,
+     "tag": "proxy",
+     "tls": {
+      "enabled": true,
+      "reality": {
+       "enabled": true,
+       "public_key": "cD8s7yLAWX4NrNQ9qO_Zijm8Z8bQ7Elox3HGTcTth1o",
+       "short_id": "0123456789abcdef"
+      },
+      "server_name": "ae-pic-a1.aliexpress-media.com",
+      "utls": {
+       "enabled": true,
+       "fingerprint": "chrome"
+      }
+     },
+     "transport": {
+      "path": "/xh",
+      "type": "xhttp",
+      "x_padding_bytes": "100-1000"
+     },
+     "type": "vless",
+     "uuid": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+     "tag": "direct",
+     "type": "direct"
+    }
+   ],
+   "route": {
+    "final": "proxy"
+   }
+  },
+  "vless-xhttp-obfs-in": {
+   "inbounds": [
+    {
+     "listen": "127.0.0.1",
+     "listen_port": 2080,
+     "type": "mixed"
+    }
+   ],
+   "log": {
+    "level": "warn"
+   },
+   "outbounds": [
+    {
+     "server": "vpn.example.com",
+     "server_port": 10865,
+     "tag": "proxy",
+     "tls": {
+      "enabled": true,
+      "reality": {
+       "enabled": true,
+       "public_key": "cD8s7yLAWX4NrNQ9qO_Zijm8Z8bQ7Elox3HGTcTth1o",
+       "short_id": "0123456789abcdef"
+      },
+      "server_name": "ae-pic-a1.aliexpress-media.com",
+      "utls": {
+       "enabled": true,
+       "fingerprint": "chrome"
+      }
+     },
+     "transport": {
+      "path": "/xh",
+      "type": "xhttp",
+      "x_padding_bytes": "100-1000",
+      "x_padding_header": "X-Padding",
+      "x_padding_key": "x_padding",
+      "x_padding_method": "repeat-x",
+      "x_padding_obfs_mode": true,
+      "x_padding_placement": "queryInHeader"
+     },
+     "type": "vless",
+     "uuid": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+     "tag": "direct",
+     "type": "direct"
+    }
+   ],
+   "route": {
+    "final": "proxy"
+   }
+  }
+ },
+ "nodes": {
+  "anytls-in": {
+   "password": "pw-password-1",
+   "server": "vpn.example.com",
+   "server_port": 10874,
+   "tag": "AnyTLS",
+   "tls": {
+    "enabled": true,
+    "server_name": "vpn.example.com"
+   },
+   "type": "anytls"
+  },
+  "hysteria-in": {
+   "obfs": {
+    "password": "redacted-password",
+    "type": "salamander"
+   },
+   "password": "pw-password-1",
+   "server": "vpn.example.com",
+   "server_port": 10862,
+   "tag": "Hysteria2",
+   "tls": {
+    "enabled": true,
+    "server_name": "vpn.example.com"
+   },
+   "type": "hysteria2"
+  },
+  "masque-wg-in": null,
+  "mieru-in": {
+   "password": "pw-password-1",
+   "server": "vpn.example.com",
+   "server_port": 10878,
+   "tag": "Mieru",
+   "transport": "TCP",
+   "type": "mieru",
+   "username": "user1"
+  },
+  "mtproto-in": null,
+  "naive-in": {
+   "password": "pw-password-1",
+   "server": "vpn.example.com",
+   "server_port": 10872,
+   "tag": "NaiveProxy",
+   "tls": {
+    "enabled": true,
+    "server_name": "vpn.example.com"
+   },
+   "type": "naive",
+   "username": "user1"
+  },
+  "shadowtls-in": null,
+  "snell-in": {
+   "psk": "redacted-psk",
+   "server": "vpn.example.com",
+   "server_port": 10875,
+   "tag": "Snell v6",
+   "type": "snell",
+   "userkey": "pw-userkey-1",
+   "version": 6
+  },
+  "ss-stls-in": null,
+  "tuic-in": {
+   "congestion_control": "bbr",
+   "password": "pw-password-1",
+   "server": "vpn.example.com",
+   "server_port": 10869,
+   "tag": "TUIC v5",
+   "tls": {
+    "alpn": [
+     "h3"
+    ],
+    "enabled": true,
+    "server_name": "vpn.example.com"
+   },
+   "type": "tuic",
+   "uuid": "00000000-0000-4000-8000-000000000001"
+  },
+  "vless-reality-in": {
+   "server": "vpn.example.com",
+   "server_port": 10861,
+   "tag": "VLESS Reality",
+   "tls": {
+    "enabled": true,
+    "reality": {
+     "enabled": true,
+     "public_key": "cD8s7yLAWX4NrNQ9qO_Zijm8Z8bQ7Elox3HGTcTth1o",
+     "short_id": "0123456789abcdef"
+    },
+    "server_name": "ae-pic-a1.aliexpress-media.com",
+    "utls": {
+     "enabled": true,
+     "fingerprint": "chrome"
+    }
+   },
+   "transport": {
+    "path": "/kf",
+    "type": "http"
+   },
+   "type": "vless",
+   "uuid": "00000000-0000-4000-8000-000000000001"
+  },
+  "vless-ws-cdn-in": {
+   "server": "cdn.example.com",
+   "server_port": 443,
+   "tag": "VLESS · Cloudflare CDN",
+   "tls": {
+    "enabled": true,
+    "server_name": "cdn.example.com",
+    "utls": {
+     "enabled": true,
+     "fingerprint": "chrome"
+    }
+   },
+   "transport": {
+    "headers": {
+     "Host": "cdn.example.com"
+    },
+    "path": "/cdnws",
+    "type": "ws"
+   },
+   "type": "vless",
+   "uuid": "00000000-0000-4000-8000-000000000001"
+  },
+  "vless-xhttp-in": {
+   "server": "vpn.example.com",
+   "server_port": 10871,
+   "tag": "VLESS Reality · XHTTP",
+   "tls": {
+    "enabled": true,
+    "reality": {
+     "enabled": true,
+     "public_key": "cD8s7yLAWX4NrNQ9qO_Zijm8Z8bQ7Elox3HGTcTth1o",
+     "short_id": "0123456789abcdef"
+    },
+    "server_name": "ae-pic-a1.aliexpress-media.com",
+    "utls": {
+     "enabled": true,
+     "fingerprint": "chrome"
+    }
+   },
+   "transport": {
+    "path": "/xh",
+    "type": "xhttp",
+    "x_padding_bytes": "100-1000"
+   },
+   "type": "vless",
+   "uuid": "00000000-0000-4000-8000-000000000001"
+  },
+  "vless-xhttp-obfs-in": {
+   "server": "vpn.example.com",
+   "server_port": 10865,
+   "tag": "vless-xhttp-obfs-in",
+   "tls": {
+    "enabled": true,
+    "reality": {
+     "enabled": true,
+     "public_key": "cD8s7yLAWX4NrNQ9qO_Zijm8Z8bQ7Elox3HGTcTth1o",
+     "short_id": "0123456789abcdef"
+    },
+    "server_name": "ae-pic-a1.aliexpress-media.com",
+    "utls": {
+     "enabled": true,
+     "fingerprint": "chrome"
+    }
+   },
+   "transport": {
+    "path": "/xh",
+    "type": "xhttp",
+    "x_padding_bytes": "100-1000",
+    "x_padding_header": "X-Padding",
+    "x_padding_key": "x_padding",
+    "x_padding_method": "repeat-x",
+    "x_padding_obfs_mode": true,
+    "x_padding_placement": "queryInHeader"
+   },
+   "type": "vless",
+   "uuid": "00000000-0000-4000-8000-000000000001"
+  }
+ }
+}

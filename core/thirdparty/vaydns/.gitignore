@@ -1,0 +1,14 @@
+vaydns-client/vaydns-client
+vaydns-server/vaydns-server
+
+# IDE
+.idea/
+.vscode/
+
+# AI Agents
+CLAUDE.md
+claude.md
+.claude/
+
+# Misc.
+temp/

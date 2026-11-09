@@ -1,0 +1,180 @@
+package daemon
+
+import (
+	"bytes"
+	"context"
+
+	"github.com/sagernet/sing/common"
+	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/sing/common/json"
+	"github.com/sagernet/sing/service"
+	"github.com/sagernet/sing/service/pause"
+	"github.com/spaiter/spaiter-vpn/core"
+	"github.com/spaiter/spaiter-vpn/core/adapter"
+	"github.com/spaiter/spaiter-vpn/core/common/trafficcontrol"
+	"github.com/spaiter/spaiter-vpn/core/common/urltest"
+	C "github.com/spaiter/spaiter-vpn/core/constant"
+	"github.com/spaiter/spaiter-vpn/core/experimental/deprecated"
+	"github.com/spaiter/spaiter-vpn/core/log"
+	"github.com/spaiter/spaiter-vpn/core/option"
+)
+
+type Instance struct {
+	ctx                   context.Context
+	cancel                context.CancelFunc
+	instance              *box.Box
+	connectionManager     adapter.ConnectionManager
+	clashServer           adapter.ClashServer
+	trafficManager        *trafficcontrol.Manager
+	cacheFile             adapter.CacheFile
+	pauseManager          pause.Manager
+	urlTestHistoryStorage *urltest.HistoryStorage
+	outboundManager       adapter.OutboundManager
+	endpointManager       adapter.EndpointManager
+	logFactory            log.Factory
+}
+
+func (s *StartedService) CheckConfig(configContent string) error {
+	options, err := parseConfig(s.ctx, configContent)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	instance, err := box.New(box.Options{
+		Context: ctx,
+		Options: options,
+	})
+	if err == nil {
+		instance.Close()
+	}
+	return err
+}
+
+func (s *StartedService) FormatConfig(configContent string) (string, error) {
+	options, err := parseConfig(s.ctx, configContent)
+	if err != nil {
+		return "", err
+	}
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetIndent("", "  ")
+	err = encoder.Encode(options)
+	if err != nil {
+		return "", err
+	}
+	return buffer.String(), nil
+}
+
+type OverrideOptions struct {
+	AutoRedirect   bool
+	IncludePackage []string
+	ExcludePackage []string
+}
+
+func (s *StartedService) newInstance(profileContent string, overrideOptions *OverrideOptions) (*Instance, error) {
+	ctx := service.ExtendContext(s.ctx)
+	service.MustRegister[deprecated.Manager](ctx, new(deprecatedManager))
+	ctx, cancel := context.WithCancel(ctx)
+	options, err := parseConfig(ctx, profileContent)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	if overrideOptions != nil {
+		for _, inbound := range options.Inbounds {
+			if tunInboundOptions, isTUN := inbound.Options.(*option.TunInboundOptions); isTUN {
+				tunInboundOptions.AutoRedirect = overrideOptions.AutoRedirect
+				tunInboundOptions.IncludePackage = append(tunInboundOptions.IncludePackage, overrideOptions.IncludePackage...)
+				tunInboundOptions.ExcludePackage = append(tunInboundOptions.ExcludePackage, overrideOptions.ExcludePackage...)
+				break
+			}
+		}
+	}
+	if s.oomKillerEnabled {
+		if !common.Any(options.Services, func(it option.Service) bool {
+			return it.Type == C.TypeOOMKiller
+		}) {
+			oomOptions := &option.OOMKillerServiceOptions{
+				KillerDisabled:      s.oomKillerDisabled,
+				MemoryLimitOverride: s.oomMemoryLimit,
+			}
+			options.Services = append(options.Services, option.Service{
+				Type:    C.TypeOOMKiller,
+				Options: oomOptions,
+			})
+		}
+	}
+	urlTestHistoryStorage := urltest.NewHistoryStorage()
+	ctx = service.ContextWithPtr(ctx, urlTestHistoryStorage)
+	i := &Instance{
+		ctx:                   ctx,
+		cancel:                cancel,
+		urlTestHistoryStorage: urlTestHistoryStorage,
+	}
+	boxInstance, err := box.New(box.Options{
+		Context:           ctx,
+		Options:           options,
+		PlatformLogWriter: s,
+	})
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	i.instance = boxInstance
+	i.connectionManager = service.FromContext[adapter.ConnectionManager](ctx)
+	i.clashServer = service.FromContext[adapter.ClashServer](ctx)
+	i.trafficManager = service.PtrFromContext[trafficcontrol.Manager](ctx)
+	i.pauseManager = service.FromContext[pause.Manager](ctx)
+	i.cacheFile = service.FromContext[adapter.CacheFile](ctx)
+	i.outboundManager = service.FromContext[adapter.OutboundManager](ctx)
+	i.endpointManager = service.FromContext[adapter.EndpointManager](ctx)
+	i.logFactory = boxInstance.LogFactory()
+	log.SetStdLogger(boxInstance.LogFactory().Logger())
+	return i, nil
+}
+
+func attachInstance(ctx context.Context) *Instance {
+	return &Instance{
+		ctx:                   ctx,
+		connectionManager:     service.FromContext[adapter.ConnectionManager](ctx),
+		clashServer:           service.FromContext[adapter.ClashServer](ctx),
+		trafficManager:        service.PtrFromContext[trafficcontrol.Manager](ctx),
+		pauseManager:          service.FromContext[pause.Manager](ctx),
+		cacheFile:             service.FromContext[adapter.CacheFile](ctx),
+		urlTestHistoryStorage: service.PtrFromContext[urltest.HistoryStorage](ctx),
+		outboundManager:       service.FromContext[adapter.OutboundManager](ctx),
+		endpointManager:       service.FromContext[adapter.EndpointManager](ctx),
+		logFactory:            service.FromContext[log.Factory](ctx),
+	}
+}
+
+func (i *Instance) Start() error {
+	return i.instance.Start()
+}
+
+func (i *Instance) Close() error {
+	i.cancel()
+	i.urlTestHistoryStorage.Close()
+	return i.instance.Close()
+}
+
+func (i *Instance) Box() *box.Box {
+	return i.instance
+}
+
+func (i *Instance) PauseManager() pause.Manager {
+	return i.pauseManager
+}
+
+func (i *Instance) TrafficManager() *trafficcontrol.Manager {
+	return i.trafficManager
+}
+
+func parseConfig(ctx context.Context, configContent string) (option.Options, error) {
+	options, err := json.UnmarshalExtendedContext[option.Options](ctx, []byte(configContent))
+	if err != nil {
+		return option.Options{}, E.Cause(err, "decode config")
+	}
+	return options, nil
+}

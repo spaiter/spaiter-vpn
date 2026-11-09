@@ -1,0 +1,54 @@
+package endpoint
+
+import (
+	C "github.com/spaiter/spaiter-vpn/core/constant"
+	"github.com/spaiter/spaiter-vpn/core/option"
+)
+
+type Adapter struct {
+	endpointType string
+	endpointTag  string
+	network      []string
+	dependencies []string
+}
+
+func NewAdapter(endpointType string, endpointTag string, network []string, dependencies []string) Adapter {
+	return Adapter{
+		endpointType: endpointType,
+		endpointTag:  endpointTag,
+		network:      network,
+		dependencies: dependencies,
+	}
+}
+
+func NewAdapterWithDialerOptions(endpointType string, endpointTag string, network []string, dialOptions option.DialerOptions) Adapter {
+	var dependencies []string
+	if dialOptions.Detour != "" {
+		dependencies = []string{dialOptions.Detour}
+	}
+	return NewAdapter(endpointType, endpointTag, network, dependencies)
+}
+
+func (a *Adapter) Type() string {
+	return a.endpointType
+}
+
+func (a *Adapter) Tag() string {
+	return a.endpointTag
+}
+
+func (a *Adapter) Network() []string {
+	return a.network
+}
+
+func (a *Adapter) Dependencies() []string {
+	return a.dependencies
+}
+
+func (a *Adapter) DisplayType() string {
+	return C.ProxyDisplayName(a.Type())
+}
+
+func (a *Adapter) IsReady() bool {
+	return true
+}
