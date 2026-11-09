@@ -75,9 +75,18 @@ func buildMonitor(cfg botcfg.Config, api *manage.Client, store *state.Store,
 		QuietFrom:    from,
 		QuietTo:      to,
 		DigestEvery:  mc.DigestEvery.Build(),
-		ReportTimes:  mc.ReportTimes,
+		ReportTimes:  monitorReportTimes(mc),
 		SkipInbounds: mc.SkipInbounds,
 	}, store.Path(monitorStateName), checks, coreInbounds(api), notifier, log)
+}
+
+// monitorReportTimes is when the daily summary goes out: never unless the
+// operator turned it on, whatever report_times says.
+func monitorReportTimes(mc botcfg.Monitor) []string {
+	if !mc.DailyReport {
+		return nil
+	}
+	return mc.ReportTimes
 }
 
 // coreInbounds lists the core's inbounds with their ports, read from the

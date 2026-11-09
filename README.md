@@ -344,9 +344,10 @@ SOCKS5 inbound and compares it with `expect_ip`.
 A check is down after `fail_threshold` failures in a row and up on the first
 success. The first alert after a calm period goes out at once; what follows is
 collected into one message per `digest_every`, and nothing is sent during the
-quiet hours (`quiet_from`–`quiet_to`, in `timezone`). A daily summary goes out
-at each of `report_times`. `/health` shows the current state; counters live in
-`monitor.json` in the data dir and survive a restart.
+quiet hours (`quiet_from`–`quiet_to`, in `timezone`). A daily summary of the
+last day is off by default; `"daily_report": true` sends one at each of
+`report_times` (10:00 and 22:00 unless changed). `/health` shows the current
+state; counters live in `monitor.json` in the data dir and survive a restart.
 
 ### The Mini App
 

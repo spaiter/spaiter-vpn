@@ -264,7 +264,11 @@ type Monitor struct {
 	QuietFrom   *int     `json:"quiet_from,omitempty"`
 	QuietTo     *int     `json:"quiet_to,omitempty"`
 	DigestEvery Duration `json:"digest_every,omitempty"`
-	// ReportTimes are "HH:MM" local times for the daily summary.
+	// DailyReport turns on the daily summary at ReportTimes. Off by default:
+	// alerts come on their own, and a quiet day needs no message.
+	DailyReport bool `json:"daily_report,omitempty"`
+	// ReportTimes are "HH:MM" local times for the daily summary, used only
+	// when DailyReport is set.
 	ReportTimes  []string `json:"report_times,omitempty"`
 	SkipInbounds []string `json:"skip_inbounds,omitempty"`
 	MemPct       float64  `json:"mem_pct,omitempty"`
