@@ -6,7 +6,7 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/wdtt-relay .
 
-FROM alpine:3.20
+FROM alpine:3.22
 RUN adduser -D -H wdtt
 COPY --from=build /out/wdtt-relay /usr/local/bin/wdtt-relay
 ENTRYPOINT ["/usr/local/bin/wdtt-relay"]
