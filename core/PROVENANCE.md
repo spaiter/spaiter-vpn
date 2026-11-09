@@ -208,7 +208,25 @@ project now tags releases after the Go version they track. Only
 it. `go get` under Go 1.27 also merged the six `require` blocks into two, the
 form `go mod tidy` produces for `go 1.27` modules; no other version changed
 (checked by diffing the sorted `module version` pairs). The digest covers
-`go.mod` and `go.sum`. Dockerfile.core and relay/Dockerfile build on
+`go.mod` and `go.sum`.
+
+Go 1.27 also broke the link of every binary: `golang.org/x/net/http2` now
+wraps the standard library's `net/http/internal/http2` on go1.27, so the
+`(*Transport).connPool` method that `transport/v2rayhttp/force_close.go`
+pulled in with `//go:linkname` no longer exists ("relocation target ... not
+defined"). Three upstream sing-box commits were ported verbatim:
+`f50ca2244` (force_close split into `_legacy` / `_go127` / `_go127_stub`;
+the go1.27 variant reaches the standard library's pool and needs the
+`badlinkname` tag, which every core build carries, while a build without it
+falls back to `CloseIdleConnections`), `4658dfc6c` (a `var _ *tls.Conn`
+anchor in `common/badtls/registry.go` so the compiler records the method
+symbols before the linkname pulls), and `a25ad8ce5` (sing-mux `v0.3.6`, the
+h2mux fix for 1.27). The go1.27 variant needs `(*Transport).init` to return
+the inner `*http.Transport`, which x/net gained in `v0.57.0` (upstream's
+version), so `golang.org/x/net` moved `v0.56.0` → `v0.57.0` and pulled its
+siblings along: x/crypto `v0.54.0`, x/mod `v0.37.0`, x/sync `v0.22.0`,
+x/sys `v0.47.0`, x/term `v0.45.0`, x/text `v0.40.0`, x/tools `v0.47.0`.
+Nothing else in the graph changed. Dockerfile.core and relay/Dockerfile build on
 `golang:1.27-alpine` (GOTOOLCHAIN=local as before). The reason is the
 `goroutineleak` profile, generally available in `runtime/pprof` since Go 1.27
 and served by the core through `experimental.debug.listen`. The directive also
