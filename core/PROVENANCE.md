@@ -195,9 +195,20 @@ length.
 
 ## 2026-11-09: Go 1.27 (deps digest refreshed)
 
-The module graph did not move; the `go` directive went from `1.25.6` to
-`1.27.0` in `go.mod`, `relay/go.mod` and `core/test/go.mod`, and the digest
-covers the first. Dockerfile.core and relay/Dockerfile build on
+The `go` directive went from `1.25.6` to `1.27.0` in `go.mod`, `relay/go.mod`
+and `core/test/go.mod`. One dependency moved with it:
+`github.com/go-json-experiment/json` from the 2025-08-13 pseudo-version to
+`v1.27.2`. That module aliases itself to the standard library's
+`encoding/json/v2` under the `goexperiment.jsonv2` tag, which Go 1.27 sets by
+default, and the old snapshot named `json.SkipFunc` and
+`json.DiscardUnknownMembers`, both gone from the 1.27 standard library; the
+project now tags releases after the Go version they track. Only
+`core/thirdparty/tailscale/drive` imports it, which no published build links
+(`with_tailscale` is absent), but `go build ./...`, vet and the tests compile
+it. `go get` under Go 1.27 also merged the six `require` blocks into two, the
+form `go mod tidy` produces for `go 1.27` modules; no other version changed
+(checked by diffing the sorted `module version` pairs). The digest covers
+`go.mod` and `go.sum`. Dockerfile.core and relay/Dockerfile build on
 `golang:1.27-alpine` (GOTOOLCHAIN=local as before). The reason is the
 `goroutineleak` profile, generally available in `runtime/pprof` since Go 1.27
 and served by the core through `experimental.debug.listen`. The directive also
