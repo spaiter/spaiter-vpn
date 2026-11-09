@@ -39,7 +39,14 @@ func (b *bind_adapter) connect(addr netip.Addr, port uint16) (net.PacketConn, er
 	if addr.Is6() {
 		network = "udp6"
 	}
-	return net.ListenUDP(network, &net.UDPAddr{IP: addr.AsSlice(), Port: int(port)})
+	udpConn, err := net.ListenUDP(network, &net.UDPAddr{IP: addr.AsSlice(), Port: int(port)})
+	if err != nil {
+		// Return an untyped nil: a nil *net.UDPConn boxed into the interface is
+		// non-nil, and Open's `conn != nil` checks would then register a receive
+		// loop on a dead socket (e.g. on a host without IPv6).
+		return nil, err
+	}
+	return udpConn, nil
 }
 
 func (b *bind_adapter) receive(c net.PacketConn) conn.ReceiveFunc {

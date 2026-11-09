@@ -193,6 +193,43 @@ and sizes is the stable form of this check; comparing addresses is not, as
 read-only data shifts by an alignment boundary whenever `modinfo` changes
 length.
 
+## 2026-11-10: dependency refresh after govulncheck (deps digest refreshed)
+
+`govulncheck` in source mode, run with the production build tags from
+`Dockerfile.core`, reached 17 known vulnerabilities from the core binary and
+10 from `cmd/spaiter-vpn`. The ones that matter here are the five HTTP/2
+server issues in `golang.org/x/net` 0.57 (GO-2026-6603, -6610, -6611, -6612,
+-6617: memory exhaustion via trailers, CPU burn via window changes, a double
+flow-control refund and an HPACK encoder race), reachable through
+`transport/v2rayhttp`, `transport/v2raygrpclite`, `protocol/naive` and the
+API server, and the gRPC transport issues in `google.golang.org/grpc` 1.79
+(GO-2026-6348 OOM, -6443 panic, -4762 path bypass, -6061) reachable through
+`transport/v2raygrpc`. The rest: `klauspost/compress` (panic on two-block
+frames), `andybalholm/brotli` (decompression memory), `go-chi/chi` (RealIP
+spoofing, used by the Clash API), `cilium/ebpf` (BTF integer overflow, the XDP
+blocker), `go-jose` (JWE panic, cloudflared), `insomniacslk/dhcp` (malformed
+IPv4 packet), `x/crypto/ssh` (channel deadlocks), `x/text/secure/precis` and
+`x/mod/sumdb`.
+
+Moved, each to the first release the Go vulnerability database names as fixed
+or the current one: `golang.org/x/net` 0.57.0 → 0.62.0, `x/crypto` 0.54.0 →
+0.58.0, `x/text` 0.40.0 → 0.44.0, `x/mod` 0.37.0 → 0.43.0,
+`google.golang.org/grpc` 1.79.1 → 1.85.0, `klauspost/compress` 1.18.3 →
+1.20.4, `andybalholm/brotli` 1.2.0 → 1.2.8, `go-chi/chi/v5` 5.2.5 → 5.5.0,
+`cilium/ebpf` 0.20.0 → 0.22.0, `go-jose/v4` 4.1.3 → 4.1.9,
+`insomniacslk/dhcp` to the 2026-10-14 pseudo-version. Transitives that `go
+mod tidy` pulled along: `x/oauth2`, `x/sync`, `x/sys`, `x/term`, `x/tools`,
+`google.golang.org/protobuf` 1.36.12, `genproto/googleapis/rpc`,
+`spf13/pflag` 1.0.10. Upstream sing-box (`testing`, 2026-11) still pins
+x/net 0.57, grpc 1.79.1 and chi 5.2.5, so this tree is ahead of it here.
+
+The go1.27 variant of `transport/v2rayhttp/force_close.go` links against
+x/net 0.62's `http2.Transport` unchanged: the core built with the full tag set
+and `-checklinkname=0`, `go vet` and the unit tests passed on go1.27.2, and a
+second `govulncheck` run on the result reports only GO-2026-6809
+(`crypto/x509`), which is a toolchain matter fixed in go1.27.3, the version
+the core image builds with.
+
 ## 2026-11-09: Go 1.27 (deps digest refreshed)
 
 The `go` directive went from `1.25.6` to `1.27.0` in `go.mod`, `relay/go.mod`
