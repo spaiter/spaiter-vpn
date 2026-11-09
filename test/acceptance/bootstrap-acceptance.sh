@@ -1508,7 +1508,10 @@ config, secrets = (json.load(open(path)) for path in sys.argv[1:3])
 inbound = next(i for i in config["inbounds"] if i["type"] == "mtproto")
 users = {u["name"]: u["secret"] for u in inbound.get("users") or []}
 seeds = {u["Name"]: u.get("MTProtoSecret", "") for u in secrets["Users"]}
-ok = (inbound.get("secret") == sys.argv[3] and seeds and all(seeds[name] and users.get(name) == seeds[name] for name in seeds)
+# A fresh install on a core that already has MTProto users never hands out a
+# shared secret: it is "" in secrets.json and absent from the inbound. Both
+# spellings of "none" have to agree, which is what surviving means here.
+ok = ((inbound.get("secret") or "") == sys.argv[3] and seeds and all(seeds[name] and users.get(name) == seeds[name] for name in seeds)
       and len(set(users.values())) == len(users) and all(v.startswith("ee") for v in users.values()))
 raise SystemExit(0 if ok else 1)
 PY
