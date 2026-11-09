@@ -1,6 +1,6 @@
 module github.com/spaiter/spaiter-vpn
 
-go 1.25.6
+go 1.27.0
 
 // MPTCP only where tcp_multi_path asks for it. Go 1.24+ listens on Multipath
 // TCP by default on Linux, and CVE-2026-98432 let a remote root listen on IPv4

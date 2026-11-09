@@ -1,6 +1,6 @@
 module test
 
-go 1.24.7
+go 1.27.0
 
 require github.com/sagernet/sing-box v0.0.0
 

@@ -53,6 +53,7 @@ func runVKHolder(ctx context.Context, out io.Writer, args []string) error {
 	passEntry := fs.String("pass-entry", "services/vk-calls-access-token", "pass entry holding the one-year access token")
 	reloginCmd := fs.String("relogin", "", "override the relogin helper run when the access token dies; empty self-execs `vk relogin`")
 	wsHost := fs.String("ws-host", "", "override the okcdn owner-socket host (tests)")
+	pprofAddr := fs.String("pprof", "", "serve runtime profiles (net/http/pprof, incl. goroutineleak) on this loopback address, e.g. 127.0.0.1:6061")
 	fs.Usage = func() {
 		fmt.Fprintf(out, "usage: spaiter-vpn vk holder [flags]\n\n")
 		fmt.Fprintf(out, "Holds N WG-over-VK calls open and publishes their join links. Re-mints the\n")
@@ -86,6 +87,9 @@ func runVKHolder(ctx context.Context, out io.Writer, args []string) error {
 		N:         *n,
 		Heartbeat: *heartbeat,
 		Log:       log,
+	}
+	if err := servePprof(ctx, *pprofAddr, log); err != nil {
+		return fmt.Errorf("pprof: %w", err)
 	}
 	log.Info("vk holder starting", "n", *n, "data_dir", *dataDir)
 	return holder.Run(ctx)

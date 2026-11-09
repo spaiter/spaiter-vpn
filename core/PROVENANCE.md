@@ -128,7 +128,7 @@ Kept deliberately few, and each marked `//H` in the source:
 
 or directly, with the production tag set:
 
-    CGO_ENABLED=0 GOTOOLCHAIN=go1.25.6 go build -trimpath \
+    CGO_ENABLED=0 GOTOOLCHAIN=go1.27.0 go build -trimpath \
       -tags "with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_ccm,with_ocm,with_cloudflared,badlinkname,tfogo_checklinkname0,with_grpc,with_awg,with_xdp,with_masque" \
       -ldflags "-X 'github.com/spaiter/spaiter-vpn/core/constant.Version=<version>' -checklinkname=0 -s -w" \
       -o sing-box ./core/cmd/sing-box
@@ -192,6 +192,20 @@ version embedded in the build info contains the commit. Comparing symbol names
 and sizes is the stable form of this check; comparing addresses is not, as
 read-only data shifts by an alignment boundary whenever `modinfo` changes
 length.
+
+## 2026-11-09: Go 1.27 (deps digest refreshed)
+
+The module graph did not move; the `go` directive went from `1.25.6` to
+`1.27.0` in `go.mod`, `relay/go.mod` and `core/test/go.mod`, and the digest
+covers the first. Dockerfile.core and relay/Dockerfile build on
+`golang:1.27-alpine` (GOTOOLCHAIN=local as before). The reason is the
+`goroutineleak` profile, generally available in `runtime/pprof` since Go 1.27
+and served by the core through `experimental.debug.listen`. The directive also
+puts goroutine labels into traceback headers (`tracebacklabels`); nothing in
+this module sets goroutine labels, so nothing new appears there. The
+`//go:linkname` sites that make `-checklinkname=0` necessary (common/badtls,
+common/ktls, experimental/libbox/internal/oomprofile, service/oomkiller,
+transport/v2rayhttp) were built and tested against go1.27.2 on 2026-11-09.
 
 ## 2026-11-06: `godebug multipathtcp=0` in go.mod (deps digest refreshed)
 

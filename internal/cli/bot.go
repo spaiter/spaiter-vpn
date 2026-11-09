@@ -64,6 +64,7 @@ func runBot(ctx context.Context, out io.Writer, args []string) error {
 	compare := fs.Bool("compare", false,
 		"rebuild every subscription and diff it against the cache on disk, writing nothing")
 	verbose := fs.Bool("v", false, "log at debug level")
+	pprofAddr := fs.String("pprof", "", "serve runtime profiles (net/http/pprof, incl. goroutineleak) on this loopback address, e.g. 127.0.0.1:6060")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -114,6 +115,9 @@ func runBot(ctx context.Context, out io.Writer, args []string) error {
 			"pass -no-telegram to run only the subscription server and the loops", ErrUsage)
 	}
 
+	if err := servePprof(ctx, *pprofAddr, log); err != nil {
+		return fmt.Errorf("pprof: %w", err)
+	}
 	return runBotServices(ctx, out, cfg, parts, token, *noTelegram, log)
 }
 

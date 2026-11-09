@@ -6,15 +6,15 @@
 #
 #   docker build -f Dockerfile.core -t spaiter-vpn-core:<fork-commit> .
 #
-# golang:1.25 is pinned with GOTOOLCHAIN=local, and that pin is not habit.
-# common/badtls reaches into crypto/tls with //go:linkname, which is why
-# -checklinkname=0 is needed at all, and such code is only valid against the
-# standard library it was written for. Go 1.26 does build and run this core
-# since protocol/psiphon was dropped — psiphon-tls hard-coded the layout of
-# crypto/tls.ConnectionState and died in init on 1.26 — but the pin stays
-# until a 1.26 build has been exercised in production rather than merely
-# started.
-FROM golang:1.25-alpine AS builder
+# golang:1.27 with GOTOOLCHAIN=local: the image's toolchain is the one the
+# build gets, and go.mod's `go 1.27.0` is the floor it checks. The pin matters
+# because common/badtls reaches into crypto/tls with //go:linkname, which is
+# why -checklinkname=0 is needed at all, and such code is only valid against
+# the standard library it was written for. The core was on golang:1.25 until
+# 2026-11-09 (Go 1.26 was never run in production; protocol/psiphon, which
+# died in init on 1.26, had been dropped). Go 1.27 brings the goroutineleak
+# profile, served through experimental.debug.listen like the other profiles.
+FROM golang:1.27-alpine AS builder
 ARG VERSION=dev
 WORKDIR /src
 
