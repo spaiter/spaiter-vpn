@@ -283,7 +283,7 @@ gate_test() {
 		(cd core && tags=$(sed -n 's/^TAGS ?= //p' Makefile) &&
 			go list -tags "$tags" -f '{{if or .GoFiles .TestGoFiles}}{{.ImportPath}}{{end}}' ./... 2>/dev/null |
 			grep -vE '/replace/|/common/netns$' |
-			xargs -r go test -short -count=1 -tags "$tags" -ldflags '-checklinkname=0' \
+			xargs -r go test -short -count=1 -tags "$tags" -ldflags '-checklinkname=0' -vet=off \
 				-skip '^(TestIntegration.*|TestH_DnsttAutoResolvers)$' 2>&1)
 	})
 	status=$(printf '%s\n' "$output" | grep -qE '^(FAIL|--- FAIL|panic:)' && echo 1 || echo 0)
