@@ -277,11 +277,14 @@ gate_test() {
 	local output status
 	output=$({
 		first_party_packages | xargs -r go test -short -count=1 -ldflags '-checklinkname=0' 2>&1
-		# netns needs privileges to fork a holder process
+		# netns needs privileges to fork a holder process. Skipped by name: the tlsspoof
+		# integration tests need CAP_NET_ADMIN for TCP_REPAIR, and TestH_DnsttAutoResolvers
+		# expects the machine's own resolver list to be absent.
 		(cd core && tags=$(sed -n 's/^TAGS ?= //p' Makefile) &&
 			go list -tags "$tags" -f '{{if or .GoFiles .TestGoFiles}}{{.ImportPath}}{{end}}' ./... 2>/dev/null |
 			grep -vE '/replace/|/common/netns$' |
-			xargs -r go test -short -count=1 -tags "$tags" -ldflags '-checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=test' 2>&1)
+			xargs -r go test -short -count=1 -tags "$tags" -ldflags '-checklinkname=0' \
+				-skip '^(TestIntegration.*|TestH_DnsttAutoResolvers)$' 2>&1)
 	})
 	status=$(printf '%s\n' "$output" | grep -qE '^(FAIL|--- FAIL|panic:)' && echo 1 || echo 0)
 	if [[ $status -ne 0 ]]; then

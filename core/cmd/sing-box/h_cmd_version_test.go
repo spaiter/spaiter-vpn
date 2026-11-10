@@ -33,7 +33,7 @@ func hCaptureVersion(t *testing.T, name bool) string {
 
 func TestH_PrintVersion(t *testing.T) {
 	output := hCaptureVersion(t, false)
-	require.True(t, strings.HasPrefix(output, "hiddify-sing-box version "+C.Version+"\n\n"), output)
+	require.True(t, strings.HasPrefix(output, "spaiter-vpn-core version "+C.Version+"\n\n"), output)
 	require.Contains(t, output, "Environment: "+runtime.Version()+" "+runtime.GOOS+"/"+runtime.GOARCH+"\n")
 	require.Regexp(t, `CGO: (enabled|disabled)\n$`, output)
 
