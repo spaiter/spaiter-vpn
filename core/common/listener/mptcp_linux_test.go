@@ -10,7 +10,7 @@ import (
 	"github.com/sagernet/sing/common/logger"
 	"github.com/stretchr/testify/require"
 
-	"github.com/spaiter/spaiter-vpn/core/option"
+	"github.com/sagernet/sing-box/option"
 )
 
 // TestListenerMultipathTCPOnlyWhenAsked: an inbound listens on MPTCP only when

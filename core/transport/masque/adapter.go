@@ -3,8 +3,8 @@ package masque
 import (
 	"sync"
 
+	"github.com/sagernet/wireguard-go/tun"
 	"github.com/songgao/water"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/wireguard-go/tun"
 )
 
 type NetstackAdapter struct {

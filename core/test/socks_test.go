@@ -7,14 +7,14 @@ import (
 	"testing"
 	"time"
 
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	F "github.com/sagernet/sing/common/format"
 	"github.com/sagernet/sing/common/json/badoption"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/protocol/socks"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"github.com/stretchr/testify/require"
 )

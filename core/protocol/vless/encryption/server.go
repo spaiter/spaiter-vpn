@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sagernet/sing-box/common/xray/crypto"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/crypto"
 	"lukechampine.com/blake3"
 )
 

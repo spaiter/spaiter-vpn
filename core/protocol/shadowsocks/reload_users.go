@@ -1,25 +1,15 @@
 package shadowsocks
 
 import (
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
-// userName resolves an authenticated user index to a display name, bounds-
-// checked: a reload (or the SSM UpdateUsers path) may have replaced the list
-// since authentication. //H
-func (h *MultiInbound) userName(userIndex int) string {
-	users := h.users.Load()
-	if users == nil || userIndex < 0 || userIndex >= len(*users) {
-		return ""
-	}
-	return (*users)[userIndex].Name
-}
-
 // ReloadUsers implements adapter.UserReloader. Appends only — see
-// adapter.UsersAppendOnly for why reordering cannot be done in place. //H
+// adapter.UsersAppendOnly for why reordering cannot be done in place. The user
+// list is the one UpdateUsers (SSM API) and userName share, under usersAccess. //H
 func (h *MultiInbound) ReloadUsers(options any) error {
 	// The inbound registry stores options as a pointer (see
 	// adapter/inbound.Register), so that is what apply hands over.
@@ -28,14 +18,13 @@ func (h *MultiInbound) ReloadUsers(options any) error {
 		return E.New("shadowsocks: unexpected options type for user reload")
 	}
 	opts := *optsPtr
-	current := h.users.Load()
-	if current == nil {
-		return E.New("shadowsocks: inbound not initialized")
-	}
-	if !adapter.UsersAppendOnly(*current, opts.Users) {
+	h.usersAccess.Lock()
+	defer h.usersAccess.Unlock()
+	current := h.users
+	if !adapter.UsersAppendOnly(current, opts.Users) {
 		return E.New("shadowsocks: user list was not append-only, cannot reload in place")
 	}
-	if len(opts.Users) == len(*current) {
+	if len(opts.Users) == len(current) {
 		return nil
 	}
 	err := h.service.UpdateUsersWithPasswords(
@@ -47,7 +36,7 @@ func (h *MultiInbound) ReloadUsers(options any) error {
 	if err != nil {
 		return err
 	}
-	h.users.Store(&opts.Users)
-	h.logger.Info("users reloaded: ", len(opts.Users)-len(*current), " added, ", len(opts.Users), " total")
+	h.users = opts.Users
+	h.logger.Info("users reloaded: ", len(opts.Users)-len(current), " added, ", len(opts.Users), " total")
 	return nil
 }

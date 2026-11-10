@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common/x/list"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
 
 	"github.com/stretchr/testify/require"
 	"go4.org/netipx"

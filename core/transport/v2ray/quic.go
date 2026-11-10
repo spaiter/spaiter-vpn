@@ -4,12 +4,12 @@ import (
 	"context"
 	"os"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/tls"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 var (

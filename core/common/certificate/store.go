@@ -11,17 +11,19 @@ import (
 	"sync"
 
 	"github.com/sagernet/fswatch"
+	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
+	"github.com/sagernet/sing/service/filemanager"
 )
 
 var _ adapter.CertificateStore = (*Store)(nil)
 
 type Store struct {
+	ctx                       context.Context
 	access                    sync.RWMutex
 	storeType                 string
 	systemPool                *x509.CertPool
@@ -30,6 +32,7 @@ type Store struct {
 	certificatePaths          []string
 	certificateDirectoryPaths []string
 	watcher                   *fswatch.Watcher
+	anchorPEM                 []byte
 	//nolint:unused // populated only on darwin && cgo via the storePlatform embed.
 	platform storePlatform
 }
@@ -45,7 +48,11 @@ func NewStore(ctx context.Context, logger logger.Logger, options option.Certific
 		systemPool = x509.NewCertPool()
 		platformInterface := service.FromContext[adapter.PlatformInterface](ctx)
 		var systemValid bool
-		if platformInterface != nil {
+		for _, certificate := range systemCertificates() {
+			systemPool.AddCert(certificate)
+			systemValid = true
+		}
+		if platformInterface != nil { // H: certificates the hiddify app hands over
 			for _, cert := range platformInterface.SystemCertificates() {
 				if systemPool.AppendCertsFromPEM([]byte(cert)) {
 					systemValid = true
@@ -65,6 +72,7 @@ func NewStore(ctx context.Context, logger logger.Logger, options option.Certific
 		return nil, E.New("unknown certificate store: ", options.Store)
 	}
 	store := &Store{
+		ctx:                       ctx,
 		storeType:                 storeType,
 		systemPool:                systemPool,
 		certificate:               strings.Join(options.Certificate, "\n"),
@@ -94,10 +102,12 @@ func NewStore(ctx context.Context, logger logger.Logger, options option.Certific
 		}
 		store.watcher = watcher
 	}
-	err := store.update()
+	currentPool, anchorPEM, err := store.load()
 	if err != nil {
 		return nil, E.Cause(err, "initializing certificate store")
 	}
+	store.currentPool = currentPool
+	store.anchorPEM = anchorPEM
 	return store, nil
 }
 
@@ -105,29 +115,26 @@ func (s *Store) Name() string {
 	return "certificate"
 }
 
-func (s *Store) Start(stage adapter.StartStage) error {
-	if stage != adapter.StartStateStart {
-		return nil
-	}
-	if s.watcher != nil {
-		return s.watcher.Start()
+func (s *Store) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	switch stage {
+	case adapter.StartStateInitialize:
+		s.access.Lock()
+		err := s.updatePlatformLocked(s.anchorPEM)
+		s.access.Unlock()
+		if err != nil {
+			return err
+		}
+		scope.Add(s.closePlatform)
+	case adapter.StartStateStart:
+		if s.watcher != nil {
+			err := s.watcher.Start()
+			if err != nil {
+				return err
+			}
+			scope.Add(s.watcher.Close)
+		}
 	}
 	return nil
-}
-
-func (s *Store) Close() error {
-	watcher := s.watcher
-	s.watcher = nil
-
-	var closeErr error
-	if watcher != nil {
-		closeErr = watcher.Close()
-	}
-	platformErr := s.closePlatform()
-	if platformErr != nil {
-		closeErr = platformErr
-	}
-	return closeErr
 }
 
 func (s *Store) Pool() *x509.CertPool {
@@ -145,44 +152,56 @@ func (s *Store) ExclusiveAnchors() bool {
 }
 
 func (s *Store) update() error {
-	currentPool, err := s.newBasePool()
+	currentPool, anchorPEM, err := s.load()
 	if err != nil {
 		return err
+	}
+	s.access.Lock()
+	defer s.access.Unlock()
+	s.currentPool = currentPool
+	s.anchorPEM = anchorPEM
+	return s.updatePlatformLocked(anchorPEM)
+}
+
+func (s *Store) load() (*x509.CertPool, []byte, error) {
+	currentPool, err := s.newBasePool()
+	if err != nil {
+		return nil, nil, err
 	}
 	pemBuffer := new(bytes.Buffer)
 	switch s.storeType {
 	case C.CertificateStoreMozilla:
 		pemContent := mozillaIncludedPEM()
 		if !currentPool.AppendCertsFromPEM([]byte(pemContent)) {
-			return E.New("invalid Mozilla included certificate PEM")
+			return nil, nil, E.New("invalid Mozilla included certificate PEM")
 		}
 		appendPEMBlock(pemBuffer, string(pemContent))
 	case C.CertificateStoreChrome:
 		pemContent := chromeIncludedPEM()
 		if !currentPool.AppendCertsFromPEM([]byte(pemContent)) {
-			return E.New("invalid Chrome included certificate PEM")
+			return nil, nil, E.New("invalid Chrome included certificate PEM")
 		}
 		appendPEMBlock(pemBuffer, string(pemContent))
 	}
 	if s.certificate != "" {
 		if !currentPool.AppendCertsFromPEM([]byte(s.certificate)) {
-			return E.New("invalid certificate PEM strings")
+			return nil, nil, E.New("invalid certificate PEM strings")
 		}
 		appendPEMBlock(pemBuffer, s.certificate)
 	}
 	for _, path := range s.certificatePaths {
-		pemContent, err := os.ReadFile(path)
+		pemContent, err := filemanager.ReadFile(s.ctx, path)
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		if !currentPool.AppendCertsFromPEM(pemContent) {
-			return E.New("invalid certificate PEM file: ", path)
+			return nil, nil, E.New("invalid certificate PEM file: ", path)
 		}
 		appendPEMBlock(pemBuffer, string(pemContent))
 	}
 	var firstErr error
 	for _, directoryPath := range s.certificateDirectoryPaths {
-		directoryEntries, err := readUniqueDirectoryEntries(directoryPath)
+		directoryEntries, err := readUniqueDirectoryEntries(s.ctx, directoryPath)
 		if err != nil {
 			if firstErr == nil && !os.IsNotExist(err) {
 				firstErr = E.Cause(err, "invalid certificate directory: ", directoryPath)
@@ -190,19 +209,16 @@ func (s *Store) update() error {
 			continue
 		}
 		for _, directoryEntry := range directoryEntries {
-			pemContent, err := os.ReadFile(filepath.Join(directoryPath, directoryEntry.Name()))
+			pemContent, err := filemanager.ReadFile(s.ctx, filepath.Join(directoryPath, directoryEntry.Name()))
 			if err == nil && currentPool.AppendCertsFromPEM(pemContent) {
 				appendPEMBlock(pemBuffer, string(pemContent))
 			}
 		}
 	}
 	if firstErr != nil {
-		return firstErr
+		return nil, nil, firstErr
 	}
-	s.access.Lock()
-	defer s.access.Unlock()
-	s.currentPool = currentPool
-	return s.updatePlatformLocked(pemBuffer.Bytes())
+	return currentPool, pemBuffer.Bytes(), nil
 }
 
 func appendPEMBlock(buffer *bytes.Buffer, block string) {
@@ -229,8 +245,8 @@ func (s *Store) newBasePool() (*x509.CertPool, error) {
 	}
 }
 
-func readUniqueDirectoryEntries(dir string) ([]fs.DirEntry, error) {
-	files, err := os.ReadDir(dir)
+func readUniqueDirectoryEntries(ctx context.Context, dir string) ([]fs.DirEntry, error) {
+	files, err := filemanager.ReadDir(ctx, dir)
 	if err != nil {
 		return nil, err
 	}

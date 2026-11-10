@@ -5,10 +5,10 @@ import (
 	"os"
 	"sync"
 
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/dns"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/dns"
 )
 
 type TransportState int

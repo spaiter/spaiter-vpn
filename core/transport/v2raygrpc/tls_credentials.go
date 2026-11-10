@@ -5,8 +5,8 @@ import (
 	"net"
 	"os"
 
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	internal_credentials "github.com/spaiter/spaiter-vpn/core/transport/v2raygrpc/credentials"
+	"github.com/sagernet/sing-box/common/tls"
+	internal_credentials "github.com/sagernet/sing-box/transport/v2raygrpc/credentials"
 
 	"google.golang.org/grpc/credentials"
 )
@@ -22,8 +22,6 @@ func NewTLSTransportCredentials(config tls.Config) credentials.TransportCredenti
 func (c *TLSTransportCredentials) Info() credentials.ProtocolInfo {
 	return credentials.ProtocolInfo{
 		SecurityProtocol: "tls",
-		SecurityVersion:  "1.2",
-		ServerName:       c.config.ServerName(),
 	}
 }
 

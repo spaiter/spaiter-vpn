@@ -12,11 +12,11 @@ import (
 	"os"
 	"syscall"
 
+	"github.com/sagernet/sing-box/common/badtls"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	N "github.com/sagernet/sing/common/network"
 	aTLS "github.com/sagernet/sing/common/tls"
-	"github.com/spaiter/spaiter-vpn/core/common/badtls"
 
 	"golang.org/x/sys/unix"
 )

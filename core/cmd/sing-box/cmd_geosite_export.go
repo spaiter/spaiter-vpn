@@ -4,11 +4,11 @@ import (
 	"io"
 	"os"
 
+	"github.com/sagernet/sing-box/common/geosite"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/json"
-	"github.com/spaiter/spaiter-vpn/core/common/geosite"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"github.com/spf13/cobra"
 )

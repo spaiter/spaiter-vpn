@@ -4,9 +4,9 @@ import (
 	"context"
 	"strings"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/experimental/deprecated"
 	F "github.com/sagernet/sing/common/format"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/experimental/deprecated"
 )
 
 var _ RuleItem = (*OutboundItem)(nil)

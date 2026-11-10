@@ -3,7 +3,7 @@ package rule
 import (
 	"strings"
 
-	"github.com/spaiter/spaiter-vpn/core/adapter"
+	"github.com/sagernet/sing-box/adapter"
 )
 
 var _ RuleItem = (*PackageNameItem)(nil)
@@ -25,10 +25,10 @@ func NewPackageNameItem(packageNameList []string) *PackageNameItem {
 }
 
 func (r *PackageNameItem) Match(metadata *adapter.InboundContext) bool {
-	if metadata.ProcessInfo == nil || len(metadata.ProcessInfo.AndroidPackageNames) == 0 {
+	if metadata.ProcessInfo == nil || len(metadata.ProcessInfo.PackageNames) == 0 {
 		return false
 	}
-	for _, packageName := range metadata.ProcessInfo.AndroidPackageNames {
+	for _, packageName := range metadata.ProcessInfo.PackageNames {
 		if r.packageMap[packageName] {
 			return true
 		}

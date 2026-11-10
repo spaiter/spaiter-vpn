@@ -3,8 +3,8 @@
 package include
 
 import (
-	"github.com/spaiter/spaiter-vpn/core/adapter/certificate"
-	"github.com/spaiter/spaiter-vpn/core/service/acme"
+	"github.com/sagernet/sing-box/adapter/certificate"
+	"github.com/sagernet/sing-box/service/acme"
 )
 
 func registerACMECertificateProvider(registry *certificate.Registry) {

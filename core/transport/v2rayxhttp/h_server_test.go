@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/logger"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"github.com/stretchr/testify/require"
 )

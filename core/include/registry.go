@@ -3,56 +3,58 @@ package include
 import (
 	"context"
 
+	"github.com/sagernet/sing-box"
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/certificate"
+	"github.com/sagernet/sing-box/adapter/endpoint"
+	"github.com/sagernet/sing-box/adapter/inbound"
+	"github.com/sagernet/sing-box/adapter/outbound"
+	"github.com/sagernet/sing-box/adapter/service"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/dns"
+	"github.com/sagernet/sing-box/dns/transport"
+	"github.com/sagernet/sing-box/dns/transport/fakeip"
+	"github.com/sagernet/sing-box/dns/transport/hosts"
+	"github.com/sagernet/sing-box/dns/transport/local"
+	"github.com/sagernet/sing-box/dns/transport/mdns"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/protocol/anytls"
+	"github.com/sagernet/sing-box/protocol/block"
+	"github.com/sagernet/sing-box/protocol/bridge"
+	"github.com/sagernet/sing-box/protocol/direct"
+	"github.com/sagernet/sing-box/protocol/group"
+	"github.com/sagernet/sing-box/protocol/group/balancer"
+	"github.com/sagernet/sing-box/protocol/hiddify/gooserelay"
+	"github.com/sagernet/sing-box/protocol/hiddify/hinvalid"
+	"github.com/sagernet/sing-box/protocol/hiddify/xray"
+	"github.com/sagernet/sing-box/protocol/http"
+	"github.com/sagernet/sing-box/protocol/masque"
+	"github.com/sagernet/sing-box/protocol/masquewg" //H
+	"github.com/sagernet/sing-box/protocol/mieru"
+	"github.com/sagernet/sing-box/protocol/mixed"
+	"github.com/sagernet/sing-box/protocol/mtproto"
+	"github.com/sagernet/sing-box/protocol/naive"
+	"github.com/sagernet/sing-box/protocol/psiphon"
+	"github.com/sagernet/sing-box/protocol/redirect"
+	"github.com/sagernet/sing-box/protocol/shadowsocks"
+	"github.com/sagernet/sing-box/protocol/shadowtls"
+	snellprotocol "github.com/sagernet/sing-box/protocol/snell"
+	"github.com/sagernet/sing-box/protocol/socks"
+	"github.com/sagernet/sing-box/protocol/ssh"
+	"github.com/sagernet/sing-box/protocol/tor"
+	"github.com/sagernet/sing-box/protocol/trojan"
+	"github.com/sagernet/sing-box/protocol/trusttunnel"
+	"github.com/sagernet/sing-box/protocol/tun"
+	"github.com/sagernet/sing-box/protocol/tunnel"
+	"github.com/sagernet/sing-box/protocol/vless"
+	"github.com/sagernet/sing-box/protocol/vmess"
+	legacyWireguard "github.com/sagernet/sing-box/protocol/wireguard"
+	"github.com/sagernet/sing-box/service/api"
+	originca "github.com/sagernet/sing-box/service/origin_ca"
+	"github.com/sagernet/sing-box/service/resolved"
+	"github.com/sagernet/sing-box/service/ssmapi"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/certificate"
-	"github.com/spaiter/spaiter-vpn/core/adapter/endpoint"
-	"github.com/spaiter/spaiter-vpn/core/adapter/inbound"
-	"github.com/spaiter/spaiter-vpn/core/adapter/outbound"
-	"github.com/spaiter/spaiter-vpn/core/adapter/service"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/dns"
-	"github.com/spaiter/spaiter-vpn/core/dns/transport"
-	"github.com/spaiter/spaiter-vpn/core/dns/transport/fakeip"
-	"github.com/spaiter/spaiter-vpn/core/dns/transport/hosts"
-	"github.com/spaiter/spaiter-vpn/core/dns/transport/local"
-	"github.com/spaiter/spaiter-vpn/core/dns/transport/mdns"
-	"github.com/spaiter/spaiter-vpn/core/dns/transport/multi"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	"github.com/spaiter/spaiter-vpn/core/protocol/anytls"
-	"github.com/spaiter/spaiter-vpn/core/protocol/block"
-	"github.com/spaiter/spaiter-vpn/core/protocol/bridge"
-	"github.com/spaiter/spaiter-vpn/core/protocol/direct"
-	"github.com/spaiter/spaiter-vpn/core/protocol/group"
-	"github.com/spaiter/spaiter-vpn/core/protocol/group/balancer"
-	"github.com/spaiter/spaiter-vpn/core/protocol/hiddify/gooserelay"
-	"github.com/spaiter/spaiter-vpn/core/protocol/hiddify/hinvalid"
-	"github.com/spaiter/spaiter-vpn/core/protocol/hiddify/xray"
-	"github.com/spaiter/spaiter-vpn/core/protocol/http"
-	"github.com/spaiter/spaiter-vpn/core/protocol/masquewg" //H
-	"github.com/spaiter/spaiter-vpn/core/protocol/mieru"
-	"github.com/spaiter/spaiter-vpn/core/protocol/mixed"
-	"github.com/spaiter/spaiter-vpn/core/protocol/mtproto"
-	"github.com/spaiter/spaiter-vpn/core/protocol/naive"
-	"github.com/spaiter/spaiter-vpn/core/protocol/redirect"
-	"github.com/spaiter/spaiter-vpn/core/protocol/shadowsocks"
-	"github.com/spaiter/spaiter-vpn/core/protocol/shadowtls"
-	snellprotocol "github.com/spaiter/spaiter-vpn/core/protocol/snell"
-	"github.com/spaiter/spaiter-vpn/core/protocol/socks"
-	"github.com/spaiter/spaiter-vpn/core/protocol/ssh"
-	"github.com/spaiter/spaiter-vpn/core/protocol/tor"
-	"github.com/spaiter/spaiter-vpn/core/protocol/trojan"
-	"github.com/spaiter/spaiter-vpn/core/protocol/tun"
-	"github.com/spaiter/spaiter-vpn/core/protocol/tunnel"
-	"github.com/spaiter/spaiter-vpn/core/protocol/vless"
-	"github.com/spaiter/spaiter-vpn/core/protocol/vmess"
-	legacyWireguard "github.com/spaiter/spaiter-vpn/core/protocol/wireguard"
-	"github.com/spaiter/spaiter-vpn/core/service/api"
-	originca "github.com/spaiter/spaiter-vpn/core/service/origin_ca"
-	"github.com/spaiter/spaiter-vpn/core/service/resolved"
-	"github.com/spaiter/spaiter-vpn/core/service/ssmapi"
 )
 
 func Context(ctx context.Context) context.Context {
@@ -66,6 +68,9 @@ func InboundRegistry() *inbound.Registry {
 	redirect.RegisterRedirect(registry)
 	redirect.RegisterTProxy(registry)
 	direct.RegisterInbound(registry)
+	registerSudokuInbound(registry) //H
+	registerBondInbound(registry)   //H
+	registerCallInbound(registry)   //H
 
 	socks.RegisterInbound(registry)
 	http.RegisterInbound(registry)
@@ -83,9 +88,11 @@ func InboundRegistry() *inbound.Registry {
 	anytls.RegisterInbound(registry)
 	mieru.RegisterInbound(registry)
 	ssh.RegisterInbound(registry)
+	trusttunnel.RegistryInbound(registry)
 
 	registerQUICInbounds(registry)
 	registerCloudflaredInbound(registry)
+	registerTailcatInbound(registry)
 	registerStubForRemovedInbounds(registry)
 
 	return registry
@@ -115,16 +122,23 @@ func OutboundRegistry() *outbound.Registry {
 	vless.RegisterOutbound(registry)
 	anytls.RegisterOutbound(registry)
 	masquewg.RegisterOutbound(registry) //H
+	psiphon.RegisterOutbound(registry)
 	mieru.RegisterOutbound(registry)
 	hinvalid.RegisterOutbound(registry)
 	xray.RegisterOutbound(registry)
-	registerDNSTTOutbound(registry)
+	registerDNSResolverOutbounds(registry) //H: dnstt, masterdns, soar; unlicensed hmrd dependency, build tag with_dnstt
 	gooserelay.RegisterOutbound(registry)
 	balancer.RegisterLoadBalance(registry)
+	group.RegisterFallback(registry) //H
+	registerSudokuOutbound(registry) //H
+	registerBondOutbound(registry)   //H
+	registerCallOutbound(registry)   //H
 	registerMASQUEOutbound(registry)
 	legacyWireguard.RegisterOutbound(registry) //H
+	trusttunnel.RegisterOutbound(registry)
 
 	registerQUICOutbounds(registry)
+	registerTailcatOutbound(registry)
 	registerStubForRemovedOutbounds(registry)
 
 	return registry
@@ -134,11 +148,15 @@ func EndpointRegistry() *endpoint.Registry {
 	registry := endpoint.NewRegistry()
 
 	registerWireGuardEndpoint(registry)
+	registerOpenConnectEndpoint(registry)
+	registerOpenVPNEndpoints(registry)
+	masque.RegisterEndpoint(registry)
 	registerTailscaleEndpoint(registry)
 	tunnel.RegisterServerEndpoint(registry)
 	tunnel.RegisterClientEndpoint(registry)
 	registerWarpEndpoint(registry)
 	registerAwgEndpoint(registry)
+	hinvalid.RegisterEndpoint(registry)
 
 	return registry
 }
@@ -150,17 +168,20 @@ func DNSTransportRegistry() *dns.TransportRegistry {
 	transport.RegisterUDP(registry)
 	transport.RegisterTLS(registry)
 	transport.RegisterHTTPS(registry)
+	transport.RegisterGroup(registry)
 	hosts.RegisterTransport(registry)
 	local.RegisterTransport(registry)
 	mdns.RegisterTransport(registry)
 	fakeip.RegisterTransport(registry)
 	resolved.RegisterTransport(registry)
 	transport.RegisterSDNS(registry)
-	multi.RegisterTransport(registry) //H
+	transport.RegisterMulti(registry) //H
 
 	registerQUICTransports(registry)
 	registerDHCPTransport(registry)
 	registerTailscaleTransport(registry)
+	registerOpenConnectDNSTransport(registry)
+	registerOpenVPNDNSTransport(registry)
 
 	return registry
 }
@@ -171,7 +192,6 @@ func ServiceRegistry() *service.Registry {
 	api.RegisterService(registry)
 	resolved.RegisterService(registry)
 	ssmapi.RegisterService(registry)
-	registerSmartDNSPoolService(registry) //H
 
 	registerQUICServices(registry)
 	registerDERPService(registry)

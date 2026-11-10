@@ -1,10 +1,10 @@
-//go:build with_gvisor && ios
+//go:build with_tailscale && ios
 
 package tailssh
 
 import (
+	"github.com/sagernet/sing-box/adapter"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 )
 
 func selectShellBackend(platformInterface adapter.PlatformInterface) shellBackend {

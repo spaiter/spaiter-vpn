@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 
 	"github.com/stretchr/testify/require"
 )
@@ -12,7 +12,7 @@ import (
 func TestOptionsWrapper(t *testing.T) {
 	inbound := option.Inbound{
 		Type: C.TypeHTTP,
-		Options: &option.HTTPMixedInboundOptions{
+		Options: &option.HTTPInboundOptions{
 			InboundTLSOptionsContainer: option.InboundTLSOptionsContainer{
 				TLS: &option.InboundTLSOptions{
 					Enabled: true,
@@ -26,5 +26,5 @@ func TestOptionsWrapper(t *testing.T) {
 	require.NotNil(t, tlsOptions, "find inbound tls options")
 	tlsOptions.Enabled = false
 	tlsOptionsWrapper.ReplaceInboundTLSOptions(tlsOptions)
-	require.False(t, inbound.Options.(*option.HTTPMixedInboundOptions).TLS.Enabled, "replace tls enabled")
+	require.False(t, inbound.Options.(*option.HTTPInboundOptions).TLS.Enabled, "replace tls enabled")
 }

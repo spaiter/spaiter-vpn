@@ -1,4 +1,4 @@
-//go:build with_gvisor
+//go:build with_tailscale
 
 package tailssh
 
@@ -17,11 +17,11 @@ import (
 	"time"
 
 	gliderssh "github.com/sagernet/gliderssh"
+	"github.com/sagernet/sing-box/adapter"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/sessionrecording"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/tailcfg"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/types/key"
+	"github.com/sagernet/tailscale/sessionrecording"
+	"github.com/sagernet/tailscale/tailcfg"
+	"github.com/sagernet/tailscale/types/key"
 )
 
 type recordingRejectedError struct {

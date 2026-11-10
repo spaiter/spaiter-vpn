@@ -10,21 +10,23 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/outbound"
+	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/monitoring"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/uot"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/outbound"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	"github.com/spaiter/spaiter-vpn/core/common/monitoring"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
+	"github.com/sagernet/sing/service/filemanager"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -33,7 +35,11 @@ func RegisterOutbound(registry *outbound.Registry) {
 	outbound.Register[option.SSHOutboundOptions](registry, C.TypeSSH, NewOutbound)
 }
 
-var _ adapter.InterfaceUpdateListener = (*Outbound)(nil)
+var (
+	_ adapter.InterfaceUpdateListener = (*Outbound)(nil)
+	_ adapter.IdleConnectionKeeper    = (*Outbound)(nil)
+	_ adapter.OutboundWithMultiplex   = (*Outbound)(nil)
+)
 
 type Outbound struct {
 	outbound.Adapter
@@ -52,8 +58,16 @@ type Outbound struct {
 	clientAccess      sync.Mutex
 	clientConn        net.Conn
 	client            *ssh.Client
+	streams           int
+	closeIdle         bool
 	uotClient         *uot.Client
-	connectionErr     string
+	// H: connection state shown in the UI and used by monitoring
+	ready         atomic.Bool
+	connectionErr common.TypedValue[string]
+	tracker       adapter.StatusTracker //H
+	disconnected  chan struct{}
+	done          chan struct{}
+	closeOnce     sync.Once
 }
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.SSHOutboundOptions) (adapter.Outbound, error) {
@@ -62,8 +76,14 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		return nil, err
 	}
 
+	networks := options.Network.Build()                           //H
+	if options.UDPOverTCP == nil || !options.UDPOverTCP.Enabled { //H: SSH carries UDP only over TCP
+		networks = common.Filter(networks, func(network string) bool { //H
+			return network != N.NetworkUDP //H
+		}) //H
+	} //H
 	outbound := &Outbound{
-		Adapter:           outbound.NewAdapterWithDialerOptions(C.TypeSSH, tag, options.Network.Build(), options.DialerOptions),
+		Adapter:           outbound.NewAdapterWithDialerOptions(C.TypeSSH, tag, networks, options.DialerOptions), //H
 		ctx:               ctx,
 		logger:            logger,
 		dialer:            outboundDialer,
@@ -74,7 +94,10 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		mac:               options.MAC,
 		kexAlgorithm:      options.KexAlgorithm,
 		clientVersion:     options.ClientVersion,
+		disconnected:      make(chan struct{}, 1),
+		done:              make(chan struct{}),
 	}
+	outbound.ready.Store(false)
 	if outbound.serverAddr.Port == 0 {
 		outbound.serverAddr.Port = 22
 	}
@@ -93,7 +116,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 			privateKey = []byte(strings.Join(options.PrivateKey, "\n"))
 		} else {
 			var err error
-			privateKey, err = os.ReadFile(os.ExpandEnv(options.PrivateKeyPath))
+			privateKey, err = filemanager.ReadFile(ctx, os.ExpandEnv(options.PrivateKeyPath))
 			if err != nil {
 				return nil, E.Cause(err, "read private key")
 			}
@@ -114,7 +137,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		for _, hostKey := range options.HostKey {
 			key, _, _, _, err := ssh.ParseAuthorizedKey([]byte(hostKey))
 			if err != nil {
-				return nil, E.New("parse host key ", key)
+				return nil, E.Cause(err, "parse host key: ", hostKey)
 			}
 			outbound.hostKey = append(outbound.hostKey, key)
 		}
@@ -139,11 +162,7 @@ func randomVersion() string {
 	return version
 }
 
-func (s *Outbound) connect() (*ssh.Client, error) {
-	if s.client != nil {
-		return s.client, nil
-	}
-
+func (s *Outbound) connect(ctx context.Context) (client *ssh.Client, err error) {
 	s.clientAccess.Lock()
 	defer s.clientAccess.Unlock()
 
@@ -151,9 +170,31 @@ func (s *Outbound) connect() (*ssh.Client, error) {
 		return s.client, nil
 	}
 
-	conn, err := s.dialer.DialContext(s.ctx, N.NetworkTCP, s.serverAddr)
+	defer func() { // H: the result is shown in the UI
+		if err != nil {
+			s.connectionErr.Store(err.Error())
+		} else {
+			s.connectionErr.Store("")
+		}
+	}()
+
+	conn, err := s.dialer.DialContext(adapter.ContextForMultiplexSession(ctx), N.NetworkTCP, s.serverAddr)
 	if err != nil {
 		return nil, err
+	}
+	if ctx.Done() != nil {
+		handshakeConn := conn
+		stopContext := context.AfterFunc(ctx, func() {
+			_ = handshakeConn.Close()
+		})
+		defer func() {
+			if !stopContext() {
+				s.client = nil
+				s.clientConn = nil
+				client = nil
+				err = ctx.Err()
+			}
+		}()
 	}
 	config := &ssh.ClientConfig{
 		User:              s.user,
@@ -189,67 +230,215 @@ func (s *Outbound) connect() (*ssh.Client, error) {
 		return nil, E.Cause(err, "connect to ssh server")
 	}
 
-	client := ssh.NewClient(clientConn, chans, reqs)
+	client = ssh.NewClient(clientConn, chans, reqs)
 
 	s.clientConn = conn
 	s.client = client
+	s.streams = 0
+	s.logger.InfoContext(ctx, "connected to ssh server ", s.serverAddr)
+	s.ready.Store(true)
 
 	go func() {
 		client.Wait()
 		conn.Close()
 		s.clientAccess.Lock()
-		s.client = nil
-		s.clientConn = nil
+		if s.client == client {
+			s.client = nil
+			s.clientConn = nil
+			s.ready.Store(false)
+		}
 		s.clientAccess.Unlock()
+		select { // H: reconnect in the background
+		case s.disconnected <- struct{}{}:
+		default:
+		}
 	}()
 
 	return client, nil
 }
 
 func (s *Outbound) PostStart() error {
-	s.connect()
-	if s.IsReady() {
-		monitoring.Get(s.ctx).TestNow(s.Tag())
-	}
+	go s.keepConnected()
 	return nil
 }
 
-func (s *Outbound) InterfaceUpdated() {
-	common.Close(s.clientConn)
+// keepConnected connects in the background and reconnects after the connection drops, retrying
+// with a growing delay, so the outbound becomes ready (and gets tested) without waiting for
+// traffic; monitoring skips it while it is not ready.
+//
+// An idle close is not a drop. The URL test opens two channels and the second one does not
+// keep the session, so releaseStream closes an unreferenced connection. Reconnecting here
+// would test again and close again, which is a loop of SSH handshakes and probes. //H
+func (s *Outbound) keepConnected() {
+	const (
+		minRetryDelay = time.Second
+		maxRetryDelay = time.Minute
+	)
+	delay := minRetryDelay
+	for {
+		if !s.holdingConnection() && !s.ready.Load() {
+			if !s.waitSignal(0) {
+				return
+			}
+			continue
+		}
+		if !s.ready.Load() {
+			if _, err := s.connect(s.ctx); err != nil {
+				s.logger.Debug("connect to ssh server: ", err, ", retry in ", delay)
+				if !s.waitSignal(delay) {
+					return
+				}
+				delay = min(delay*2, maxRetryDelay)
+				continue
+			}
+			delay = minRetryDelay
+			if !s.holdingConnection() {
+				s.CloseIdleConnections()
+				continue
+			}
+			if monitor := monitoring.Get(s.ctx); monitor != nil {
+				monitor.TestNow(s.Tag())
+			}
+		}
+		if !s.waitSignal(0) {
+			return
+		}
+	}
 }
 
-func (s *Outbound) Close() error {
-	return common.Close(s.clientConn)
+// holdingConnection reports whether this outbound should keep its SSH session open.
+func (s *Outbound) holdingConnection() bool {
+	s.clientAccess.Lock()
+	hold := !s.closeIdle
+	s.clientAccess.Unlock()
+	return hold
+}
+
+// waitSignal waits for the session to drop, for idle-keeping to change, or for shutdown.
+// A positive delay also returns when that time elapses. false means the outbound is closing.
+func (s *Outbound) waitSignal(delay time.Duration) bool {
+	var timer <-chan time.Time
+	if delay > 0 {
+		timer = time.After(delay)
+	}
+	select {
+	case <-timer:
+		return true
+	case <-s.disconnected:
+		return true
+	case <-s.done:
+		return false
+	case <-s.ctx.Done():
+		return false
+	}
+}
+
+func (s *Outbound) InterfaceUpdated(ctx context.Context) {
+	s.clientAccess.Lock()
+	clientConn := s.clientConn
+	s.clientAccess.Unlock()
+	common.Close(clientConn) // the background loop reconnects
+}
+
+func (s *Outbound) MultiplexEnabled() bool {
+	return true
+}
+
+func (s *Outbound) SetKeepIdleConnections(keep bool) {
+	s.clientAccess.Lock()
+	s.closeIdle = !keep
+	s.clientAccess.Unlock()
+	if !keep {
+		s.CloseIdleConnections()
+	}
+	select { // wake keepConnected so it connects again, or stops retrying
+	case s.disconnected <- struct{}{}:
+	default:
+	}
+}
+
+func (s *Outbound) CloseIdleConnections() {
+	s.clientAccess.Lock()
+	if s.client == nil || s.streams > 0 {
+		s.clientAccess.Unlock()
+		return
+	}
+	clientConn := s.clientConn
+	s.client = nil
+	s.clientConn = nil
+	s.ready.Store(false) // H: shown in the UI; the session watcher no longer sees it as its own
+	s.clientAccess.Unlock()
+	common.Close(clientConn)
+}
+
+func (s *Outbound) releaseStream(client *ssh.Client, keepSession bool) {
+	s.clientAccess.Lock()
+	if s.client != client {
+		s.clientAccess.Unlock()
+		return
+	}
+	s.streams--
+	if !s.closeIdle || keepSession || s.streams > 0 {
+		s.clientAccess.Unlock()
+		return
+	}
+	clientConn := s.clientConn
+	s.client = nil
+	s.clientConn = nil
+	s.ready.Store(false) // H: shown in the UI; the session watcher no longer sees it as its own
+	s.clientAccess.Unlock()
+	common.Close(clientConn)
+}
+
+func (s *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage == adapter.StartStateStarted { //H: connect in the background once started
+		return s.PostStart() //H
+	} //H
+	if stage != adapter.StartStateInitialize {
+		return nil
+	}
+	scope.Add(func() error {
+		s.closeOnce.Do(func() { close(s.done) })
+		s.clientAccess.Lock()
+		clientConn := s.clientConn
+		s.clientAccess.Unlock()
+		return common.Close(clientConn)
+	})
+	return nil
 }
 
 func (s *Outbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
 	ctx, metadata := adapter.ExtendContext(ctx)
 	metadata.Outbound = s.Tag()
 	metadata.Destination = destination
-	client, err := s.connect()
+	if N.NetworkName(network) == N.NetworkUDP && s.uotClient != nil { //H: before counting a stream, as the UoT client dials through this outbound and counts its own
+		s.logger.InfoContext(ctx, "outbound UoT connect packet connection to ", destination) //H
+		return s.uotClient.DialContext(ctx, network, destination)                            //H
+	} //H
+	client, err := s.connect(ctx)
 	if err != nil {
-		s.connectionErr = err.Error()
 		return nil, err
 	}
-	s.connectionErr = ""
+	s.clientAccess.Lock()
+	if s.client == client {
+		s.streams++
+	}
+	s.clientAccess.Unlock()
 
 	switch N.NetworkName(network) {
 
 	case N.NetworkTCP:
 		s.logger.InfoContext(ctx, "outbound connection to ", destination)
 	case N.NetworkUDP:
-		if s.uotClient != nil {
-			s.logger.InfoContext(ctx, "outbound UoT connect packet connection to ", destination)
-			return s.uotClient.DialContext(ctx, network, destination)
-		} else {
-			s.logger.InfoContext(ctx, "outbound packet connection to ", destination)
-		}
+		s.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	}
 	conn, err := client.Dial(network, destination.String())
 	if err != nil {
+		s.releaseStream(client, false)
 		return nil, err
 	}
-	return &chanConnWrapper{Conn: conn}, nil
+	keepSession := adapter.KeepSessionFromContext(ctx)
+	return &chanConnWrapper{Conn: conn, onClose: func() { s.releaseStream(client, keepSession) }}, nil
 }
 
 func (s *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
@@ -268,6 +457,14 @@ func (s *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 
 type chanConnWrapper struct {
 	net.Conn
+	closeOnce sync.Once
+	onClose   func()
+}
+
+func (c *chanConnWrapper) Close() error {
+	err := c.Conn.Close()
+	c.closeOnce.Do(c.onClose)
+	return err
 }
 
 func (c *chanConnWrapper) SetDeadline(t time.Time) error {
@@ -282,18 +479,15 @@ func (c *chanConnWrapper) SetWriteDeadline(t time.Time) error {
 	return os.ErrInvalid
 }
 
-func (s *Outbound) IsReady() bool {
-	return s.client != nil
+// Status is ready while the SSH session is up, reconnecting after it was. //H
+func (s *Outbound) Status() adapter.Status {
+	return s.tracker.Status(s.ready.Load())
 }
-func (s *Outbound) ProxyDisplayName() string {
-	str := C.ProxyDisplayName(s.Type())
-	if !s.IsReady() {
-		if s.connectionErr != "" {
-			str += " ❌ "
-			str += s.connectionErr
-		} else {
-			str += " ⚠️ Connecting..."
-		}
-	}
-	return s.connectionErr
-}
+
+// StatusError is why the last connection to the server failed, while it is not ready. //H
+func (s *Outbound) StatusError() error { //H
+	if connectionErr := s.connectionErr.Load(); connectionErr != "" && !s.ready.Load() { //H
+		return E.New(connectionErr) //H
+	} //H
+	return nil //H
+} //H

@@ -4,9 +4,9 @@ import (
 	"flag"
 	"os"
 
-	"github.com/spaiter/spaiter-vpn/core/cmd/internal/build_shared"
-	"github.com/spaiter/spaiter-vpn/core/common/badversion"
-	"github.com/spaiter/spaiter-vpn/core/log"
+	"github.com/sagernet/sing-box/cmd/internal/build_shared"
+	"github.com/sagernet/sing-box/common/badversion"
+	"github.com/sagernet/sing-box/log"
 )
 
 var (

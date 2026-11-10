@@ -9,9 +9,9 @@ import (
 	"slices"
 	"time"
 
+	"github.com/sagernet/sing-box/route"
 	"github.com/sagernet/sing/common/buf"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/route"
 
 	xroute "golang.org/x/net/route"
 	"golang.org/x/sys/unix"

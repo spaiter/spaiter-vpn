@@ -4,9 +4,9 @@ import (
 	"net"
 	"net/netip"
 
+	"github.com/sagernet/sing-box/option"
 	tun "github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 const (

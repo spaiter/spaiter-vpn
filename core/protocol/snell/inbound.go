@@ -6,22 +6,22 @@ import (
 	"os"
 	"sync/atomic"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/inbound"
+	"github.com/sagernet/sing-box/common/listener"
+	"github.com/sagernet/sing-box/common/uot"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	snellprotocol "github.com/sagernet/sing-snell"
+	"github.com/sagernet/sing-snell/snellv5"
+	"github.com/sagernet/sing-snell/snellv6"
 	"github.com/sagernet/sing/common/auth"
 	E "github.com/sagernet/sing/common/exceptions"
 	F "github.com/sagernet/sing/common/format"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/inbound"
-	"github.com/spaiter/spaiter-vpn/core/common/listener"
-	"github.com/spaiter/spaiter-vpn/core/common/uot"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	snellprotocol "github.com/spaiter/spaiter-vpn/core/thirdparty/sing-snell"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/sing-snell/snellv5"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/sing-snell/snellv6"
 )
 
 func RegisterInbound(registry *inbound.Registry) {
@@ -120,15 +120,16 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	return inbound, nil
 }
 
-func (h *Inbound) Start(stage adapter.StartStage) error {
+func (h *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateStart {
 		return nil
 	}
-	return h.listener.Start()
-}
-
-func (h *Inbound) Close() error {
-	return h.listener.Close()
+	err := h.listener.Start()
+	if err != nil {
+		return err
+	}
+	scope.Add(h.listener.Close)
+	return nil
 }
 
 func (h *Inbound) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
@@ -190,6 +191,8 @@ func (h *Inbound) newConnection(ctx context.Context, conn net.Conn, metadata ada
 func (h *Inbound) newPacketConnection(ctx context.Context, conn N.PacketConn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
 	metadata.Inbound = h.Tag()
 	metadata.InboundType = h.Type()
+	// The snell client in Surge rejects UDP responses with domain addresses.
+	metadata.UDPDisableDomainUnmapping = true
 	if h.hasUsers() {
 		userIndex, loaded := auth.UserFromContext[int](ctx)
 		if !loaded {

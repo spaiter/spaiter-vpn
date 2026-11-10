@@ -8,13 +8,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	boxService "github.com/sagernet/sing-box/adapter/service"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	boxService "github.com/spaiter/spaiter-vpn/core/adapter/service"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 func RegisterService(registry *boxService.Registry) {
@@ -66,9 +66,10 @@ func NewService(ctx context.Context, logger log.ContextLogger, tag string, optio
 	}, nil
 }
 
-func (s *Service) Start(stage adapter.StartStage) error {
+func (s *Service) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	switch stage {
 	case adapter.StartStateInitialize:
+		scope.Add(s.Close) // closed with the box
 		service.MustRegister[adapter.XDPBlocker](s.ctx, s)
 	case adapter.StartStateStart:
 		ctx, cancel := context.WithCancel(s.ctx)

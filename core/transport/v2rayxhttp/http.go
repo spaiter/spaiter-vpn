@@ -4,8 +4,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/spaiter/spaiter-vpn/core/common/xray/net"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/signal/done"
+	"github.com/sagernet/sing-box/common/xray/net"
+	"github.com/sagernet/sing-box/common/xray/signal/done"
 )
 
 type httpSession struct {

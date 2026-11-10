@@ -1,10 +1,11 @@
 package rule
 
 import (
+	"slices"
 	"strings"
 
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/option"
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/option"
 
 	"github.com/miekg/dns"
 )
@@ -31,10 +32,8 @@ func (r *DNSResponseRecordItem) Match(metadata *adapter.InboundContext) bool {
 	}
 	records := r.selector(metadata.DNSResponse)
 	for _, expected := range r.records {
-		for _, record := range records {
-			if expected.Match(record) {
-				return true
-			}
+		if slices.ContainsFunc(records, expected.Match) {
+			return true
 		}
 	}
 	return false

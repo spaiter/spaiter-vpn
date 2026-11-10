@@ -7,14 +7,23 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net"
-
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
-// Config is the account this outbound runs on, either minted by createConfig or
-// handed to us whole via the `config` option. Same shape either way, so the
-// cache file format is unaffected.
-type Config option.MASQUEAccount
+type Config struct {
+	PrivateKey     string `json:"private_key"`               // Base64-encoded ECDSA private key
+	EndpointV4     string `json:"endpoint_v4"`               // IPv4 address of the endpoint
+	EndpointV6     string `json:"endpoint_v6"`               // IPv6 address of the endpoint
+	EndpointH2V4   string `json:"endpoint_h2_v4"`            // IPv4 address used in HTTP/2 mode
+	EndpointH2V6   string `json:"endpoint_h2_v6"`            // IPv6 address used in HTTP/2 mode
+	EndpointPubKey string `json:"endpoint_pub_key"`          // PEM-encoded ECDSA public key of the endpoint to verify against
+	License        string `json:"license"`                   // Application license key
+	ID             string `json:"id"`                        // Device unique identifier
+	AccessToken    string `json:"access_token"`              // Authentication token for API access
+	IPv4           string `json:"ipv4"`                      // Assigned IPv4 address
+	IPv6           string `json:"ipv6"`                      // Assigned IPv6 address
+	EndpointPort   int    `json:"endpoint_port,omitempty"`   //H: port of the endpoints; 443 when 0
+	ReplacedDevice string `json:"replaced_device,omitempty"` //H: private key of the link's device this registered one replaces
+}
 
 func (c *Config) GetEcPrivateKey() (*ecdsa.PrivateKey, error) {
 	privKeyB64, err := base64.StdEncoding.DecodeString(c.PrivateKey)

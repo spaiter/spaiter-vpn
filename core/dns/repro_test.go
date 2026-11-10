@@ -2,14 +2,15 @@ package dns
 
 import (
 	"context"
+	"github.com/sagernet/sing/common"
 	"net/netip"
 	"testing"
 
+	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json/badoption"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	mDNS "github.com/miekg/dns"
 	"github.com/stretchr/testify/require"
@@ -20,7 +21,7 @@ func TestReproLookupWithRulesUsesRequestStrategy(t *testing.T) {
 
 	defaultTransport := &fakeDNSTransport{tag: "default", transportType: C.DNSTypeUDP}
 	var qTypes []uint16
-	router := newTestRouter(t, nil, &fakeDNSTransportManager{
+	router := newTestRouter(t, nil, &routerTestFakeDNSTransportManager{
 		defaultTransport: defaultTransport,
 		transports: map[string]adapter.DNSTransport{
 			"default": defaultTransport,
@@ -46,7 +47,7 @@ func TestReproLookupWithRulesUsesRequestStrategy(t *testing.T) {
 func TestReproLogicalMatchResponseIPCIDR(t *testing.T) {
 	t.Parallel()
 
-	transportManager := &fakeDNSTransportManager{
+	transportManager := &routerTestFakeDNSTransportManager{
 		defaultTransport: &fakeDNSTransport{tag: "default", transportType: C.DNSTypeUDP},
 		transports: map[string]adapter.DNSTransport{
 			"upstream": &fakeDNSTransport{tag: "upstream", transportType: C.DNSTypeUDP},
@@ -74,8 +75,8 @@ func TestReproLogicalMatchResponseIPCIDR(t *testing.T) {
 					Domain: badoption.Listable[string]{"example.com"},
 				},
 				DNSRuleAction: option.DNSRuleAction{
-					Action:       C.RuleActionTypeEvaluate,
-					RouteOptions: option.DNSRouteActionOptions{Server: "upstream"},
+					Action:          C.RuleActionTypeEvaluate,
+					EvaluateOptions: option.DNSEvaluateActionOptions{Server: "upstream"},
 				},
 			},
 		},
@@ -88,8 +89,8 @@ func TestReproLogicalMatchResponseIPCIDR(t *testing.T) {
 						Type: C.RuleTypeDefault,
 						DefaultOptions: option.DefaultDNSRule{
 							RawDefaultDNSRule: option.RawDefaultDNSRule{
-								MatchResponse: true,
-								IPCIDR:        badoption.Listable[string]{"1.1.1.0/24"},
+								MatchResponse: &option.DNSRuleMatchResponse{Enabled: true},
+								IPCIDR:        badoption.Listable[*badoption.Prefixable]{common.Ptr(badoption.Prefixable(netip.MustParsePrefix("1.1.1.0/24")))},
 							},
 						},
 					}},

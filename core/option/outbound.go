@@ -2,17 +2,20 @@ package option
 
 import (
 	"context"
+	"reflect"
 
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/schema"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/common/json/badjson"
 	"github.com/sagernet/sing/common/json/badoption"
 	M "github.com/sagernet/sing/common/metadata"
 	"github.com/sagernet/sing/service"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
 )
 
 type OutboundOptionsRegistry interface {
+	OptionTypes() []string
 	CreateOptions(outboundType string) (any, bool)
 }
 
@@ -25,6 +28,9 @@ type _Outbound struct {
 type Outbound _Outbound
 
 func (h *Outbound) MarshalJSONContext(ctx context.Context) ([]byte, error) {
+	if raw, isRaw := rawInvalidConfig(h.Type, h.Options); isRaw {
+		return raw, nil
+	}
 	return badjson.MarshallObjectsContext(ctx, (*_Outbound)(h), h.Options)
 }
 
@@ -37,6 +43,16 @@ func (h *Outbound) UnmarshalJSONContext(ctx context.Context, content []byte) err
 	if registry == nil {
 		return E.New("missing outbound options registry in context")
 	}
+	// H: keep a broken outbound as an invalid placeholder instead of failing the whole config
+	err = h.unmarshalOptions(ctx, registry, content)
+	if err != nil {
+		h.Options = newInvalidOptions(h.Type, content, err)
+		h.Type = C.TypeHInvalidConfig
+	}
+	return nil
+}
+
+func (h *Outbound) unmarshalOptions(ctx context.Context, registry OutboundOptionsRegistry, content []byte) error {
 	switch h.Type {
 	case C.TypeDNS:
 		return E.New("dns outbound is deprecated in sing-box 1.11.0 and removed in sing-box 1.13.0, use rule actions instead")
@@ -45,7 +61,7 @@ func (h *Outbound) UnmarshalJSONContext(ctx context.Context, content []byte) err
 	if !loaded {
 		return E.New("unknown outbound type: ", h.Type)
 	}
-	err = badjson.UnmarshallExcludedContext(ctx, content, (*_Outbound)(h), options)
+	err := badjson.UnmarshallExcludedContext(ctx, content, (*_Outbound)(h), options)
 	if err != nil {
 		return err
 	}
@@ -59,41 +75,62 @@ func (h *Outbound) UnmarshalJSONContext(ctx context.Context, content []byte) err
 	return nil
 }
 
+func (h Outbound) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
+	return builder.Define("Outbound", func() (*schema.Node, error) {
+		registry := service.FromContext[OutboundOptionsRegistry](builder.Context())
+		if registry == nil {
+			return nil, E.New("missing outbound options registry in context")
+		}
+		return registryUnion(builder, registry, []string{C.TypeShadowsocksR, C.TypeWireGuard}, true)
+	})
+}
+
 type DialerOptionsWrapper interface {
 	TakeDialerOptions() DialerOptions
 	ReplaceDialerOptions(options DialerOptions)
 }
 
 type DialerOptions struct {
-	Detour               string                            `json:"detour,omitempty"`
-	BindInterface        string                            `json:"bind_interface,omitempty"`
-	Inet4BindAddress     *badoption.Addr                   `json:"inet4_bind_address,omitempty"`
-	Inet6BindAddress     *badoption.Addr                   `json:"inet6_bind_address,omitempty"`
-	BindAddressNoPort    bool                              `json:"bind_address_no_port,omitempty"`
-	ProtectPath          string                            `json:"protect_path,omitempty"`
-	RoutingMark          FwMark                            `json:"routing_mark,omitempty"`
-	ReuseAddr            bool                              `json:"reuse_addr,omitempty"`
-	NetNs                string                            `json:"netns,omitempty"`
-	ConnectTimeout       badoption.Duration                `json:"connect_timeout,omitempty"`
-	TCPFastOpen          bool                              `json:"tcp_fast_open,omitempty"`
-	TCPMultiPath         bool                              `json:"tcp_multi_path,omitempty"`
-	DisableTCPKeepAlive  bool                              `json:"disable_tcp_keep_alive,omitempty"`
-	TCPKeepAlive         badoption.Duration                `json:"tcp_keep_alive,omitempty"`
-	TCPKeepAliveInterval badoption.Duration                `json:"tcp_keep_alive_interval,omitempty"`
-	UDPFragment          *bool                             `json:"udp_fragment,omitempty"`
-	UDPFragmentDefault   bool                              `json:"-"`
-	DomainResolver       *DomainResolveOptions             `json:"domain_resolver,omitempty"`
-	NetworkStrategy      *NetworkStrategy                  `json:"network_strategy,omitempty"`
-	NetworkType          badoption.Listable[InterfaceType] `json:"network_type,omitempty"`
-	FallbackNetworkType  badoption.Listable[InterfaceType] `json:"fallback_network_type,omitempty"`
-	FallbackDelay        badoption.Duration                `json:"fallback_delay,omitempty"`
+	Detour string `json:"detour,omitempty" reference:"outbound"`
+	// H: Xray-style finalmask applied to the connections this dialer opens
+	FinalMask *FinalMaskOptions `json:"finalmask,omitempty"`
+	// H: dialer-level TLS ClientHello fragmentation (size/sleep). Distinct from
+	// route-action tls_fragment (bool) and tls.fragment (bool).
+	TLSFragment TLSFragmentOptions `json:"tls_fragment,omitempty"`
+	AbstractDialerOptions
+}
+
+type AbstractDialerOptions struct {
+	BindInterface              string                            `json:"bind_interface,omitempty"`
+	Inet4BindAddress           *badoption.Addr                   `json:"inet4_bind_address,omitempty"`
+	Inet6BindAddress           *badoption.Addr                   `json:"inet6_bind_address,omitempty"`
+	BindAddressNoPort          bool                              `json:"bind_address_no_port,omitempty"`
+	ProtectPath                string                            `json:"protect_path,omitempty"`
+	RoutingMark                FwMark                            `json:"routing_mark,omitempty"`
+	ReuseAddr                  bool                              `json:"reuse_addr,omitempty"`
+	NetNs                      string                            `json:"netns,omitempty" reference:"network_namespace"`
+	ConnectTimeout             badoption.Duration                `json:"connect_timeout,omitempty"`
+	TCPFastOpen                bool                              `json:"tcp_fast_open,omitempty"`
+	TCPMultiPath               bool                              `json:"tcp_multi_path,omitempty"`
+	DisableTCPKeepAlive        bool                              `json:"disable_tcp_keep_alive,omitempty"`
+	TCPKeepAlive               badoption.Duration                `json:"tcp_keep_alive,omitempty"`
+	TCPKeepAliveInterval       badoption.Duration                `json:"tcp_keep_alive_interval,omitempty"`
+	TCPKeepAliveSystemDefaults bool                              `json:"-"`
+	UDPBindPort                uint16                            `json:"-"`
+	UDPFragment                *bool                             `json:"udp_fragment,omitempty"`
+	UDPFragmentDefault         bool                              `json:"-"`
+	DomainResolver             *DomainResolveOptions             `json:"domain_resolver,omitempty"`
+	NetworkStrategy            *NetworkStrategy                  `json:"network_strategy,omitempty"`
+	NetworkType                badoption.Listable[InterfaceType] `json:"network_type,omitempty"`
+	FallbackNetworkType        badoption.Listable[InterfaceType] `json:"fallback_network_type,omitempty"`
+	FallbackDelay              badoption.Duration                `json:"fallback_delay,omitempty"`
 
 	// Deprecated: migrated to domain resolver
-	DomainStrategy DomainStrategy `json:"domain_strategy,omitempty"`
+	DomainStrategy DomainStrategy `json:"domain_strategy,omitempty" schema:"omit"`
 }
 
 type _DomainResolveOptions struct {
-	Server                 string                `json:"server"`
+	Server                 string                `json:"server" reference:"dns_server"`
 	Timeout                badoption.Duration    `json:"timeout,omitempty"`
 	Strategy               DomainStrategy        `json:"strategy,omitempty"`
 	DisableCache           bool                  `json:"disable_cache,omitempty"`
@@ -115,7 +152,7 @@ func (o DomainResolveOptions) MarshalJSON() ([]byte, error) {
 		o.ClientSubnet == nil {
 		return json.Marshal(o.Server)
 	} else {
-		return json.Marshal((_DomainResolveOptions)(o))
+		return json.Marshal(_DomainResolveOptions(o))
 	}
 }
 
@@ -136,6 +173,18 @@ func (o *DomainResolveOptions) UnmarshalJSON(bytes []byte) error {
 	return nil
 }
 
+func (o DomainResolveOptions) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
+	return builder.Define("DomainResolver", func() (*schema.Node, error) {
+		objectForm := schema.StrictObject()
+		err := builder.FlattenStruct(objectForm, reflect.TypeFor[DomainResolveOptions]())
+		if err != nil {
+			return nil, err
+		}
+		objectForm.Required = []string{"server"}
+		return schema.AnyOf(schema.TagReferenceNode("dns_server"), objectForm), nil
+	})
+}
+
 func (o *DialerOptions) TakeDialerOptions() DialerOptions {
 	return *o
 }
@@ -151,7 +200,7 @@ type ServerOptionsWrapper interface {
 
 type ServerOptions struct {
 	Server     string `json:"server"`
-	ServerPort uint16 `json:"server_port"`
+	ServerPort uint16 `json:"server_port,omitempty"`
 }
 
 func (o ServerOptions) Build() M.Socksaddr {

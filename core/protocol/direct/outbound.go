@@ -7,6 +7,13 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/outbound"
+	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/proxyproto"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing-tun/ping"
 	"github.com/sagernet/sing/common"
@@ -16,12 +23,6 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/outbound"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 func RegisterOutbound(registry *outbound.Registry) {
@@ -29,10 +30,11 @@ func RegisterOutbound(registry *outbound.Registry) {
 }
 
 var (
-	_ N.ParallelDialer             = (*Outbound)(nil)
-	_ dialer.ParallelNetworkDialer = (*Outbound)(nil)
-	_ dialer.DirectDialer          = (*Outbound)(nil)
-	_ adapter.FlowOutbound         = (*Outbound)(nil)
+	_ N.ParallelDialer                = (*Outbound)(nil)
+	_ dialer.ParallelNetworkDialer    = (*Outbound)(nil)
+	_ dialer.DirectDialer             = (*Outbound)(nil)
+	_ adapter.FlowOutbound            = (*Outbound)(nil)
+	_ adapter.InterfaceUpdateListener = (*Outbound)(nil)
 )
 
 type Outbound struct {
@@ -46,6 +48,7 @@ type Outbound struct {
 	isEmpty        bool
 	myAddresses    common.TypedValue[[]netip.Prefix]
 	icmpPort       *ping.Port
+	proxyProtocol  uint8 //H
 }
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.DirectOutboundOptions) (adapter.Outbound, error) {
@@ -71,51 +74,81 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		domainStrategy: C.DomainStrategy(options.DomainStrategy),
 		fallbackDelay:  time.Duration(options.FallbackDelay),
 		dialer:         outboundDialer.(dialer.ParallelInterfaceDialer),
-		isEmpty:        reflect.DeepEqual(options.DialerOptions, option.DialerOptions{UDPFragmentDefault: true}),
+		isEmpty: reflect.DeepEqual(options.DialerOptions, option.DialerOptions{
+			AbstractDialerOptions: option.AbstractDialerOptions{UDPFragmentDefault: true},
+		}),
 	}
-	//nolint:staticcheck
-	if options.ProxyProtocol != 0 {
-		return nil, E.New("Proxy Protocol is deprecated and removed in sing-box 1.6.0")
+	// H: restored; send a PROXY protocol header (version 1 or 2) on TCP connections
+	switch options.ProxyProtocol {
+	case 0, 1, 2:
+		outbound.proxyProtocol = options.ProxyProtocol
+	default:
+		return nil, E.New("invalid proxy protocol version: ", options.ProxyProtocol)
 	}
 	if defaultDialer, isDefaultDialer := common.Cast[*dialer.DefaultDialer](outbound.dialer); isDefaultDialer {
+		icmpControl := defaultDialer.ICMPControl()
 		outbound.icmpPort = ping.NewPort(ctx, logger, func(destination netip.Addr) control.Func {
-			return defaultDialer.DialerForICMPDestination(destination).Control
+			return icmpControl
 		}, 0)
 	}
 	return outbound, nil
 }
 
-func (h *Outbound) Start(stage adapter.StartStage) error {
+func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	switch stage {
+	case adapter.StartStateInitialize:
+		if h.icmpPort != nil {
+			scope.Add(h.icmpPort.Close)
+		}
 	case adapter.StartStatePostStart, adapter.StartStateStarted:
-		h.fetchMyAddresses()
+		if len(h.myAddresses.Load()) == 0 {
+			h.fetchMyAddresses()
+		}
 	}
 	return nil
 }
 
 func (h *Outbound) fetchMyAddresses() {
-	if len(h.myAddresses.Load()) > 0 {
+	interfaceMonitor := h.network.InterfaceMonitor()
+	if interfaceMonitor == nil {
 		return
 	}
-	myInterfaceNames := h.network.InterfaceMonitor().MyInterfaces()
+	myInterfaceNames := interfaceMonitor.MyInterfaces()
 	if len(myInterfaceNames) == 0 {
 		return
 	}
-	var myAddresses []netip.Prefix
+	var (
+		myAddresses []netip.Prefix
+		found       bool
+	)
 	for _, myInterfaceName := range myInterfaceNames {
 		myInterface, err := h.network.InterfaceFinder().ByName(myInterfaceName)
 		if err != nil {
 			continue
 		}
+		found = true
 		myAddresses = append(myAddresses, myInterface.Addresses...)
 	}
+	if !found {
+		return
+	}
 	h.myAddresses.Store(myAddresses)
+}
+
+func (h *Outbound) InterfaceUpdated(ctx context.Context) {
+	h.fetchMyAddresses()
+	if h.icmpPort != nil {
+		h.icmpPort.Close()
+	}
 }
 
 func (h *Outbound) isMyLoopbackAddress(addresses ...netip.Addr) bool {
 	for _, prefix := range h.myAddresses.Load() {
 		for _, address := range addresses {
-			if prefix.Addr() != address && prefix.Contains(address) {
+			if !C.IsDarwin && prefix.Addr() == address {
+				continue
+			}
+			if prefix.Contains(address) {
 				return true
 			}
 		}
@@ -137,7 +170,16 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination 
 	case N.NetworkUDP:
 		h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	}
-	return h.dialer.DialContext(ctx, network, destination)
+	conn, err := h.dialer.DialContext(ctx, network, destination)
+	return h.withProxyProtocol(ctx, network, destination, conn, err)
+}
+
+// withProxyProtocol sends the PROXY protocol header on a new TCP connection when configured. //H
+func (h *Outbound) withProxyProtocol(ctx context.Context, network string, destination M.Socksaddr, conn net.Conn, err error) (net.Conn, error) {
+	if err != nil || h.proxyProtocol == 0 || network != N.NetworkTCP {
+		return conn, err
+	}
+	return proxyproto.WriteHeader(ctx, conn, h.proxyProtocol, destination)
 }
 
 func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
@@ -157,6 +199,10 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 
 func (h *Outbound) PreMatchFlow(network string, destination netip.Addr) adapter.PreMatchAction {
 	if network == N.NetworkICMP && h.icmpPort != nil {
+		if h.isMyLoopbackAddress(destination) {
+			h.logger.Error("reject ", network, " connection to ", destination, ": loopback connection to TUN range")
+			return adapter.PreMatchReject
+		}
 		return adapter.PreMatchFlow
 	}
 	return adapter.PreMatchContinue
@@ -182,13 +228,6 @@ func (h *Outbound) WritePackets(packets [][]byte) error {
 	return h.icmpPort.WritePackets(packets)
 }
 
-func (h *Outbound) Close() error {
-	if h.icmpPort != nil {
-		return h.icmpPort.Close()
-	}
-	return nil
-}
-
 func (h *Outbound) DialParallel(ctx context.Context, network string, destination M.Socksaddr, destinationAddresses []netip.Addr) (net.Conn, error) {
 	if h.isMyLoopbackAddress(destinationAddresses...) {
 		return nil, E.New("loopback connection to TUN range")
@@ -203,7 +242,8 @@ func (h *Outbound) DialParallel(ctx context.Context, network string, destination
 	case N.NetworkUDP:
 		h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	}
-	return dialer.DialParallelNetwork(ctx, h.dialer, network, destination, destinationAddresses, len(destinationAddresses) > 0 && destinationAddresses[0].Is6(), nil, nil, nil, h.fallbackDelay)
+	conn, err := dialer.DialParallelNetwork(ctx, h.dialer, network, destination, destinationAddresses, len(destinationAddresses) > 0 && destinationAddresses[0].Is6(), nil, nil, nil, h.fallbackDelay)
+	return h.withProxyProtocol(ctx, network, destination, conn, err)
 }
 
 func (h *Outbound) DialParallelNetwork(ctx context.Context, network string, destination M.Socksaddr, destinationAddresses []netip.Addr, networkStrategy *C.NetworkStrategy, networkType []C.InterfaceType, fallbackNetworkType []C.InterfaceType, fallbackDelay time.Duration) (net.Conn, error) {
@@ -220,7 +260,11 @@ func (h *Outbound) DialParallelNetwork(ctx context.Context, network string, dest
 	case N.NetworkUDP:
 		h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	}
-	return dialer.DialParallelNetwork(ctx, h.dialer, network, destination, destinationAddresses, len(destinationAddresses) > 0 && destinationAddresses[0].Is6(), networkStrategy, networkType, fallbackNetworkType, fallbackDelay)
+	if fallbackDelay == 0 {
+		fallbackDelay = h.fallbackDelay
+	}
+	conn, err := dialer.DialParallelNetwork(ctx, h.dialer, network, destination, destinationAddresses, len(destinationAddresses) > 0 && destinationAddresses[0].Is6(), networkStrategy, networkType, fallbackNetworkType, fallbackDelay)
+	return h.withProxyProtocol(ctx, network, destination, conn, err)
 }
 
 func (h *Outbound) ListenSerialNetworkPacket(ctx context.Context, destination M.Socksaddr, destinationAddresses []netip.Addr, networkStrategy *C.NetworkStrategy, networkType []C.InterfaceType, fallbackNetworkType []C.InterfaceType, fallbackDelay time.Duration) (net.PacketConn, netip.Addr, error) {

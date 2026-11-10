@@ -4,12 +4,12 @@ import (
 	"net/netip"
 	"strings"
 
+	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/json/badjson"
 	"github.com/sagernet/sing/common/json/badoption"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 var _ RuleItem = (*NetworkInterfaceAddressItem)(nil)
@@ -40,9 +40,17 @@ func NewNetworkInterfaceAddressItem(networkManager adapter.NetworkManager, inter
 
 func (r *NetworkInterfaceAddressItem) Match(metadata *adapter.InboundContext) bool {
 	interfaces := r.networkManager.NetworkInterfaces()
+	var myInterfaces []string
+	interfaceMonitor := r.networkManager.InterfaceMonitor()
+	if interfaceMonitor != nil {
+		myInterfaces = interfaceMonitor.MyInterfaces()
+	}
 match:
 	for ifType, addresses := range r.interfaceAddresses {
 		for _, networkInterface := range interfaces {
+			if common.Contains(myInterfaces, networkInterface.Name) {
+				continue
+			}
 			if networkInterface.Type != ifType {
 				continue
 			}

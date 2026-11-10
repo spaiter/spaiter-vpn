@@ -3,9 +3,9 @@ package balancer
 import (
 	"sync"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/option"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 var _ Strategy = (*RoundRobin)(nil)
@@ -34,15 +34,18 @@ func NewRoundRobin(outbounds []adapter.Outbound, options option.BalancerOutbound
 
 		sortedOutbounds:      cOutbounds,
 		maxAcceptableIndex:   acceptable,
-		delayAcceptableRatio: options.DelayAcceptableRatio,
+		delayAcceptableRatio: acceptableRatio(options),
 		idx:                  idx,
 	}
 }
 
+// Now returns the member the next TCP connection goes to.
 func (s *RoundRobin) Now() string {
-	// s.idxMutex.Lock()
-	// defer s.idxMutex.Unlock()
-	return ""
+	next := s.Select(adapter.InboundContext{}, N.NetworkTCP, false)
+	if next == nil {
+		return ""
+	}
+	return next.Tag()
 }
 
 func (s *RoundRobin) UpdateOutboundsInfo(history map[string]*adapter.URLTestHistory) bool {

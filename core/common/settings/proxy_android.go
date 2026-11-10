@@ -5,11 +5,11 @@ import (
 	"os"
 	"strings"
 
+	C "github.com/sagernet/sing-box/constant"
 	E "github.com/sagernet/sing/common/exceptions"
 	F "github.com/sagernet/sing/common/format"
 	M "github.com/sagernet/sing/common/metadata"
 	"github.com/sagernet/sing/common/shell"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
 )
 
 type AndroidSystemProxy struct {
@@ -20,7 +20,7 @@ type AndroidSystemProxy struct {
 	isEnabled    bool
 }
 
-func NewSystemProxy(ctx context.Context, serverAddr M.Socksaddr, supportSOCKS bool) (*AndroidSystemProxy, error) {
+func NewSystemProxy(ctx context.Context, serverAddr M.Socksaddr, supportSOCKS bool, bypassDomain []string) (*AndroidSystemProxy, error) {
 	userId := os.Getuid()
 	var (
 		useRish  bool
@@ -52,6 +52,10 @@ func (p *AndroidSystemProxy) Enable() error {
 		return err
 	}
 	p.isEnabled = true
+	return nil
+}
+
+func (p *AndroidSystemProxy) Close() error {
 	return nil
 }
 

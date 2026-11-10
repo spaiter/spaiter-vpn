@@ -1,4 +1,4 @@
-//go:build with_gvisor
+//go:build with_tailscale
 
 package tailscale
 
@@ -7,9 +7,9 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/ipn/ipnstate"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/tailcfg"
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/tailscale/ipn/ipnstate"
+	"github.com/sagernet/tailscale/tailcfg"
 )
 
 func (t *Endpoint) StartTailscalePing(ctx context.Context, peerIP string, fn func(*adapter.TailscalePingResult)) error {
@@ -48,6 +48,7 @@ func convertPingResult(result *ipnstate.PingResult) *adapter.TailscalePingResult
 		LatencyMs:      result.LatencySeconds * 1000,
 		IsDirect:       result.Endpoint != "",
 		Endpoint:       result.Endpoint,
+		PeerRelay:      result.PeerRelay,
 		DERPRegionID:   int32(result.DERPRegionID),
 		DERPRegionCode: result.DERPRegionCode,
 		Error:          result.Err,

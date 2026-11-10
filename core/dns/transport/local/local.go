@@ -2,20 +2,23 @@ package local
 
 import (
 	"context"
+	"errors"
+	"net/netip"
+	"sync"
+	"sync/atomic"
 
+	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/dns"
+	"github.com/sagernet/sing-box/dns/transport/local/systemconfig"
+	"github.com/sagernet/sing-box/dns/transport/mdns"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/dns"
-	"github.com/spaiter/spaiter-vpn/core/dns/transport/hosts"
-	"github.com/spaiter/spaiter-vpn/core/dns/transport/mdns"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	mDNS "github.com/miekg/dns"
 )
@@ -27,27 +30,30 @@ func RegisterTransport(registry *dns.TransportRegistry) {
 var (
 	_ adapter.DNSTransport                    = (*Transport)(nil)
 	_ adapter.DNSTransportWithPreferredDomain = (*Transport)(nil)
+	_ adapter.DNSTransportWithConfiguration   = (*Transport)(nil)
+	_ adapter.DNSTransportWithEnvironment     = (*Transport)(nil)
 )
 
 type Transport struct {
 	dns.TransportAdapter
-	ctx              context.Context
-	logger           logger.ContextLogger
-	hosts            *hosts.File
-	dialer           N.Dialer
-	preferGo         bool
-	fallback         bool
-	resolved         ResolvedResolver
-	mdnsTransport    adapter.DNSTransport
-	dhcpTransport    dhcpTransport
-	neighborResolver adapter.NeighborResolver
-	neighborSuffixes []string
+	ctx               context.Context
+	logger            logger.ContextLogger
+	preferredResolver *PreferredDomainResolver
+	dialer            N.Dialer
+	preferGo          bool
+	resolved          ResolvedResolver
+	mdnsTransport     adapter.DNSTransport
+	mdnsScope         *adapter.Scope
+	configSource      systemConfigSource
+	system            systemResolver
+	serverSet         atomic.Pointer[localServerSet]
+	serverSetAccess   sync.Mutex
 }
 
-type dhcpTransport interface {
-	adapter.DNSTransport
-	Fetch() []M.Socksaddr
-	Exchange0(ctx context.Context, message *mDNS.Msg, servers []M.Socksaddr) (*mDNS.Msg, error)
+type systemConfigSource interface {
+	Configuration() *systemconfig.Config
+	Reset()
+	Close() error
 }
 
 func NewTransport(ctx context.Context, logger log.ContextLogger, tag string, options option.LocalDNSServerOptions) (adapter.DNSTransport, error) {
@@ -55,32 +61,30 @@ func NewTransport(ctx context.Context, logger log.ContextLogger, tag string, opt
 	if err != nil {
 		return nil, err
 	}
-	suffixes, err := buildNeighborMatchers(options.NeighborDomain)
+	preferredResolver, err := NewPreferredDomainResolver(ctx, logger, options)
 	if err != nil {
 		return nil, err
 	}
 	return &Transport{
-		TransportAdapter: dns.NewTransportAdapterWithLocalOptions(C.DNSTypeLocal, tag, options),
-		ctx:              ctx,
-		logger:           logger,
-		dialer:           transportDialer,
-		preferGo:         options.PreferGo,
-		neighborSuffixes: suffixes,
+		TransportAdapter:  dns.NewTransportAdapterWithLocalOptions(C.DNSTypeLocal, tag, options),
+		ctx:               ctx,
+		logger:            logger,
+		preferredResolver: preferredResolver,
+		dialer:            transportDialer,
+		preferGo:          options.PreferGo,
+		configSource:      systemconfig.NewSource(ctx),
 	}, nil
 }
 
-func (t *Transport) Start(stage adapter.StartStage) error {
+func (t *Transport) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	t.preferredResolver.Start(stage)
 	switch stage {
 	case adapter.StartStateInitialize:
-		defaultHosts, err := hosts.NewDefault()
-		if err != nil {
-			t.logger.Warn(err)
-		} else {
-			t.hosts = defaultHosts
-		}
-		if !t.preferGo && isSystemdResolvedManaged() {
+		scope.Add(t.configSource.Close)
+		if !t.preferGo {
 			resolvedResolver, err := NewResolvedResolver(t.ctx, t.logger)
 			if err == nil {
+				scope.Add(resolvedResolver.Close)
 				err = resolvedResolver.Start()
 				if err == nil {
 					t.resolved = resolvedResolver
@@ -90,34 +94,26 @@ func (t *Transport) Start(stage adapter.StartStage) error {
 			}
 		}
 	case adapter.StartStateStart:
-		if C.IsDarwin {
-			inboundManager := service.FromContext[adapter.InboundManager](t.ctx)
-			for _, inbound := range inboundManager.Inbounds() {
-				if inbound.Type() == C.TypeTun {
-					t.fallback = true
-					break
-				}
+		scope.Add(func() error {
+			t.system.close()
+			return nil
+		})
+		scope.Add(func() error {
+			serverSet := t.serverSet.Swap(nil)
+			if serverSet != nil {
+				return serverSet.serverScope.Close()
 			}
-			if t.fallback {
-				t.dhcpTransport = newDHCPTransport(t.TransportAdapter, log.ContextWithOverrideLevel(t.ctx, log.LevelDebug), t.dialer, t.logger)
-			}
-		} else {
+			return nil
+		})
+		if !C.IsDarwin {
 			t.mdnsTransport = mdns.NewRawTransport(t.TransportAdapter, t.ctx, t.logger)
-		}
-		router := service.FromContext[adapter.Router](t.ctx)
-		if router != nil {
-			t.neighborResolver = router.NeighborResolver()
+			t.mdnsScope = adapter.NewScope(t.ctx, t.logger)
+			scope.Add(t.mdnsScope.Close)
 		}
 		fallthrough
 	default:
-		if t.dhcpTransport != nil {
-			err := t.dhcpTransport.Start(stage)
-			if err != nil {
-				return err
-			}
-		}
 		if t.mdnsTransport != nil {
-			err := t.mdnsTransport.Start(stage)
+			err := t.mdnsTransport.Start(stage, t.mdnsScope)
 			if err != nil {
 				return err
 			}
@@ -126,13 +122,17 @@ func (t *Transport) Start(stage adapter.StartStage) error {
 	return nil
 }
 
-func (t *Transport) Close() error {
-	return common.Close(t.resolved, t.dhcpTransport, t.mdnsTransport)
-}
-
 func (t *Transport) Reset() {
-	if t.dhcpTransport != nil {
-		t.dhcpTransport.Reset()
+	serverSet := t.serverSet.Load()
+	if serverSet != nil {
+		for _, serverTransport := range serverSet.transports {
+			serverTransport.Reset()
+		}
+	}
+	t.system.reset()
+	t.configSource.Reset()
+	if t.resolved != nil {
+		t.resolved.Reset()
 	}
 	if t.mdnsTransport != nil {
 		t.mdnsTransport.Reset()
@@ -140,43 +140,87 @@ func (t *Transport) Reset() {
 }
 
 func (t *Transport) PreferredDomain(domain string) bool {
-	if t.hosts != nil {
-		if len(t.hosts.Lookup(dns.FqdnToDomain(domain))) > 0 {
-			return true
-		}
+	return t.preferredResolver.PreferredDomain(domain)
+}
+
+func (t *Transport) ServerAddresses() []netip.Addr {
+	systemConfig := t.configSource.Configuration()
+	if t.resolved != nil && systemConfig.SystemdResolved && !t.resolved.Fallback() {
+		return t.resolved.ServerAddresses()
 	}
-	return t.hasNeighborHost(domain) || mdns.IsLocalDomain(domain)
+	return common.Map(systemConfig.Servers, func(it M.Socksaddr) netip.Addr {
+		return it.Addr
+	})
+}
+
+func (t *Transport) SearchDomains() []string {
+	return t.configSource.Configuration().Search
+}
+
+func (t *Transport) Environment() []string {
+	systemConfig := t.configSource.Configuration()
+	if t.resolved != nil && systemConfig.SystemdResolved {
+		if t.resolved.Fallback() {
+			return append([]string{"resolv.conf"}, systemConfig.Signature()...)
+		}
+		return t.resolved.Environment()
+	}
+	return systemConfig.Signature()
 }
 
 func (t *Transport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
-	question := message.Question[0]
-	if t.hosts != nil && (question.Qtype == mDNS.TypeA || question.Qtype == mDNS.TypeAAAA) {
-		addresses := t.hosts.Lookup(dns.FqdnToDomain(question.Name))
-		if len(addresses) > 0 {
-			return dns.FixedResponse(message.Id, question, addresses, C.DefaultDNSTTL), nil
-		}
+	done := make(chan struct{})
+	var (
+		response *mDNS.Msg
+		err      error
+	)
+	t.ExchangeAsync(ctx, message, func(callbackResponse *mDNS.Msg, callbackErr error) {
+		response = callbackResponse
+		err = callbackErr
+		close(done)
+	})
+	<-done
+	return response, err
+}
+
+func (t *Transport) ExchangeAsync(ctx context.Context, message *mDNS.Msg, callback func(response *mDNS.Msg, err error)) {
+	if err := ctx.Err(); err != nil {
+		callback(nil, err)
+		return
 	}
-	response := t.lookupNeighbor(message)
+	question := message.Question[0]
+	response := t.preferredResolver.Lookup(message)
 	if response != nil {
-		return response, nil
+		callback(response, nil)
+		return
 	}
 	if mdns.IsLocalDomain(question.Name) {
 		if C.IsDarwin {
-			return t.systemExchange(ctx, message)
+			t.systemExchangeAsync(ctx, message, callback)
+			return
 		}
-		return t.mdnsTransport.Exchange(ctx, message)
+		t.mdnsTransport.ExchangeAsync(ctx, message, callback)
+		return
 	}
-	if t.resolved != nil {
-		return t.resolved.Exchange(ctx, message)
+	systemConfig := t.configSource.Configuration()
+	if t.resolved != nil && systemConfig.SystemdResolved {
+		t.resolved.ExchangeAsync(ctx, message, func(response *mDNS.Msg, err error) {
+			if !errors.Is(err, errResolvedUnavailable) {
+				callback(response, err)
+				return
+			}
+			if err = ctx.Err(); err != nil {
+				callback(nil, err)
+				return
+			}
+			systemConfig := t.configSource.Configuration()
+			if err = checkResolvedFallback(t.ctx, systemConfig.Servers); err != nil {
+				callback(nil, err)
+				return
+			}
+			t.exchangeAsync(ctx, message, systemConfig, callback)
+		})
+		return
 	}
-	if t.dhcpTransport != nil {
-		servers := t.dhcpTransport.Fetch()
-		if len(servers) > 0 {
-			return t.dhcpTransport.Exchange0(ctx, message, servers)
-		}
-	}
-	if t.fallback {
-		return t.systemExchange(ctx, message)
-	}
-	return t.exchange(ctx, message, question.Name)
+	t.exchangeAsync(ctx, message, systemConfig, callback)
 }

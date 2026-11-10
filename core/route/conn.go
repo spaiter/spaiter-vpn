@@ -6,11 +6,21 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/sniff"
+	"github.com/sagernet/sing-box/common/tlsfragment"
+	"github.com/sagernet/sing-box/common/tlsspoof"
+	"github.com/sagernet/sing-box/common/urltest"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/sing/common/bufio"
@@ -20,31 +30,42 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/x/list"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	"github.com/spaiter/spaiter-vpn/core/common/tlsfragment"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
+	"github.com/sagernet/sing/service"
 )
 
 var _ adapter.ConnectionManager = (*ConnectionManager)(nil)
 
 type ConnectionManager struct {
-	logger      logger.ContextLogger
-	access      sync.Mutex
-	connections list.List[io.Closer]
+	logger         logger.ContextLogger
+	urlTestHistory *urltest.HistoryStorage
+	access         sync.Mutex
+	connections    list.List[io.Closer]
+	ctx            context.Context //H: for the IPv6 capability, see h_ipv6_fallback.go
+	hIPv6Fallback  bool            //H: route option ipv6_fallback, set by the router
 }
 
-func NewConnectionManager(logger logger.ContextLogger) *ConnectionManager {
+func NewConnectionManager(ctx context.Context, logger logger.ContextLogger) *ConnectionManager {
 	return &ConnectionManager{
-		logger: logger,
+		logger:         logger,
+		urlTestHistory: service.PtrFromContext[urltest.HistoryStorage](ctx),
+		ctx:            ctx, //H
 	}
 }
 
-func (m *ConnectionManager) Start(stage adapter.StartStage) error {
+func (m *ConnectionManager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage != adapter.StartStateInitialize {
+		return nil
+	}
+	scope.Add(func() error {
+		m.CloseAll()
+		return nil
+	})
 	return nil
 }
 
 func (m *ConnectionManager) Count() int {
+	m.access.Lock()
+	defer m.access.Unlock()
 	return m.connections.Len()
 }
 
@@ -63,34 +84,35 @@ func (m *ConnectionManager) CloseAll() {
 	}
 }
 
-func (m *ConnectionManager) Close() error {
-	m.CloseAll()
-	return nil
-}
-
 func (m *ConnectionManager) TrackConn(conn net.Conn) net.Conn {
-	m.access.Lock()
-	element := m.connections.PushBack(conn)
-	m.access.Unlock()
-	return &trackedConn{
-		Conn:    conn,
-		manager: m,
-		element: element,
+	tracked := &trackedConn{
+		Conn:        conn,
+		socketOwner: socketOwner{original: conn},
+		manager:     m,
 	}
+	m.access.Lock()
+	tracked.element = m.connections.PushBack(tracked)
+	m.access.Unlock()
+	return tracked
 }
 
 func (m *ConnectionManager) TrackPacketConn(conn net.PacketConn) net.PacketConn {
-	m.access.Lock()
-	element := m.connections.PushBack(conn)
-	m.access.Unlock()
-	return &trackedPacketConn{
-		PacketConn: conn,
-		manager:    m,
-		element:    element,
+	tracked := &trackedPacketConn{
+		NetPacketConn: bufio.NewPacketConn(conn),
+		socketOwner:   socketOwner{original: conn},
+		manager:       m,
 	}
+	m.access.Lock()
+	tracked.element = m.connections.PushBack(tracked)
+	m.access.Unlock()
+	return tracked
 }
 
 func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
+	if m.hIPv6Fallback && hIPv6FallbackApplies(&metadata) { //H: every outbound and group comes through here
+		m.hNewIPv6Connection(ctx, this, conn, metadata, onClose, service.FromContext[adapter.IPv6Capability](m.ctx)) //H
+		return                                                                                                       //H
+	} //H
 	ctx = adapter.WithContext(ctx, &metadata)
 	var (
 		remoteConn net.Conn
@@ -116,6 +138,7 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 			}
 		}
 		err = E.Cause(err, "open connection to ", remoteString, dialerString)
+		m.deleteURLTestHistory(metadata.OutboundChain)
 		N.CloseOnHandshakeFailure(conn, onClose, err)
 		m.logger.ErrorContext(ctx, err)
 		return
@@ -128,14 +151,39 @@ func (m *ConnectionManager) NewConnection(ctx context.Context, this N.Dialer, co
 		m.logger.ErrorContext(ctx, err)
 		return
 	}
+	if !metadata.TLSFragment && !metadata.TLSRecordFragment && metadata.TLSSpoof == "" {
+		var spliced bool
+		spliced, err = m.spliceConnection(ctx, conn, remoteConn, onClose)
+		if err != nil {
+			N.CloseOnHandshakeFailure(conn, onClose, err)
+			remoteConn.Close()
+			m.logger.ErrorContext(ctx, err)
+			return
+		}
+		if spliced {
+			return
+		}
+	}
 	if metadata.TLSFragment || metadata.TLSRecordFragment {
 		remoteConn = tf.NewConn(remoteConn, ctx, metadata.TLSFragment, metadata.TLSRecordFragment, metadata.TLSFragmentFallbackDelay)
 	}
+	if metadata.TLSSpoof != "" {
+		spoofConn, spoofErr := tlsspoof.NewConn(remoteConn, metadata.TLSSpoofMethod, metadata.TLSSpoof)
+		if spoofErr != nil {
+			spoofErr = E.Cause(spoofErr, "tls_spoof setup")
+			remoteConn.Close()
+			N.CloseOnHandshakeFailure(conn, onClose, spoofErr)
+			m.logger.ErrorContext(ctx, spoofErr)
+			return
+		}
+		remoteConn = spoofConn
+	}
+	serverFirst := sniff.Skip(&metadata)
 	var done atomic.Bool
-	if m.kickWriteHandshake(ctx, conn, remoteConn, false, &done, onClose) {
+	if m.kickWriteHandshake(ctx, conn, remoteConn, serverFirst, false, &done, onClose) {
 		return
 	}
-	if m.kickWriteHandshake(ctx, remoteConn, conn, true, &done, onClose) {
+	if m.kickWriteHandshake(ctx, remoteConn, conn, serverFirst, true, &done, onClose) {
 		return
 	}
 	go m.connectionCopy(ctx, conn, remoteConn, false, &done, onClose)
@@ -182,6 +230,7 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 				}
 			}
 			err = E.Cause(err, "open packet connection to ", remoteString, dialerString)
+			m.deleteURLTestHistory(metadata.OutboundChain)
 			N.CloseOnHandshakeFailure(conn, onClose, err)
 			m.logger.ErrorContext(ctx, err)
 			return
@@ -208,6 +257,7 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 				}
 			}
 			err = E.Cause(err, "listen packet connection using ", dialerString)
+			m.deleteURLTestHistory(metadata.OutboundChain)
 			N.CloseOnHandshakeFailure(conn, onClose, err)
 			m.logger.ErrorContext(ctx, err)
 			return
@@ -215,9 +265,22 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 	}
 	err = N.ReportPacketConnHandshakeSuccess(conn, remotePacketConn)
 	if err != nil {
-		conn.Close()
+		err = E.Cause(err, "report handshake success")
 		remotePacketConn.Close()
-		m.logger.ErrorContext(ctx, "report handshake success: ", err)
+		N.CloseOnHandshakeFailure(conn, onClose, err)
+		m.logger.ErrorContext(ctx, err)
+		return
+	}
+	udpTimeout := packetTimeout(&metadata)
+	var (
+		spliceRemote any = remotePacketConn
+		spliced      bool
+	)
+	if remoteConn != nil {
+		spliceRemote = remoteConn
+	}
+	conn, spliced = m.splicePacketConnection(ctx, conn, spliceRemote, &metadata, destinationAddress, udpTimeout, onClose)
+	if spliced {
 		return
 	}
 	if destinationAddress.IsValid() {
@@ -244,18 +307,6 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 	} else if metadata.RouteOriginalDestination.IsValid() && metadata.RouteOriginalDestination != metadata.Destination {
 		remotePacketConn = bufio.NewDestinationNATPacketConn(bufio.NewPacketConn(remotePacketConn), metadata.Destination, metadata.RouteOriginalDestination)
 	}
-	var udpTimeout time.Duration
-	if metadata.UDPTimeout > 0 {
-		udpTimeout = metadata.UDPTimeout
-	} else {
-		protocol := metadata.Protocol
-		if protocol == "" {
-			protocol = C.PortProtocols[metadata.Destination.Port]
-		}
-		if protocol != "" {
-			udpTimeout = C.ProtocolTimeouts[protocol]
-		}
-	}
 	if udpTimeout > 0 {
 		ctx, conn = canceler.NewPacketConn(ctx, conn, udpTimeout)
 	}
@@ -265,17 +316,30 @@ func (m *ConnectionManager) NewPacketConnection(ctx context.Context, this N.Dial
 	go m.packetConnectionCopy(ctx, destination, conn, true, &done, onClose)
 }
 
+func (m *ConnectionManager) deleteURLTestHistory(chain []adapter.Outbound) {
+	if slices.ContainsFunc(chain, func(it adapter.Outbound) bool {
+		_, isURLTestGroup := it.(adapter.URLTestGroup)
+		return isURLTestGroup
+	}) {
+		m.urlTestHistory.DeleteURLTestHistory(chain[len(chain)-1].Tag())
+	}
+}
+
 func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn, destination net.Conn, direction bool, done *atomic.Bool, onClose N.CloseHandlerFunc) {
 	_, err := bufio.CopyWithIncreateBuffer(destination, source, bufio.DefaultIncreaseBufferAfter, bufio.DefaultBatchSize)
 	if err != nil {
 		common.Close(source, destination)
-	} else if duplexDst, isDuplex := destination.(N.WriteCloser); isDuplex {
-		err = duplexDst.CloseWrite()
-		if err != nil {
-			common.Close(source, destination)
-		}
 	} else {
-		destination.Close()
+		destinationWriter, _ := N.UnwrapCountWriter(destination, nil)
+		duplexDst, isDuplex := N.UnwrapWriter(destinationWriter).(N.WriteCloser)
+		if isDuplex {
+			err = duplexDst.CloseWrite()
+			if err != nil {
+				common.Close(source, destination)
+			}
+		} else {
+			destination.Close()
+		}
 	}
 	if done.Swap(true) {
 		if onClose != nil {
@@ -302,37 +366,43 @@ func (m *ConnectionManager) connectionCopy(ctx context.Context, source net.Conn,
 	}
 }
 
-func (m *ConnectionManager) kickWriteHandshake(ctx context.Context, source net.Conn, destination net.Conn, direction bool, done *atomic.Bool, onClose N.CloseHandlerFunc) bool {
+func (m *ConnectionManager) kickWriteHandshake(ctx context.Context, source net.Conn, destination net.Conn, serverFirst bool, direction bool, done *atomic.Bool, onClose N.CloseHandlerFunc) bool {
 	if !N.NeedHandshakeForWrite(destination) {
 		return false
 	}
 	var (
-		cachedBuffer *buf.Buffer
+		err          error
 		wrotePayload bool
 	)
-	sourceReader, readCounters := N.UnwrapCountReader(source, nil)
-	destinationWriter, writeCounters := N.UnwrapCountWriter(destination, nil)
-	if cachedReader, ok := sourceReader.(N.CachedReader); ok {
-		cachedBuffer = cachedReader.ReadCached()
-	}
-	var err error
-	if cachedBuffer != nil {
-		wrotePayload = true
-		dataLen := cachedBuffer.Len()
-		_, err = destinationWriter.Write(cachedBuffer.Bytes())
-		cachedBuffer.Release()
-		if err == nil {
-			for _, counter := range readCounters {
-				counter(int64(dataLen))
-			}
-			for _, counter := range writeCounters {
-				counter(int64(dataLen))
-			}
-		}
-	} else {
+	if serverFirst {
 		_ = destination.SetWriteDeadline(time.Now().Add(C.ReadPayloadTimeout))
-		_, err = destinationWriter.Write(nil)
+		_, err = destination.Write(nil)
 		_ = destination.SetWriteDeadline(time.Time{})
+	} else {
+		var cachedBuffer *buf.Buffer
+		sourceReader, readCounters := N.UnwrapCountReader(source, nil)
+		destinationWriter, writeCounters := N.UnwrapCountWriter(destination, nil)
+		if cachedReader, ok := sourceReader.(N.CachedReader); ok {
+			cachedBuffer = cachedReader.ReadCached()
+		}
+		if cachedBuffer != nil {
+			wrotePayload = true
+			dataLen := cachedBuffer.Len()
+			_, err = destinationWriter.Write(cachedBuffer.Bytes())
+			cachedBuffer.Release()
+			if err == nil {
+				for _, counter := range readCounters {
+					counter(int64(dataLen))
+				}
+				for _, counter := range writeCounters {
+					counter(int64(dataLen))
+				}
+			}
+		} else {
+			_ = destination.SetWriteDeadline(time.Now().Add(C.ReadPayloadTimeout))
+			_, err = destinationWriter.Write(nil)
+			_ = destination.SetWriteDeadline(time.Time{})
+		}
 	}
 	if err == nil {
 		return false
@@ -381,16 +451,70 @@ func (m *ConnectionManager) packetConnectionCopy(ctx context.Context, source N.P
 	common.Close(source, destination)
 }
 
+type socketOwner struct {
+	access   sync.Mutex
+	original io.Closer
+	owner    io.Closer
+	closed   bool
+}
+
+func (o *socketOwner) Attach(closer io.Closer) (io.Closer, bool) {
+	o.access.Lock()
+	defer o.access.Unlock()
+	if o.closed || o.owner != nil {
+		return nil, false
+	}
+	o.owner = closer
+	return o.original, true
+}
+
+func (o *socketOwner) detach() bool {
+	o.access.Lock()
+	defer o.access.Unlock()
+	o.owner = nil
+	return o.closed
+}
+
+func (o *socketOwner) close() bool {
+	o.access.Lock()
+	o.closed = true
+	owner := o.owner
+	o.access.Unlock()
+	if owner == nil {
+		return false
+	}
+	owner.Close()
+	return true
+}
+
 type trackedConn struct {
 	net.Conn
+	socketOwner
 	manager *ConnectionManager
 	element *list.Element[io.Closer]
+}
+
+func (c *trackedConn) SyscallConn() (syscall.RawConn, error) {
+	syscallConn, isSyscallConn := c.Conn.(syscall.Conn)
+	if !isSyscallConn {
+		return nil, os.ErrInvalid
+	}
+	return syscallConn.SyscallConn()
+}
+
+func (c *trackedConn) Detach() {
+	if c.socketOwner.detach() {
+		c.Conn.Close()
+	}
 }
 
 func (c *trackedConn) Close() error {
 	c.manager.access.Lock()
 	c.manager.connections.Remove(c.element)
 	c.manager.access.Unlock()
+	if c.socketOwner.close() {
+		return nil
+	}
 	return c.Conn.Close()
 }
 
@@ -407,20 +531,38 @@ func (c *trackedConn) WriterReplaceable() bool {
 }
 
 type trackedPacketConn struct {
-	net.PacketConn
+	N.NetPacketConn
+	socketOwner
 	manager *ConnectionManager
 	element *list.Element[io.Closer]
+}
+
+func (c *trackedPacketConn) SyscallConn() (syscall.RawConn, error) {
+	syscallConn, isSyscallConn := c.NetPacketConn.(syscall.Conn)
+	if !isSyscallConn {
+		return nil, os.ErrInvalid
+	}
+	return syscallConn.SyscallConn()
+}
+
+func (c *trackedPacketConn) Detach() {
+	if c.socketOwner.detach() {
+		c.NetPacketConn.Close()
+	}
 }
 
 func (c *trackedPacketConn) Close() error {
 	c.manager.access.Lock()
 	c.manager.connections.Remove(c.element)
 	c.manager.access.Unlock()
-	return c.PacketConn.Close()
+	if c.socketOwner.close() {
+		return nil
+	}
+	return c.NetPacketConn.Close()
 }
 
 func (c *trackedPacketConn) Upstream() any {
-	return bufio.NewPacketConn(c.PacketConn)
+	return c.NetPacketConn
 }
 
 func (c *trackedPacketConn) ReaderReplaceable() bool {
@@ -430,3 +572,8 @@ func (c *trackedPacketConn) ReaderReplaceable() bool {
 func (c *trackedPacketConn) WriterReplaceable() bool {
 	return true
 }
+
+var (
+	_ tun.SpliceSocket = (*trackedConn)(nil)
+	_ tun.SpliceSocket = (*trackedPacketConn)(nil)
+)

@@ -3,7 +3,7 @@ package shadowtls
 import (
 	"testing"
 
-	"github.com/spaiter/spaiter-vpn/core/option"
+	"github.com/sagernet/sing-box/option"
 )
 
 func TestReloadUsersRequiresPointerOptions(t *testing.T) {

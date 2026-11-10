@@ -7,8 +7,8 @@ import (
 
 	"github.com/amnezia-vpn/amneziawg-go/v3/tun"
 	"github.com/amnezia-vpn/amneziawg-go/v3/tun/netstack"
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common/metadata"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
 )
 
 type networkTun struct {
@@ -38,8 +38,8 @@ func (t *networkTun) Start() error {
 }
 
 func (t *networkTun) DialContext(ctx context.Context, network string, destination metadata.Socksaddr) (net.Conn, error) {
-	// the netstack dial has no timeout of its own: a peer that never answers the SYN
-	// would hold the caller (and its goroutine) forever
+	// the netstack retries SYN for about two minutes; give up after the TCP timeout, as a
+	// direct dial does
 	ctx, cancel := context.WithTimeout(ctx, C.TCPTimeout)
 	defer cancel()
 	return t.conn.DialContext(ctx, network, destination.String())

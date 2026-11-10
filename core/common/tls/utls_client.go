@@ -8,19 +8,19 @@ import (
 	"crypto/x509"
 	"math/rand"
 	"net"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/tlsfragment"
+	"github.com/sagernet/sing-box/common/tlsspoof"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	"github.com/sagernet/sing/common/ntp"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/tlsfragment"
-	"github.com/spaiter/spaiter-vpn/core/common/tlsspoof"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
+	"github.com/sagernet/sing/service/filemanager"
 
 	utls "github.com/metacubex/utls"
 	"golang.org/x/net/http2"
@@ -39,6 +39,7 @@ type UTLSClientConfig struct {
 	recordFragment        bool
 	spoof                 string
 	spoofMethod           tlsspoof.Method
+	tricks                *tlsTricks //H: tls_tricks
 }
 
 func (c *UTLSClientConfig) ServerName() string {
@@ -90,7 +91,22 @@ func (c *UTLSClientConfig) Client(conn net.Conn) (Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &utlsALPNWrapper{utlsConnWrapper{utls.UClient(conn, c.config.Clone(), c.id)}, c.config.NextProtos}, nil
+	config := c.config.Clone()                      //H
+	if c.tricks != nil && config.ServerName != "" { //H
+		config.ServerName = c.tricks.serverName(config.ServerName) //H
+	} //H
+	id := c.id                               //H
+	if c.tricks != nil && c.tricks.padding { //H: the spec is applied to a custom hello
+		id = utls.HelloCustom //H
+	} //H
+	uConn := utls.UClient(conn, config, id)  //H
+	if c.tricks != nil && c.tricks.padding { //H
+		err = applyTLSTricksPadding(uConn, c.id, c.tricks) //H
+		if err != nil {                                    //H
+			return nil, err //H
+		} //H
+	} //H
+	return &utlsALPNWrapper{utlsConnWrapper{uConn}, c.config.NextProtos}, nil //H
 }
 
 func (c *UTLSClientConfig) SetSessionIDGenerator(generator func(clientHello []byte, sessionID []byte) error) {
@@ -111,6 +127,7 @@ func (c *UTLSClientConfig) Clone() Config {
 		recordFragment:        c.recordFragment,
 		spoof:                 c.spoof,
 		spoofMethod:           c.spoofMethod,
+		tricks:                c.tricks, //H
 	}
 	cloned.SetServerName(cloned.serverName)
 	return cloned
@@ -209,13 +226,13 @@ func newUTLSClient(ctx context.Context, logger logger.ContextLogger, serverAddre
 			return nil, E.New("disable_sni is unsupported in reality")
 		}
 	}
-	if len(options.CertificatePublicKeySHA256) > 0 {
+	if len(options.CertificateSHA256) > 0 || len(options.CertificatePublicKeySHA256) > 0 {
 		if len(options.Certificate) > 0 || options.CertificatePath != "" {
-			return nil, E.New("certificate_public_key_sha256 is conflict with certificate or certificate_path")
+			return nil, E.New("certificate_sha256 or certificate_public_key_sha256 is conflict with certificate or certificate_path")
 		}
 		tlsConfig.InsecureSkipVerify = true
 		tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
-			return VerifyPublicKeySHA256(options.CertificatePublicKeySHA256, rawCerts)
+			return VerifyPinnedCertificate(options.CertificateSHA256, options.CertificatePublicKeySHA256, rawCerts)
 		}
 	}
 	if len(options.ALPN) > 0 {
@@ -251,7 +268,7 @@ func newUTLSClient(ctx context.Context, logger logger.ContextLogger, serverAddre
 	if len(options.Certificate) > 0 {
 		certificate = []byte(strings.Join(options.Certificate, "\n"))
 	} else if options.CertificatePath != "" {
-		content, err := os.ReadFile(options.CertificatePath)
+		content, err := filemanager.ReadFile(ctx, options.CertificatePath)
 		if err != nil {
 			return nil, E.Cause(err, "read certificate")
 		}
@@ -260,7 +277,7 @@ func newUTLSClient(ctx context.Context, logger logger.ContextLogger, serverAddre
 	if len(certificate) > 0 {
 		certPool := x509.NewCertPool()
 		if !certPool.AppendCertsFromPEM(certificate) {
-			return nil, E.New("failed to parse certificate:\n\n", certificate)
+			return nil, E.New("failed to parse certificate:\n\n", string(certificate))
 		}
 		tlsConfig.RootCAs = certPool
 	}
@@ -268,7 +285,7 @@ func newUTLSClient(ctx context.Context, logger logger.ContextLogger, serverAddre
 	if len(options.ClientCertificate) > 0 {
 		clientCertificate = []byte(strings.Join(options.ClientCertificate, "\n"))
 	} else if options.ClientCertificatePath != "" {
-		content, err := os.ReadFile(options.ClientCertificatePath)
+		content, err := filemanager.ReadFile(ctx, options.ClientCertificatePath)
 		if err != nil {
 			return nil, E.Cause(err, "read client certificate")
 		}
@@ -278,7 +295,7 @@ func newUTLSClient(ctx context.Context, logger logger.ContextLogger, serverAddre
 	if len(options.ClientKey) > 0 {
 		clientKey = []byte(strings.Join(options.ClientKey, "\n"))
 	} else if options.ClientKeyPath != "" {
-		content, err := os.ReadFile(options.ClientKeyPath)
+		content, err := filemanager.ReadFile(ctx, options.ClientKeyPath)
 		if err != nil {
 			return nil, E.Cause(err, "read client key")
 		}
@@ -307,6 +324,15 @@ func newUTLSClient(ctx context.Context, logger logger.ContextLogger, serverAddre
 	if err != nil {
 		return nil, err
 	}
+	tricks, err := parseTLSTricks(logger, options.TLSTricks, true) //H
+	if err != nil {                                                //H
+		return nil, err //H
+	} //H
+	if tricks != nil && tricks.padding { //H: the padding edits the fingerprint's spec
+		if _, err = utls.UTLSIdToSpec(id); err != nil { //H
+			return nil, E.Cause(err, "tls_tricks padding needs a fixed uTLS fingerprint") //H
+		} //H
+	} //H
 	var config Config = &UTLSClientConfig{
 		ctx:                   ctx,
 		config:                &tlsConfig,
@@ -320,6 +346,7 @@ func newUTLSClient(ctx context.Context, logger logger.ContextLogger, serverAddre
 		recordFragment:        options.RecordFragment,
 		spoof:                 spoof,
 		spoofMethod:           spoofMethod,
+		tricks:                tricks, //H
 	}
 	config.SetServerName(serverName)
 	if options.ECH != nil && options.ECH.Enabled {
@@ -352,7 +379,7 @@ var (
 
 func init() {
 	modernFingerprints := []utls.ClientHelloID{
-		utls.HelloChrome_Auto,
+		hChromeFingerprint, //H: Chrome 155, as Xray
 		utls.HelloFirefox_Auto,
 		utls.HelloEdge_Auto,
 		utls.HelloSafari_Auto,
@@ -373,7 +400,7 @@ func uTLSClientHelloID(name string) (utls.ClientHelloID, error) {
 	case "chrome_psk", "chrome_psk_shuffle", "chrome_padding_psk_shuffle", "chrome_pq", "chrome_pq_psk":
 		fallthrough
 	case "chrome", "":
-		return utls.HelloChrome_Auto, nil
+		return hChromeFingerprint, nil //H: Chrome 155, as Xray
 	case "firefox":
 		return utls.HelloFirefox_Auto, nil
 	case "edge":
@@ -393,6 +420,9 @@ func uTLSClientHelloID(name string) (utls.ClientHelloID, error) {
 	case "randomized":
 		return randomizedFingerprint, nil
 	default:
+		if id, ok := xrayFingerprint(name); ok { //H: Xray's names, hellochrome_120 and the like
+			return id, nil //H
+		} //H
 		return utls.ClientHelloID{}, E.New("unknown uTLS fingerprint: ", name)
 	}
 }

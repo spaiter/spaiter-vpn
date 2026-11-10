@@ -8,8 +8,8 @@ import (
 	"slices"
 	"time"
 
+	"github.com/sagernet/sing-box/route"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/route"
 
 	"github.com/mdlayher/netlink"
 	"golang.org/x/sys/unix"

@@ -3,12 +3,12 @@ package rule
 import (
 	"context"
 
+	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 func NewHeadlessRule(ctx context.Context, options option.HeadlessRule) (adapter.HeadlessRule, error) {
@@ -32,10 +32,6 @@ var _ adapter.HeadlessRule = (*DefaultHeadlessRule)(nil)
 
 type DefaultHeadlessRule struct {
 	abstractDefaultRule
-}
-
-func (r *DefaultHeadlessRule) matchStates(metadata *adapter.InboundContext) ruleMatchStateSet {
-	return r.abstractDefaultRule.matchStates(metadata)
 }
 
 func NewDefaultHeadlessRule(ctx context.Context, options option.DefaultHeadlessRule) (*DefaultHeadlessRule, error) {
@@ -224,10 +220,6 @@ var _ adapter.HeadlessRule = (*LogicalHeadlessRule)(nil)
 
 type LogicalHeadlessRule struct {
 	abstractLogicalRule
-}
-
-func (r *LogicalHeadlessRule) matchStates(metadata *adapter.InboundContext) ruleMatchStateSet {
-	return r.abstractLogicalRule.matchStates(metadata)
 }
 
 func NewLogicalHeadlessRule(ctx context.Context, options option.LogicalHeadlessRule) (*LogicalHeadlessRule, error) {

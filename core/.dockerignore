@@ -1,0 +1,18 @@
+.git/
+.github/
+.claude/
+sing-box/
+test/
+docs/
+examples/
+release/
+*.exe
+*.md
+mkdocs.yml
+LICENSE
+Dockerfile
+Dockerfile.*
+
+# Test captures: 64 MB of pcap that never reaches the binary. Without this
+# the build context carries them on every build.
+common/sniff/testdata/

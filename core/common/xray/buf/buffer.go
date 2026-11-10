@@ -3,9 +3,9 @@ package buf
 import (
 	"io"
 
+	"github.com/sagernet/sing-box/common/xray/bytespool"
+	"github.com/sagernet/sing-box/common/xray/net"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/bytespool"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/net"
 )
 
 const (

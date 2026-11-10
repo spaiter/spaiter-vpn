@@ -3,15 +3,16 @@ package option
 import "github.com/sagernet/sing/common/json/badoption"
 
 type SelectorOutboundOptions struct {
-	Outbounds                 []string `json:"outbounds"`
-	Default                   string   `json:"default,omitempty"`
+	Outbounds                 []string `json:"outbounds" reference:"outbound"`
+	Default                   string   `json:"default,omitempty" reference:"outbound"`
 	InterruptExistConnections bool     `json:"interrupt_exist_connections,omitempty"`
 }
 
 type URLTestOutboundOptions struct {
-	Outbounds                 []string           `json:"outbounds"`
+	Outbounds                 []string           `json:"outbounds" reference:"outbound"`
 	URL                       string             `json:"url,omitempty"`
-	URLs                      []string           `json:"urls,omitempty"` //H
+	URLs                      []string           `json:"urls,omitempty"`                 //H
+	Mode                      string             `json:"mode,omitempty" enum:"failover"` //H: "" or failover
 	Interval                  badoption.Duration `json:"interval,omitempty"`
 	Tolerance                 uint16             `json:"tolerance,omitempty"`
 	IdleTimeout               badoption.Duration `json:"idle_timeout,omitempty"`

@@ -3,8 +3,8 @@
 package libbox
 
 import (
+	"github.com/sagernet/sing-box/protocol/tailscale/tailssh"
 	"github.com/sagernet/sing/common"
-	"github.com/spaiter/spaiter-vpn/core/protocol/tailscale/tailssh"
 )
 
 type nativeShellSession struct {
@@ -25,7 +25,7 @@ func OpenNativeShellSession(
 		cwd,
 		int(uid), int(gid),
 		common.Map(iteratorToArray[int32](groups), func(g int32) int { return int(g) }),
-		uint16(rows), uint16(cols),
+		uint16(rows), uint16(cols), 0, 0,
 	)
 	if err != nil {
 		return nil, err
@@ -58,7 +58,7 @@ func (s *nativeShellSession) MasterFD() int32 {
 }
 
 func (s *nativeShellSession) Resize(rows, cols int32) error {
-	return s.shell.Resize(uint16(rows), uint16(cols))
+	return s.shell.Resize(uint16(rows), uint16(cols), 0, 0)
 }
 
 func (s *nativeShellSession) Signal(sig int32) error {

@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"strings"
 
+	C "github.com/sagernet/sing-box/constant"
 	sBufio "github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
 )
 
 func FormatBitrate(bps int64) string {

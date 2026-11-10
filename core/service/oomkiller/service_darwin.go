@@ -35,10 +35,8 @@ import "C"
 import (
 	"sync"
 
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing/common/byteformats"
-	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 )
 
 var (
@@ -46,12 +44,19 @@ var (
 	globalServices []*Service
 )
 
-func (s *Service) Start(stage adapter.StartStage) error {
+func (s *Service) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateStart {
 		return nil
 	}
+	err := s.startTimer()
+	if err != nil {
+		return err
+	}
+	scope.Add(func() error {
+		s.stopTimer()
+		return nil
+	})
 	if s.timerConfig.policyMode == policyModeNetworkExtension {
-		s.createTimer()
 		globalAccess.Lock()
 		isFirst := len(globalServices) == 0
 		globalServices = append(globalServices, s)
@@ -59,31 +64,21 @@ func (s *Service) Start(stage adapter.StartStage) error {
 		if isFirst {
 			C.startMemoryPressureMonitor()
 		}
-		return nil
-	}
-	if !s.timerConfig.policyMode.hasTimerMode() {
-		return E.New("memory pressure monitoring is not available on this platform without memory_limit")
-	}
-	s.startTimer()
-	return nil
-}
-
-func (s *Service) Close() error {
-	s.stopTimer()
-	if s.timerConfig.policyMode == policyModeNetworkExtension {
-		globalAccess.Lock()
-		for i, svc := range globalServices {
-			if svc == s {
-				globalServices = append(globalServices[:i], globalServices[i+1:]...)
-				break
+		scope.Add(func() error {
+			globalAccess.Lock()
+			for i, svc := range globalServices {
+				if svc == s {
+					globalServices = append(globalServices[:i], globalServices[i+1:]...)
+					break
+				}
 			}
-		}
-		isLast := len(globalServices) == 0
-		globalAccess.Unlock()
-		if isLast {
-			C.stopMemoryPressureMonitor()
-		}
-		s.discardOOMDraft()
+			isLast := len(globalServices) == 0
+			globalAccess.Unlock()
+			if isLast {
+				C.stopMemoryPressureMonitor()
+			}
+			return nil
+		})
 	}
 	return nil
 }
@@ -100,39 +95,12 @@ func goMemoryPressureCallback(status C.ulong) {
 	sample := readMemorySample(policyModeNetworkExtension)
 	for _, s := range services {
 		s.logger.Warn("memory pressure: critical, usage: ", byteformats.FormatMemoryBytes(sample.usage))
-		s.writeOOMDraft(sample.usage)
+		if s.recorder != nil {
+			s.recorder.recordPressure(sample)
+		}
 		s.adaptiveTimer.notifyPressure()
-	}
-}
-
-func (s *Service) writeOOMDraft(memoryUsage uint64) {
-	if s.draftCancelled.Load() {
-		return
-	}
-	reporter := service.FromContext[OOMReporter](s.ctx)
-	if reporter == nil {
-		return
-	}
-	err := reporter.WriteDraft(memoryUsage)
-	if s.draftCancelled.Load() {
-		reporter.DiscardDraft()
-		return
-	}
-	if err != nil {
-		s.logger.Error("failed to write OOM draft: ", err)
-	} else {
-		s.logger.Warn("OOM draft saved")
-	}
-}
-
-func (s *Service) discardOOMDraft() {
-	s.draftCancelled.Store(true)
-	reporter := service.FromContext[OOMReporter](s.ctx)
-	if reporter == nil {
-		return
-	}
-	err := reporter.DiscardDraft()
-	if err != nil {
-		s.logger.Error("failed to discard OOM draft: ", err)
+		if s.recorder != nil {
+			s.recorder.snapshot(SnapshotReasonPressure, sample, false, false)
+		}
 	}
 }

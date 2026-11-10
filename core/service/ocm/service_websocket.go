@@ -11,12 +11,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	"github.com/sagernet/sing/common/ntp"
 	"github.com/sagernet/ws"
 	"github.com/sagernet/ws/wsutil"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 
 	"github.com/openai/openai-go/v3/responses"
 )

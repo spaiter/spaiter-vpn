@@ -8,6 +8,9 @@ import (
 
 	awgTun "github.com/amnezia-vpn/amneziawg-go/v3/tun"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/option"
 	tun "github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/exceptions"
@@ -15,9 +18,6 @@ import (
 	"github.com/sagernet/sing/common/metadata"
 	"github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 type systemTun struct {
@@ -34,7 +34,9 @@ func newSystemTun(ctx context.Context, address []netip.Prefix, allowedIps []neti
 	events := make(chan awgTun.Event)
 
 	dial, err := dialer.NewDefault(ctx, option.DialerOptions{
-		BindInterface: name,
+		AbstractDialerOptions: option.AbstractDialerOptions{
+			BindInterface: name,
+		},
 	})
 	if err != nil {
 		return nil, exceptions.Cause(err, "get in-tunnel dialer")

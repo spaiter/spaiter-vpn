@@ -3,82 +3,56 @@ package endpoint
 import (
 	"context"
 	"os"
+	"slices"
 	"sync"
 
-	"github.com/sagernet/sing/common"
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/log"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/taskmonitor"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
 )
 
 var _ adapter.EndpointManager = (*Manager)(nil)
 
 type Manager struct {
-	logger        log.ContextLogger
 	registry      adapter.EndpointRegistry
 	access        sync.Mutex
-	started       bool
-	stage         adapter.StartStage
+	scope         *adapter.Scope
+	started       bool // H: components created from now on are started right away (hot reload)
 	endpoints     []adapter.Endpoint
 	endpointByTag map[string]adapter.Endpoint
 }
 
-func NewManager(logger log.ContextLogger, registry adapter.EndpointRegistry) *Manager {
+func NewManager(registry adapter.EndpointRegistry) *Manager {
 	return &Manager{
-		logger:        logger,
 		registry:      registry,
 		endpointByTag: make(map[string]adapter.Endpoint),
 	}
 }
 
-func (m *Manager) Start(stage adapter.StartStage) error {
+func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	m.access.Lock()
 	defer m.access.Unlock()
-	if m.started && m.stage >= stage {
-		panic("already started")
+	if stage == adapter.StartStateInitialize {
+		m.scope = scope
 	}
-	m.started = true
-	m.stage = stage
 	if stage == adapter.StartStateStart {
-		// started with outbound manager
 		return nil
 	}
 	for _, endpoint := range m.endpoints {
 		name := "endpoint/" + endpoint.Type() + "[" + endpoint.Tag() + "]"
-		done := adapter.LogElapsed(m.logger, stage, " ", name)
-		err := adapter.LegacyStart(endpoint, stage)
-		done()
+		err := scope.Start(name, endpoint, stage)
 		if err != nil {
-			return E.Cause(err, stage, " ", name)
+			return err
 		}
+	}
+	if stage == adapter.StartStateStarted {
+		m.started = true
 	}
 	return nil
 }
 
-func (m *Manager) Close() error {
-	m.access.Lock()
-	defer m.access.Unlock()
-	if !m.started {
-		return nil
-	}
-	m.started = false
-	endpoints := m.endpoints
-	m.endpoints = nil
-	monitor := taskmonitor.New(m.logger, C.StopTimeout)
-	var err error
-	for _, endpoint := range endpoints {
-		name := "endpoint/" + endpoint.Type() + "[" + endpoint.Tag() + "]"
-		done := adapter.LogElapsed(m.logger, "close ", name)
-		monitor.Start("close ", name)
-		err = E.Append(err, endpoint.Close(), func(err error) error {
-			return E.Cause(err, "close ", name)
-		})
-		monitor.Finish()
-		done()
-	}
-	return nil
+func (m *Manager) StartEndpoint(endpoint adapter.Endpoint) error {
+	return m.scope.Start("endpoint/"+endpoint.Type()+"["+endpoint.Tag()+"]", endpoint, adapter.StartStateStart)
 }
 
 func (m *Manager) Endpoints() []adapter.Endpoint {
@@ -94,6 +68,7 @@ func (m *Manager) Get(tag string) (adapter.Endpoint, bool) {
 	return endpoint, found
 }
 
+// Remove removes and closes an endpoint; used by hot reload. //H
 func (m *Manager) Remove(tag string) error {
 	m.access.Lock()
 	endpoint, found := m.endpointByTag[tag]
@@ -102,17 +77,15 @@ func (m *Manager) Remove(tag string) error {
 		return os.ErrInvalid
 	}
 	delete(m.endpointByTag, tag)
-	index := common.Index(m.endpoints, func(it adapter.Endpoint) bool {
-		return it == endpoint
-	})
+	index := slices.Index(m.endpoints, endpoint)
 	if index == -1 {
 		panic("invalid endpoint index")
 	}
-	m.endpoints = append(m.endpoints[:index], m.endpoints[index+1:]...)
+	m.endpoints = slices.Delete(slices.Clone(m.endpoints), index, index+1) // H: never change a slice already handed out
 	started := m.started
 	m.access.Unlock()
 	if started {
-		return endpoint.Close()
+		return adapter.CloseLate(m.scope, endpoint)
 	}
 	return nil
 }
@@ -123,34 +96,39 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
 		return err
 	}
 	m.access.Lock()
-	defer m.access.Unlock()
-	if m.started {
-		name := "endpoint/" + endpoint.Type() + "[" + endpoint.Tag() + "]"
-		for _, stage := range adapter.ListStartStages {
-			done := adapter.LogElapsed(m.logger, stage, " ", name)
-			err = adapter.LegacyStart(endpoint, stage)
-			done()
-			if err != nil {
-				return E.Cause(err, stage, " ", name)
-			}
+	started := m.started
+	m.access.Unlock()
+	if started { // H: hot reload; started outside the lock, as starting may look up other endpoints
+		err = adapter.StartLate(m.scope, "endpoint/"+endpoint.Type()+"["+endpoint.Tag()+"]", endpoint)
+		if err != nil {
+			return err
 		}
 	}
-	if existsEndpoint, loaded := m.endpointByTag[tag]; loaded {
-		if m.started {
-			err = existsEndpoint.Close()
-			if err != nil {
-				return E.Cause(err, "close endpoint/", existsEndpoint.Type(), "[", existsEndpoint.Tag(), "]")
-			}
-		}
-		existsIndex := common.Index(m.endpoints, func(it adapter.Endpoint) bool {
-			return it == existsEndpoint
-		})
+	m.access.Lock()
+	existsEndpoint, replaced := m.endpointByTag[tag]
+	if replaced && !started {
+		m.access.Unlock()
+		return E.New("duplicate endpoint tag: ", tag)
+	}
+	if replaced {
+		existsIndex := slices.Index(m.endpoints, existsEndpoint)
 		if existsIndex == -1 {
 			panic("invalid endpoint index")
 		}
-		m.endpoints = append(m.endpoints[:existsIndex], m.endpoints[existsIndex+1:]...)
+		// H: the replacement takes the old one's place (callers rely on the order, e.g. the main group
+		// comes first); a copy, so a slice already handed out never changes
+		m.endpoints = slices.Clone(m.endpoints)
+		m.endpoints[existsIndex] = endpoint
+	} else {
+		m.endpoints = append(m.endpoints, endpoint)
 	}
-	m.endpoints = append(m.endpoints, endpoint)
 	m.endpointByTag[tag] = endpoint
+	m.access.Unlock()
+	if replaced {
+		err = adapter.CloseLate(m.scope, existsEndpoint)
+		if err != nil {
+			return E.Cause(err, "close endpoint/", existsEndpoint.Type(), "[", existsEndpoint.Tag(), "]")
+		}
+	}
 	return nil
 }

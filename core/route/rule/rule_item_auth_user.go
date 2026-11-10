@@ -3,8 +3,8 @@ package rule
 import (
 	"strings"
 
+	"github.com/sagernet/sing-box/adapter"
 	F "github.com/sagernet/sing/common/format"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 )
 
 var _ RuleItem = (*AuthUserItem)(nil)

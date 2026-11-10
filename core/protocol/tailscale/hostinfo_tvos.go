@@ -1,14 +1,14 @@
-//go:build with_gvisor && tvos
+//go:build with_tailscale && tvos
 
 package tailscale
 
 import (
 	_ "unsafe"
 
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/types/lazy"
+	"github.com/sagernet/tailscale/types/lazy"
 )
 
-//go:linkname isAppleTV github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/version.isAppleTV
+//go:linkname isAppleTV github.com/sagernet/tailscale/version.isAppleTV
 var isAppleTV lazy.SyncValue[bool]
 
 func init() {

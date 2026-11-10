@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/spaiter/spaiter-vpn/core/log"
+	"github.com/sagernet/sing-box/log"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

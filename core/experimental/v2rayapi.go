@@ -3,9 +3,9 @@ package experimental
 import (
 	"os"
 
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 )
 
 type V2RayServerConstructor = func(logger log.Logger, options option.V2RayAPIOptions) (adapter.V2RayServer, error)

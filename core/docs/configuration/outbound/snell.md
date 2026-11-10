@@ -1,3 +1,9 @@
+---
+icon: material/new-box
+---
+
+!!! question "Since sing-box 1.14.0"
+
 ### Structure
 
 ```json
@@ -6,13 +12,34 @@
   "tag": "snell-out",
 
   "server": "127.0.0.1",
-  "server_port": 8388,
-  "psk": "my-pre-shared-key",
+  "server_port": 1080,
   "version": 4,
+  "psk": "password",
+  "userkey": "",
   "reuse": false,
-  "network": "",
+  "network": "tcp",
   "obfs_mode": "",
   "obfs_host": "",
+
+  ... // Dial Fields
+}
+```
+
+### Version 6 Structure
+
+```json
+{
+  "type": "snell",
+  "tag": "snell-out",
+
+  "server": "127.0.0.1",
+  "server_port": 1080,
+  "version": 6,
+  "psk": "password",
+  "userkey": "",
+  "reuse": false,
+  "network": "tcp",
+  "mode": "",
 
   ... // Dial Fields
 }
@@ -32,59 +59,66 @@ The server address.
 
 The server port.
 
+#### version
+
+==Required==
+
+The Snell protocol version, one of `4` `6`.
+
+Version `4` supports HTTP obfuscation (`obfs_mode` / `obfs_host`); version `6`
+replaces it with traffic shaping (`mode`) and requires a `psk` of 12 to 255
+bytes.
+
+!!! note
+
+    Since we intentionally do not support the QUIC proxy mode of Snell v5, the v5 wire protocol
+    is effectively identical to v4, so no separate v4 server or v5 client is provided.
+
 #### psk
 
 ==Required==
 
-The pre-shared key for authentication.
+The pre-shared key.
 
-#### version
+#### userkey
 
-Snell protocol version. One of `1` `2` `3` `4` `5`.
-
-Defaults to `4`.
-
-| Version | TCP | UDP             |
-|---------|-----|-----------------|
-| 1, 2    | ✔   | ✘               |
-| 3, 4    | ✔   | ✔ (UoT)         |
-| 5       | ✔   | ✔ (QUIC proxy)  |
-
-!!! note "QUIC Proxy Mode (v5)"
-    In v5, QUIC traffic uses a dedicated proxy path: the destination address
-    and the first QUIC Initial packet are encrypted by Snell; subsequent
-    packets are forwarded as-is (QUIC provides its own encryption).
-    Other UDP traffic falls back to the standard UDP-over-TCP tunnel.
-
-#### network
-
-Enabled network, one of `tcp` `udp`.
-
-Both are enabled by default for v3/v4/v5. For v1/v2 only TCP is enabled by default (no UDP support).
-
-UDP requires version `3` or above.
+The user key, used to authenticate against a multi-user server.
 
 #### reuse
 
-Enable connection reuse (Snell v4+ only). Reuses an existing TCP connection for
-multiple sequential requests, avoiding the overhead of a new TCP and encryption
-handshake for each request.
+Enable connection reuse (the Snell v2 `CONNECT` command).
 
-Requires the server to support Snell v4 connection reuse.
+#### network
 
-Defaults to `false`.
+Enabled network
+
+One of `tcp` `udp`.
+
+Both is enabled by default.
 
 #### obfs_mode
 
-Simple-obfs obfuscation mode.
+==Version 4 only==
 
-One of `http` `tls`, or empty to disable.
+HTTP obfuscation mode, one of `none` `http`.
+
+`none` is used by default.
 
 #### obfs_host
 
-The obfuscation hostname used for HTTP/TLS obfuscation.
+==Version 4 only==
 
-Defaults to `bing.com` if not set.
+The HTTP `Host` header sent when `obfs_mode` is `http`.
+
+`bing.com` is used by default.
+
+#### mode
+
+==Version 6 only==
+
+Traffic shaping mode, one of `default` `unshaped` `unsafe-raw`.
+
+`default` is used by default.
 
 ### Dial Fields
 

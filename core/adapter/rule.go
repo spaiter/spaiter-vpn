@@ -1,7 +1,7 @@
 package adapter
 
 import (
-	C "github.com/spaiter/spaiter-vpn/core/constant"
+	C "github.com/sagernet/sing-box/constant"
 
 	"github.com/miekg/dns"
 )
@@ -23,6 +23,10 @@ type DNSRule interface {
 	LegacyPreMatch(metadata *InboundContext) bool
 	WithAddressLimit() bool
 	MatchAddressLimit(metadata *InboundContext, response *dns.Msg) bool
+	MatchResponseTag() string
+	MatchResponseTags() []string
+	MatchResponseAnonymous() bool
+	Race() bool
 	BypassIfFailed() bool
 }
 

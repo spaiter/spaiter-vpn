@@ -9,10 +9,10 @@ import (
 
 	"github.com/9seconds/mtg/v2/essentials"
 
+	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
 )
 
 // mtgNetwork implements github.com/9seconds/mtg/v2/mtglib.Network on top of a

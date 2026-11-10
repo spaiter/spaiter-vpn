@@ -5,22 +5,22 @@ import (
 	"net"
 	"os"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/inbound"
+	"github.com/sagernet/sing-box/common/listener"
+	"github.com/sagernet/sing-box/common/mux"
+	"github.com/sagernet/sing-box/common/tls"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/transport/trojan"
+	"github.com/sagernet/sing-box/transport/v2ray"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/auth"
 	E "github.com/sagernet/sing/common/exceptions"
 	F "github.com/sagernet/sing/common/format"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/inbound"
-	"github.com/spaiter/spaiter-vpn/core/common/listener"
-	"github.com/spaiter/spaiter-vpn/core/common/mux"
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	"github.com/spaiter/spaiter-vpn/core/transport/trojan"
-	"github.com/spaiter/spaiter-vpn/core/transport/v2ray"
 )
 
 func RegisterInbound(registry *inbound.Registry) {
@@ -40,6 +40,7 @@ type Inbound struct {
 	fallbackAddr             M.Socksaddr
 	fallbackAddrTLSNextProto map[string]M.Socksaddr
 	transport                adapter.V2RayServerTransport
+	references               []string
 }
 
 func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.TrojanInboundOptions) (adapter.Inbound, error) {
@@ -61,6 +62,9 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 			return nil, err
 		}
 		inbound.tlsConfig = tlsConfig
+		if options.TLS.Reality != nil && options.TLS.Reality.Enabled && options.TLS.Reality.Handshake.Detour != "" {
+			inbound.references = []string{options.TLS.Reality.Handshake.Detour}
+		}
 	}
 	var fallbackHandler N.TCPConnectionHandlerEx
 	if options.Fallback != nil && options.Fallback.Server != "" || len(options.FallbackForALPN) > 0 {
@@ -116,7 +120,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	return inbound, nil
 }
 
-func (h *Inbound) Start(stage adapter.StartStage) error {
+func (h *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateStart {
 		return nil
 	}
@@ -125,10 +129,18 @@ func (h *Inbound) Start(stage adapter.StartStage) error {
 		if err != nil {
 			return E.Cause(err, "create TLS config")
 		}
+		scope.Add(h.tlsConfig.Close)
 	}
 	if h.transport == nil {
-		return h.listener.Start()
+		err := h.listener.Start()
+		if err != nil {
+			return err
+		}
+		scope.Add(h.listener.Close)
+		return nil
 	}
+	scope.Add(h.transport.Close)
+	scope.Add(h.listener.Close)
 	if common.Contains(h.transport.Network(), N.NetworkTCP) {
 		tcpListener, err := h.listener.ListenTCP()
 		if err != nil {
@@ -154,14 +166,6 @@ func (h *Inbound) Start(stage adapter.StartStage) error {
 		}()
 	}
 	return nil
-}
-
-func (h *Inbound) Close() error {
-	return common.Close(
-		h.listener,
-		h.tlsConfig,
-		h.transport,
-	)
 }
 
 func (h *Inbound) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
@@ -259,4 +263,8 @@ func (h *inboundTransportHandler) NewConnectionEx(ctx context.Context, conn net.
 	//nolint:staticcheck
 	h.logger.InfoContext(ctx, "inbound connection from ", metadata.Source)
 	(*Inbound)(h).NewConnection(ctx, conn, metadata, onClose)
+}
+
+func (h *Inbound) References() []string {
+	return h.references
 }

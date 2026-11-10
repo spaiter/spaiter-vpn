@@ -7,9 +7,18 @@ import (
 	"net/http/httputil"
 	"net/netip"
 	"net/url"
+	"os"
 	"sync/atomic"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/inbound"
+	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/listener"
+	"github.com/sagernet/sing-box/common/tls"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	qtls "github.com/sagernet/sing-quic"
 	"github.com/sagernet/sing-quic/hysteria"
 	"github.com/sagernet/sing-quic/hysteria2"
@@ -20,13 +29,7 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/inbound"
-	"github.com/spaiter/spaiter-vpn/core/common/listener"
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
+	"github.com/sagernet/sing/service/filemanager"
 )
 
 func RegisterInbound(registry *inbound.Registry) {
@@ -44,7 +47,6 @@ type Inbound struct {
 }
 
 func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.Hysteria2InboundOptions) (adapter.Inbound, error) {
-	options.UDPFragmentDefault = true
 	if options.TLS == nil || !options.TLS.Enabled {
 		return nil, C.ErrTLSRequired
 	}
@@ -74,7 +76,12 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if options.Masquerade != nil && options.Masquerade.Type != "" {
 		switch options.Masquerade.Type {
 		case C.Hysterai2MasqueradeTypeFile:
-			masqueradeHandler = http.FileServer(http.Dir(options.Masquerade.FileOptions.Directory))
+			masqueradeDirectory := filemanager.BasePath(ctx, os.ExpandEnv(options.Masquerade.FileOptions.Directory))
+			_, err = filemanager.ReadDir(ctx, masqueradeDirectory)
+			if err != nil && !os.IsNotExist(err) {
+				return nil, E.Cause(err, "read masquerade directory")
+			}
+			masqueradeHandler = http.FileServer(http.Dir(masqueradeDirectory))
 		case C.Hysterai2MasqueradeTypeProxy:
 			masqueradeURL, err := url.Parse(options.Masquerade.ProxyOptions.URL)
 			if err != nil {
@@ -126,11 +133,24 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	}
 	var realmOptions *realm.Options
 	if options.Realm != nil {
-		queryOptions, err := adapter.DNSQueryOptionsFrom(ctx, options.Realm.STUNDomainResolver)
-		if err != nil {
-			return nil, err
+		if options.Realm.IPVersion != 0 && options.ListenOptions.Listen != nil {
+			listenAddr := netip.Addr(*options.ListenOptions.Listen).Unmap()
+			if options.Realm.IPVersion == 6 && listenAddr.Is4() {
+				return nil, E.New("realm.ip_version 6 conflicts with listen address ", listenAddr)
+			}
+			if options.Realm.IPVersion == 4 && listenAddr.Is6() && !listenAddr.IsUnspecified() {
+				return nil, E.New("realm.ip_version 4 conflicts with listen address ", listenAddr)
+			}
 		}
-		httpClientTransport, err := service.FromContext[adapter.HTTPClientManager](ctx).ResolveTransport(ctx, logger, common.PtrValueOrDefault(options.Realm.HTTPClient))
+		var queryOptions adapter.DNSQueryOptions
+		if options.Realm.STUNServersIsDomain() {
+			queryOptions, err = dialer.NewDNSQueryOptions(ctx, options.Realm.STUNDomainResolver, true)
+			if err != nil {
+				return nil, E.Cause(err, "create realm STUN domain resolver")
+			}
+		}
+		var httpClientTransport adapter.HTTPTransport
+		httpClientTransport, err = service.FromContext[adapter.HTTPClientManager](ctx).ResolveTransport(ctx, logger, common.PtrValueOrDefault(options.Realm.HTTPClient))
 		if err != nil {
 			return nil, E.Cause(err, "create realm http client")
 		}
@@ -151,7 +171,14 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 				}
 				return dnsRouter.Lookup(ctx, host, dnsOptions)
 			},
-			Logger: logger,
+			Logger:    logger,
+			IPVersion: options.Realm.IPVersion,
+		}
+		if options.Realm.PortMapping != nil && options.Realm.PortMapping.Enabled {
+			realmOptions.PortMapping = &realm.PortMappingOptions{
+				Timeout:  time.Duration(options.Realm.PortMapping.Timeout),
+				Lifetime: time.Duration(options.Realm.PortMapping.Lifetime),
+			}
 		}
 	}
 	hysteriaService, err := hysteria2.NewService[int](hysteria2.ServiceOptions{
@@ -242,7 +269,7 @@ func (h *Inbound) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, 
 	h.router.RoutePacketConnectionEx(ctx, conn, metadata, onClose)
 }
 
-func (h *Inbound) Start(stage adapter.StartStage) error {
+func (h *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateStart {
 		return nil
 	}
@@ -251,22 +278,21 @@ func (h *Inbound) Start(stage adapter.StartStage) error {
 		if err != nil {
 			return err
 		}
+		scope.Add(h.tlsConfig.Close)
 	}
 	packetConn, err := h.listener.ListenUDP()
 	if err != nil {
 		return err
 	}
-	return h.service.Start(packetConn)
+	scope.Add(h.listener.Close)
+	err = h.service.Start(packetConn)
+	if err != nil {
+		return err
+	}
+	scope.Add(h.service.Close)
+	return nil
 }
 
-func (h *Inbound) InterfaceUpdated() {
+func (h *Inbound) InterfaceUpdated(ctx context.Context) {
 	h.service.Reset()
-}
-
-func (h *Inbound) Close() error {
-	return common.Close(
-		h.listener,
-		h.tlsConfig,
-		common.PtrOrNil(h.service),
-	)
 }

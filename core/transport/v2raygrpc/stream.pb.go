@@ -69,7 +69,7 @@ const file_transport_v2raygrpc_stream_proto_rawDesc = "" +
 	"\x04data\x18\x01 \x01(\fR\x04data2M\n" +
 	"\n" +
 	"GunService\x12?\n" +
-	"\x03Tun\x12\x19.transport.v2raygrpc.Hunk\x1a\x19.transport.v2raygrpc.Hunk(\x010\x01B9Z7github.com/spaiter/spaiter-vpn/core/transport/v2raygrpcb\x06proto3"
+	"\x03Tun\x12\x19.transport.v2raygrpc.Hunk\x1a\x19.transport.v2raygrpc.Hunk(\x010\x01B2Z0github.com/sagernet/sing-box/transport/v2raygrpcb\x06proto3"
 
 var (
 	file_transport_v2raygrpc_stream_proto_rawDescOnce sync.Once

@@ -38,7 +38,7 @@ get_version() {
     cd "$PROJECT_DIR"
     GOHOSTOS=$(go env GOHOSTOS)
     GOHOSTARCH=$(go env GOHOSTARCH)
-    CGO_ENABLED=0 GOOS=$GOHOSTOS GOARCH=$GOHOSTARCH go run github.com/spaiter/spaiter-vpn/core/cmd/internal/read_tag@latest
+    CGO_ENABLED=0 GOOS=$GOHOSTOS GOARCH=$GOHOSTARCH go run github.com/sagernet/sing-box/cmd/internal/read_tag@latest
 }
 
 get_ldflags() {
@@ -46,7 +46,7 @@ get_ldflags() {
     version=$(get_version)
     local shared_ldflags
     shared_ldflags=$(cat "$PROJECT_DIR/release/LDFLAGS")
-    echo "-X 'github.com/spaiter/spaiter-vpn/core/constant.Version=${version}' ${shared_ldflags} -s -w -buildid="
+    echo "-X 'github.com/sagernet/sing-box/constant.Version=${version}' ${shared_ldflags} -s -w -buildid="
 }
 
 build_sing_box() {

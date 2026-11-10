@@ -18,15 +18,14 @@ import (
 	"github.com/sagernet/gvisor/pkg/tcpip/transport/icmp"
 	"github.com/sagernet/gvisor/pkg/tcpip/transport/tcp"
 	"github.com/sagernet/gvisor/pkg/tcpip/transport/udp"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/buf"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	wgTun "github.com/spaiter/spaiter-vpn/core/thirdparty/wireguard-go/tun"
-	"github.com/spaiter/spaiter-vpn/core/transport/wireguard"
+	wgTun "github.com/sagernet/wireguard-go/tun"
 )
 
 type stackDevice struct {
@@ -87,8 +86,8 @@ func newStackDevice(options DeviceOptions) (*stackDevice, error) {
 	tunDevice.stack = ipStack
 	if options.Handler != nil {
 		ipStack.SetTransportProtocolHandler(tcp.ProtocolNumber, tun.NewTCPForwarder(options.Context, ipStack, options.Handler).HandlePacket)
-		ipStack.SetTransportProtocolHandler(udp.ProtocolNumber, tun.NewUDPForwarder(options.Context, ipStack, options.Handler, options.UDPTimeout).HandlePacket)
-		icmpForwarder := tun.NewICMPForwarder(ipStack, options.Handler, options.Logger)
+		ipStack.SetTransportProtocolHandler(udp.ProtocolNumber, tun.NewUDPForwarder(options.Context, ipStack, options.Handler, nil, tun.UDPNatOptions{Timeout: options.UDPTimeout}).HandlePacket)
+		icmpForwarder := tun.NewICMPForwarder(ipStack, options.Handler, nil, options.Logger)
 		ipStack.SetTransportProtocolHandler(icmp.ProtocolNumber4, icmpForwarder.HandlePacket)
 		ipStack.SetTransportProtocolHandler(icmp.ProtocolNumber6, icmpForwarder.HandlePacket)
 	}
@@ -96,6 +95,7 @@ func newStackDevice(options DeviceOptions) (*stackDevice, error) {
 }
 
 func (w *stackDevice) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	destination = destination.Unwrap() //H: an IPv4-mapped address is IPv4, not IPv6
 	addr := tcpip.FullAddress{
 		NIC:  tun.DefaultNIC,
 		Port: destination.Port,
@@ -120,11 +120,11 @@ func (w *stackDevice) DialContext(ctx context.Context, network string, destinati
 	}
 	switch N.NetworkName(network) {
 	case N.NetworkTCP:
-		// the netstack dial has no timeout of its own: a peer that never answers the SYN
-		// would hold the caller forever
+		// the netstack retries SYN for about two minutes; give up after the TCP timeout, as a
+		// direct dial does
 		ctx, cancel := context.WithTimeout(ctx, C.TCPTimeout)
 		defer cancel()
-		tcpConn, err := wireguard.DialTCPWithBind(ctx, w.stack, bind, addr, networkProtocol)
+		tcpConn, err := gonet.DialTCPWithBind(ctx, w.stack, bind, addr, networkProtocol)
 		if err != nil {
 			return nil, err
 		}
@@ -141,6 +141,7 @@ func (w *stackDevice) DialContext(ctx context.Context, network string, destinati
 }
 
 func (w *stackDevice) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	destination = destination.Unwrap() //H
 	bind := tcpip.FullAddress{
 		NIC: tun.DefaultNIC,
 	}
@@ -150,7 +151,7 @@ func (w *stackDevice) ListenPacket(ctx context.Context, destination M.Socksaddr)
 		bind.Addr = tun.AddressFromAddr(w.inet4Address)
 	} else {
 		networkProtocol = header.IPv6ProtocolNumber
-		bind.Addr = tun.AddressFromAddr(w.inet4Address)
+		bind.Addr = tun.AddressFromAddr(w.inet6Address) //H: was the IPv4 address
 	}
 	udpConn, err := gonet.DialUDP(w.stack, &bind, nil, networkProtocol)
 	if err != nil {

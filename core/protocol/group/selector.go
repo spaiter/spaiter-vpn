@@ -2,21 +2,24 @@ package group
 
 import (
 	"context"
+	"io"
 	"net"
+	"slices"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/outbound"
+	"github.com/sagernet/sing-box/common/interrupt"
+	"github.com/sagernet/sing-box/common/monitoring"
+	"github.com/sagernet/sing-box/common/urltest"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/outbound"
-	"github.com/spaiter/spaiter-vpn/core/common/interrupt"
-	"github.com/spaiter/spaiter-vpn/core/common/urltest"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 func RegisterSelector(registry *outbound.Registry) {
@@ -24,16 +27,14 @@ func RegisterSelector(registry *outbound.Registry) {
 }
 
 var (
-	_ adapter.OutboundGroup           = (*Selector)(nil)
-	_ adapter.ConnectionHandler       = (*Selector)(nil)
-	_ adapter.PacketConnectionHandler = (*Selector)(nil)
+	_ adapter.OutboundGroup = (*Selector)(nil)
+	_ adapter.Referrer      = (*Selector)(nil)
 )
 
 type Selector struct {
 	outbound.Adapter
 	ctx                          context.Context
 	outbound                     adapter.OutboundManager
-	connection                   adapter.ConnectionManager
 	logger                       logger.ContextLogger
 	tags                         []string
 	defaultTag                   string
@@ -49,7 +50,6 @@ func NewSelector(ctx context.Context, router adapter.Router, logger log.ContextL
 		Adapter:                      outbound.NewAdapter(C.TypeSelector, tag, nil, options.Outbounds),
 		ctx:                          ctx,
 		outbound:                     service.FromContext[adapter.OutboundManager](ctx),
-		connection:                   service.FromContext[adapter.ConnectionManager](ctx),
 		logger:                       logger,
 		tags:                         options.Outbounds,
 		defaultTag:                   options.Default,
@@ -60,6 +60,11 @@ func NewSelector(ctx context.Context, router adapter.Router, logger log.ContextL
 	}
 	if len(outbound.tags) == 0 {
 		return nil, E.New("missing tags")
+	}
+	for i, tag := range outbound.tags {
+		if slices.Contains(outbound.tags[:i], tag) {
+			return nil, E.New("duplicate tag: ", tag)
+		}
 	}
 	return outbound, nil
 }
@@ -72,7 +77,10 @@ func (s *Selector) Network() []string {
 	return selected.Network()
 }
 
-func (s *Selector) Start() error {
+func (s *Selector) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage != adapter.StartStateStart {
+		return nil
+	}
 	for i, tag := range s.tags {
 		detour, loaded := s.outbound.Outbound(tag)
 		if !loaded {
@@ -108,16 +116,24 @@ func (s *Selector) Start() error {
 	return nil
 }
 
-func (s *Selector) Now() string {
-	selected := s.selected.Load()
-	if selected == nil {
-		return s.tags[0]
-	}
-	return selected.Tag()
-}
-
 func (s *Selector) All() []string {
 	return s.tags
+}
+
+func (s *Selector) Selected(network string) adapter.Outbound {
+	return s.selected.Load()
+}
+
+func (s *Selector) AttachConnection(closer io.Closer) func() {
+	return s.interruptGroup.Add(closer, true)
+}
+
+func (s *Selector) References() []string {
+	selected := s.selected.Load()
+	if selected == nil {
+		return s.tags[:1]
+	}
+	return []string{selected.Tag()}
 }
 
 func (s *Selector) SelectOutbound(tag string) bool {
@@ -141,6 +157,12 @@ func (s *Selector) SelectOutbound(tag string) bool {
 	if s.history != nil {
 		s.history.NotifyUpdated()
 	}
+	// H: a selection changes this group and everything routed through it
+	if mon := monitoring.Get(s.ctx); mon != nil && s.Tag() != "" {
+		if err := mon.SignalChange(s.Tag()); err != nil {
+			s.logger.Debug("signal selection change: ", err)
+		}
+	}
 	return true
 }
 
@@ -160,29 +182,15 @@ func (s *Selector) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	return s.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 }
 
-func (s *Selector) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
-	ctx = interrupt.ContextWithIsExternalConnection(ctx)
-	selected := s.selected.Load()
-	if outboundHandler, isHandler := selected.(adapter.ConnectionHandler); isHandler {
-		outboundHandler.NewConnection(ctx, conn, metadata, onClose)
-	} else {
-		s.connection.NewConnection(ctx, selected, conn, metadata, onClose)
+func RealTag(detour adapter.Outbound, network string) string {
+	for {
+		group, isGroup := detour.(adapter.OutboundGroup)
+		if !isGroup {
+			return detour.Tag()
+		}
+		detour = group.Selected(network)
+		if detour == nil {
+			return ""
+		}
 	}
-}
-
-func (s *Selector) NewPacketConnection(ctx context.Context, conn N.PacketConn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
-	ctx = interrupt.ContextWithIsExternalConnection(ctx)
-	selected := s.selected.Load()
-	if outboundHandler, isHandler := selected.(adapter.PacketConnectionHandler); isHandler {
-		outboundHandler.NewPacketConnection(ctx, conn, metadata, onClose)
-	} else {
-		s.connection.NewPacketConnection(ctx, selected, conn, metadata, onClose)
-	}
-}
-
-func RealTag(detour adapter.Outbound) string {
-	if group, isGroup := detour.(adapter.OutboundGroup); isGroup {
-		return group.Now()
-	}
-	return detour.Tag()
 }

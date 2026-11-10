@@ -1,13 +1,12 @@
 package libbox
 
-import C "github.com/spaiter/spaiter-vpn/core/constant"
+import C "github.com/sagernet/sing-box/constant"
 
 type PlatformInterface interface {
 	LocalDNSTransport() LocalDNSTransport
 	UsePlatformAutoDetectInterfaceControl() bool
 	AutoDetectInterfaceControl(fd int32) error
 	OpenTun(options TunOptions) (int32, error)
-	UseProcFS() bool
 	FindConnectionOwner(ipProtocol int32, sourceAddress string, sourcePort int32, destinationAddress string, destinationPort int32) (*ConnectionOwner, error)
 	StartDefaultInterfaceMonitor(listener InterfaceUpdateListener) error
 	CloseDefaultInterfaceMonitor(listener InterfaceUpdateListener) error
@@ -18,9 +17,69 @@ type PlatformInterface interface {
 	SystemCertificates() StringIterator
 	ClearDNSCache()
 	SendNotification(notification *Notification) error
+	CancelNotification(identifier string, typeID int32) error
 	StartNeighborMonitor(listener NeighborUpdateListener) error
 	CloseNeighborMonitor(listener NeighborUpdateListener) error
 	RegisterMyInterface(name string)
+	UsePlatformShell() bool
+	CheckPlatformShell() error
+	OpenShellSession(user *PlatformUser, command string, environ StringIterator, term string, rows int32, cols int32) (ShellSession, error)
+	LookupUser(username string) (*PlatformUser, error)
+	LookupSFTPServer() (string, error)
+	ReadSystemSSHHostKey() (string, error)
+	TailscaleHostname() string
+	UsePlatformBridge() bool
+	CreateBridge(options *BridgeOptions) (BridgeSession, error)
+	UsePlatformAutoRedirect() bool
+	CreateAutoRedirect(options []byte, handler AutoRedirectHandler) (AutoRedirectSession, error)
+}
+
+type AutoRedirectHandler interface {
+	JudgeFlow(ipProtocol int32, sourceAddress string, sourcePort int32, destinationAddress string, destinationPort int32, firstPacket []byte) (int32, error)
+	RedirectListenerFileDescriptor() (int32, error)
+	RouteAddressSetFileDescriptor() (int32, error)
+	WriteLog(level int32, message string)
+}
+
+type AutoRedirectSession interface {
+	Close() error
+	UpdateRouteAddressSet() error
+}
+
+type BridgeOptions struct {
+	BridgeName string
+	MTU        int32
+	Inet4Port  string
+	Inet6Port  string
+	Interface  string
+	RuleIndex  int32
+	RouteTable int32
+}
+
+type BridgeSession interface {
+	FileDescriptor() int32
+	Name() string
+	Inet6Active() bool
+	SetEgress(interfaceName string) error
+	Close() error
+}
+
+type PlatformUser struct {
+	Username string
+	Uid      int32
+	Gid      int32
+	HomeDir  string
+	Shell    string
+
+	groups []int32
+}
+
+func (u *PlatformUser) SetGroups(groups Int32Iterator) {
+	u.groups = iteratorToArray[int32](groups)
+}
+
+func (u *PlatformUser) Groups() Int32Iterator {
+	return newIterator(u.groups)
 }
 
 type NeighborUpdateListener interface {
@@ -31,7 +90,16 @@ type ConnectionOwner struct {
 	UserId              int32
 	UserName            string
 	ProcessPath         string
+	processPaths        []string
 	androidPackageNames []string
+}
+
+func (c *ConnectionOwner) SetProcessPaths(paths StringIterator) {
+	c.processPaths = iteratorToArray[string](paths)
+}
+
+func (c *ConnectionOwner) ProcessPaths() StringIterator {
+	return newIterator(c.processPaths)
 }
 
 func (c *ConnectionOwner) SetAndroidPackageNames(names StringIterator) {
@@ -44,6 +112,7 @@ func (c *ConnectionOwner) AndroidPackageNames() StringIterator {
 
 type InterfaceUpdateListener interface {
 	UpdateDefaultInterface(interfaceName string, interfaceIndex int32, isExpensive bool, isConstrained bool)
+	UpdateNetworkPath(networkPath string)
 }
 
 const (
@@ -60,9 +129,11 @@ type NetworkInterface struct {
 	Addresses StringIterator
 	Flags     int32
 
-	Type      int32
-	DNSServer StringIterator
-	Metered   bool
+	Type            int32
+	DNSServer       StringIterator
+	DNSSearchDomain StringIterator
+	Gateway         StringIterator
+	Metered         bool
 }
 
 type WIFIState struct {
@@ -101,41 +172,4 @@ type OnDemandRule interface {
 type OnDemandRuleIterator interface {
 	Next() OnDemandRule
 	HasNext() bool
-}
-
-// BridgeOptions and BridgeSession are libbox-local, gomobile-safe mirrors of
-// adapter.BridgeOptions and adapter.BridgeSession.
-//
-// They were removed by bf92faff ("feat(libbox): wire RoutedFlow, WARP/MASQUE
-// cache slots, and shell/bridge stubs") while bridge_service_linux.go and
-// bridge_stub.go kept using them, which left `go build ./...` broken on linux
-// from 2026-07-11 onwards. It went unnoticed because the server binary is
-// built from cmd/sing-box, which does not import libbox.
-//
-// They cannot simply be replaced by the adapter types: gomobile cannot export
-// netip.Addr or plain int across the language boundary, so the bridge ports are
-// strings to be parsed on this side and the widths are fixed at int32. That is
-// exactly what bridge_service_linux.go expects -- string ports it parses with
-// netip.ParseAddr, and FileDescriptor() returning int32.
-//
-// Note that bridge_service_darwin.go was migrated to the adapter types instead,
-// so the two platforms currently expose different signatures for
-// NewBridgeService. Only linux (and Android, which carries the linux build tag)
-// is built here, so that inconsistency is left alone rather than fixed blind.
-type BridgeOptions struct {
-	BridgeName string
-	MTU        int32
-	Inet4Port  string
-	Inet6Port  string
-	Interface  string
-	RuleIndex  int32
-	RouteTable int32
-}
-
-type BridgeSession interface {
-	FileDescriptor() int32
-	Name() string
-	Inet6Active() bool
-	SetEgress(interfaceName string) error
-	Close() error
 }

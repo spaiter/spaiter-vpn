@@ -6,9 +6,19 @@ import (
 	"encoding/hex"
 	"net"
 	"net/netip"
-	"sync/atomic"
+	"sync"        //H
+	"sync/atomic" //H
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/endpoint"
+	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/monitoring"
+	"github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/hiddify/peeruser"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/transport/awg"
 	singTun "github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/bufio"
@@ -17,15 +27,6 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/endpoint"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	"github.com/spaiter/spaiter-vpn/core/common/monitoring"
-	"github.com/spaiter/spaiter-vpn/core/constant"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	"github.com/spaiter/spaiter-vpn/core/transport/awg"
 	"go4.org/netipx"
 )
 
@@ -41,23 +42,37 @@ type Endpoint struct {
 	*awg.Device
 	endpoint.Adapter
 	address   []netip.Prefix
+	peerUsers atomic.Pointer[peeruser.Users] //H: swapped by ReloadPeers (reload_peers.go)
+	peerState *peerState                     //H: peers programmed into the device, see reload_peers.go
 	router    adapter.Router
 	logger    log.ContextLogger
 	dnsRouter adapter.DNSRouter
 	started   bool
+	tracker   adapter.StatusTracker //H
 	ctx       context.Context
-	// peerNames is swapped atomically: ReloadPeers can replace it while
-	// connection handlers are reading it. //H
-	peerNames atomic.Pointer[peerNameTable]
-	peerState *peerState //H peers currently programmed into the device
+	// H: see h_interface_update.go //H
+	deviceStarted atomic.Bool  //H
+	bindAccess    sync.Mutex   //H
+	peers         *domainPeers //H: see h_domain_peer.go
 }
 
 func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.AwgEndpointOptions) (adapter.Endpoint, error) {
 	if options.MTU == 0 {
 		options.MTU = 1408
 	}
+	if options.Detour != "" && options.ListenPort != 0 { //H: a server listens itself, as WireGuard's
+		return nil, E.New("`listen_port` is conflict with `detour`") //H
+	} //H
 
 	options.UDPFragmentDefault = true
+	reserved, err := reservedOptions(options) //H
+	if err != nil {                           //H
+		return nil, err //H
+	} //H
+	fallback, err := peerFallback(options) //H
+	if err != nil {                        //H
+		return nil, err //H
+	} //H
 	// Check if any peer has a domain address
 	remoteIsDomain := common.Any(options.Peers, func(peer option.AwgPeerOptions) bool {
 		return !M.ParseAddr(peer.Address).IsValid()
@@ -93,22 +108,14 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		return nil, err
 	}
 
-	// Create peer resolver function for domain endpoints
-	// Always use system resolver for peer endpoints because:
-	// 1. VPN server must be resolved before VPN tunnel is established
-	// 2. dnsRouter may not be fully initialized at this stage
-	var resolvePeer func(domain string) (netip.Addr, error)
-	if remoteIsDomain {
-		resolvePeer = func(domain string) (netip.Addr, error) {
-			addrs, lookupErr := net.DefaultResolver.LookupNetIP(ctx, "ip", domain)
-			if lookupErr != nil {
-				return netip.Addr{}, lookupErr
-			}
-			return addrs[0], nil
-		}
-	}
+	// H: a peer given by a domain is resolved by the DNS router once the box started, not by the
+	// system resolver here: see h_domain_peer.go //H
+	ipcOptions, domainPeers, err := deferDomainPeers(options) //H
+	if err != nil {                                           //H
+		return nil, err //H
+	} //H
 
-	ipc, err := genIpcConfig(options, resolvePeer)
+	ipc, err := genIpcConfig(ipcOptions, nil) //H
 	if err != nil {
 		return nil, err
 	}
@@ -118,13 +125,14 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	ep := &Endpoint{
 		Adapter:   endpoint.NewAdapterWithDialerOptions("awg", tag, []string{N.NetworkTCP, N.NetworkUDP}, options.DialerOptions),
 		address:   options.Address,
+		peerState: newPeerState(options.Peers), //H
 		router:    router,
 		logger:    logger,
 		dnsRouter: service.FromContext[adapter.DNSRouter](ctx),
 		ctx:       ctx,
-		peerState: newPeerState(options.Peers),
+		peers:     newDomainPeers(dial, domainPeers, len(options.Peers)), //H
 	}
-	ep.peerNames.Store(newPeerNameTable(options.Peers))
+	ep.peerUsers.Store(newPeerUsers(options.Peers)) //H
 
 	dev, err := awg.NewDevice(ctx, logger, dial, ipc, awg.DeviceOpts{
 		UseIntegratedTun: options.UseIntegratedTun,
@@ -132,7 +140,13 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		AllowedIps:       allowedIps.Prefixes(),
 		ExcludedIps:      excludedIps.Prefixes(),
 		MTU:              options.MTU,
-		Handler:          ep,
+		Peer:             singlePeer(options.Peers),                            //H: one packet connection to the peer
+		Reserved:         reserved,                                             //H
+		MTUDiscovery:     options.MTUDiscovery == nil || *options.MTUDiscovery, //H
+		Fallback:         fallback,                                             //H
+		ListenPort:       options.ListenPort,                                   //H
+		PeerPending:      len(options.Peers) == 1 && len(domainPeers) == 1,     //H: see h_domain_peer.go
+		Handler:          ep,                                                   // peers' flows go through the router: sniffing, per-user stats, XDP
 		UDPTimeout:       constant.UDPTimeout,
 		Context:          ctx,
 	})
@@ -140,7 +154,6 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		return nil, err
 	}
 	ep.Device = dev
-
 	return ep, nil
 }
 
@@ -154,6 +167,9 @@ func genIpcConfig(opts option.AwgEndpointOptions, resolvePeer func(domain string
 		s += "\nlisten_port=" + format.ToString(opts.ListenPort)
 	}
 	awg := opts.Awg
+	if err := applyMasquerade(&awg); err != nil { //H
+		return "", err
+	}
 	if awg.Jc != 0 {
 		s += "\njc=" + format.ToString(awg.Jc)
 	}
@@ -202,35 +218,40 @@ func genIpcConfig(opts option.AwgEndpointOptions, resolvePeer func(domain string
 	if awg.I5 != "" {
 		s += "\ni5=" + awg.I5
 	}
-	// AWG 3.x. The UAPI takes the header protection key as hex, while the
-	// Amnezia .conf spells it base64 — same split as private_key above. //H awg3
-	if awg.HeaderProtectionKey != "" {
-		// Header protection draws its per-packet nonce from the S1-S4 crypto
-		// padding, so anything shorter than the ChaCha20 nonce silently breaks
-		// the handshake instead of erroring out. Fail loudly here.
-		for _, sv := range [][2]any{
-			{"s1", awg.S1}, {"s2", awg.S2}, {"s3", awg.S3}, {"s4", awg.S4},
-		} {
-			if sv[1].(int) < awgHeaderProtectionMinPadding {
-				return "", E.New("awg: header_protection_key requires ", sv[0], " >= ", awgHeaderProtectionMinPadding, ", got ", sv[1])
-			}
-		}
-		headerKeyBytes, err := base64.StdEncoding.DecodeString(awg.HeaderProtectionKey)
-		if err != nil {
-			return "", E.Cause(err, "decode header_protection_key")
-		}
-		s += "\nheader_protection_key=" + hex.EncodeToString(headerKeyBytes)
-	}
-	for _, kv := range [][2]string{
-		{"content_padding_addition", awg.ContentPaddingAddition},
-		{"rekey_after_time", awg.RekeyAfterTime},
-		{"rekey_timeout", awg.RekeyTimeout},
-		{"reject_after_time", awg.RejectAfterTime},
-		{"keepalive_timeout", awg.KeepaliveTimeout},
-		{"max_handshake_attempts", awg.MaxHandshakeAttempts},
+	// AmneziaWG 3.x
+	// H: the Amnezia .conf (and our subscriptions) spell header_protection_key in base64, like
+	// private_key; the UAPI takes hex. 64 hex digits are passed through for upstream configs. //H
+	if awg.HeaderProtectionKey != "" { //H
+		// Header protection draws its per-packet nonce from the S1-S4 padding; shorter padding
+		// breaks the handshake silently, so fail loudly here. //H
+		for _, sv := range []struct { //H
+			name  string //H
+			value int    //H
+		}{{"s1", awg.S1}, {"s2", awg.S2}, {"s3", awg.S3}, {"s4", awg.S4}} { //H
+			if sv.value < awgHeaderProtectionMinPadding { //H
+				return "", E.New("awg: header_protection_key requires ", sv.name, " >= ", awgHeaderProtectionMinPadding, ", got ", sv.value) //H
+			} //H
+		} //H
+		headerKey := awg.HeaderProtectionKey                                           //H
+		if _, err := hex.DecodeString(headerKey); err != nil || len(headerKey) != 64 { //H
+			headerKeyBytes, err := base64.StdEncoding.DecodeString(headerKey) //H
+			if err != nil {                                                   //H
+				return "", E.Cause(err, "decode header_protection_key") //H
+			} //H
+			headerKey = hex.EncodeToString(headerKeyBytes) //H
+		} //H
+		s += "\nheader_protection_key=" + headerKey //H
+	} //H
+	for _, setting := range []struct{ key, value string }{
+		{"content_padding_addition", string(awg.ContentPaddingAddition)},
+		{"rekey_after_time", string(awg.RekeyAfterTime)},
+		{"rekey_timeout", string(awg.RekeyTimeout)},
+		{"reject_after_time", string(awg.RejectAfterTime)},
+		{"keepalive_timeout", string(awg.KeepaliveTimeout)},
+		{"max_handshake_attempts", string(awg.MaxHandshakeAttempts)},
 	} {
-		if kv[1] != "" {
-			s += "\n" + kv[0] + "=" + kv[1]
+		if setting.value != "" {
+			s += "\n" + setting.key + "=" + setting.value
 		}
 	}
 	if awg.RandomTrailers {
@@ -241,18 +262,18 @@ func genIpcConfig(opts option.AwgEndpointOptions, resolvePeer func(domain string
 	}
 
 	for _, peer := range opts.Peers {
-		peerConfig, err := genIpcPeer(peer, resolvePeer)
-		if err != nil {
-			return "", err
-		}
-		s += peerConfig
+		peerConfig, err := genIpcPeer(peer, resolvePeer) //H
+		if err != nil {                                  //H
+			return "", err //H
+		} //H
+		s += peerConfig //H
 	}
 	return s, nil
 }
 
-// genIpcPeer renders one peer's UAPI lines, each prefixed with a newline.
-// Split out of genIpcConfig so ReloadPeers can emit the same wire format for a
-// single peer without rebuilding the whole device config. //H
+// genIpcPeer renders one peer's UAPI lines, each prefixed with a newline. Split out of
+// genIpcConfig so ReloadPeers can emit the same wire format for a single peer without
+// rebuilding the whole device config. //H
 func genIpcPeer(peer option.AwgPeerOptions, resolvePeer func(domain string) (netip.Addr, error)) (string, error) {
 	publicKeyBytes, err := base64.StdEncoding.DecodeString(peer.PublicKey)
 	if err != nil {
@@ -280,7 +301,7 @@ func genIpcPeer(peer option.AwgPeerOptions, resolvePeer func(domain string) (net
 			}
 			endpointAddr = resolvedAddr.String()
 		}
-		s += "\nendpoint=" + endpointAddr + ":" + format.ToString(peer.Port)
+		s += "\nendpoint=" + net.JoinHostPort(endpointAddr, format.ToString(peer.Port)) // brackets an IPv6 address
 	}
 	if peer.PersistentKeepaliveInterval != 0 {
 		s += "\npersistent_keepalive_interval=" + format.ToString(peer.PersistentKeepaliveInterval)
@@ -297,7 +318,7 @@ func (e *Endpoint) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn,
 	metadata.InboundType = e.Type()
 	metadata.InboundOptions.SniffEnabled = true
 	metadata.Source = source
-	metadata.User = e.peerNames.Load().Lookup(source.Addr) //H
+	metadata.User = e.peerUsers.Load().Lookup(source.Addr) //H
 	metadata.Destination = destination
 	for _, addr := range e.address {
 		if addr.Contains(destination.Addr) {
@@ -350,10 +371,24 @@ func (e *Endpoint) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	return e.Device.ListenPacket(ctx, destination)
 }
 
+// JudgeFlow accepts every flow so it is dispatched to NewConnectionEx / NewPacketConnectionEx
+// and routed through sing-box (sniffing + per-user stats).
 func (w *Endpoint) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) singTun.FlowVerdict {
-	// Accept every flow so it is dispatched to NewConnectionEx / NewPacketConnectionEx
-	// (routed through sing-box for sniffing + per-user stats). Zero value == ActionAccept.
-	return singTun.FlowVerdict{}
+	return singTun.FlowVerdict{Action: singTun.ActionAccept}
+}
+
+func (w *Endpoint) NewDNSPacket(payload []byte, source M.Socksaddr, destination M.Socksaddr, writer N.PacketWriter) {
+	ctx := log.ContextWithNewID(w.ctx)
+	var metadata adapter.InboundContext
+	metadata.Inbound = w.Tag()
+	metadata.InboundType = w.Type()
+	metadata.Network = N.NetworkUDP
+	metadata.Source = source
+	metadata.User = w.peerUsers.Load().Lookup(source.Addr)
+	metadata.Destination = destination
+	metadata.Protocol = constant.ProtocolDNS
+	w.logger.InfoContext(ctx, "inbound DNS packet from ", source)
+	w.router.HijackDNSPacket(ctx, payload, writer, metadata)
 }
 
 func (w *Endpoint) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
@@ -362,7 +397,7 @@ func (w *Endpoint) NewConnectionEx(ctx context.Context, conn net.Conn, source M.
 	metadata.InboundType = w.Type()
 	metadata.InboundOptions.SniffEnabled = true
 	metadata.Source = source
-	metadata.User = w.peerNames.Load().Lookup(source.Addr) //H
+	metadata.User = w.peerUsers.Load().Lookup(source.Addr) //H
 	for _, addr := range w.address {
 		if addr.Contains(destination.Addr) {
 			metadata.OriginDestination = destination
@@ -380,11 +415,17 @@ func (w *Endpoint) NewConnectionEx(ctx context.Context, conn net.Conn, source M.
 	w.router.RouteConnectionEx(ctx, conn, metadata, onClose)
 }
 
-func (o *Endpoint) Start(stage adapter.StartStage) error {
+func (o *Endpoint) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage == adapter.StartStateInitialize {
+		scope.Add(o.Close) // H: closed with the box
+	}
 	switch stage {
 	case adapter.StartStateStart:
-		return o.Device.Start(stage)
+		err := o.Device.Start(stage)      //H
+		o.deviceStarted.Store(err == nil) //H
+		return err                        //H
 	case adapter.StartStatePostStart:
+		o.startResolvingPeers() //H: the DNS router is ready now
 		go o.readyChecker()
 	}
 	return nil
@@ -411,14 +452,18 @@ func (w *Endpoint) deviceReady() bool {
 	return w.Device != nil && w.Device.IsUnderLoad()
 }
 
-func (w *Endpoint) IsReady() bool {
-	return w.started || w.deviceReady()
-}
+func (w *Endpoint) Status() adapter.Status { //H
+	return w.tracker.Status(w.started || w.deviceReady()) //H
+} //H
 
-func (w *Endpoint) DisplayType() string {
-	str := C.ProxyDisplayName(w.Type())
-	if !w.IsReady() {
-		str += " ⚠️ Connecting..."
+// singlePeer is the address of the only peer, when there is one with an IP address. //H
+func singlePeer(peers []option.AwgPeerOptions) netip.AddrPort {
+	if len(peers) != 1 {
+		return netip.AddrPort{}
 	}
-	return str
+	address := M.ParseAddr(peers[0].Address)
+	if !address.IsValid() || peers[0].Port == 0 {
+		return netip.AddrPort{}
+	}
+	return netip.AddrPortFrom(address, peers[0].Port)
 }

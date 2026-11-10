@@ -8,18 +8,16 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/sniff"
+	"github.com/sagernet/sing-box/common/tlsspoof"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	F "github.com/sagernet/sing/common/format"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
-	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	"github.com/spaiter/spaiter-vpn/core/common/sniff"
-	"github.com/spaiter/spaiter-vpn/core/common/tlsspoof"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"github.com/miekg/dns"
 )
@@ -46,7 +44,7 @@ func newRuleActionRouteOptions(options option.RawRouteOptionsActionOptions) (Rul
 	}, nil
 }
 
-func NewRuleAction(ctx context.Context, logger logger.ContextLogger, action option.RuleAction) (adapter.RuleAction, error) {
+func NewRuleAction(logger logger.ContextLogger, action option.RuleAction) (adapter.RuleAction, error) {
 	switch action.Action {
 	case "":
 		return nil, nil
@@ -73,26 +71,6 @@ func NewRuleAction(ctx context.Context, logger logger.ContextLogger, action opti
 		return &RuleActionBypass{
 			Outbound:               action.BypassOptions.Outbound,
 			RuleActionRouteOptions: routeOptions,
-		}, nil
-	case C.RuleActionTypeDirect:
-		directDialer, err := dialer.New(ctx, option.DialerOptions(action.DirectOptions), false)
-		if err != nil {
-			return nil, err
-		}
-		var description string
-		descriptions := action.DirectOptions.Descriptions()
-		switch len(descriptions) {
-		case 0:
-		case 1:
-			description = F.ToString("(", descriptions[0], ")")
-		case 2:
-			description = F.ToString("(", descriptions[0], ",", descriptions[1], ")")
-		default:
-			description = F.ToString("(", descriptions[0], ",", descriptions[1], ",...)")
-		}
-		return &RuleActionDirect{
-			Dialer:      directDialer,
-			description: description,
 		}, nil
 	case C.RuleActionTypeReject:
 		return &RuleActionReject{
@@ -131,7 +109,8 @@ func NewDNSRuleAction(logger logger.ContextLogger, action option.DNSRuleAction) 
 		return nil
 	case C.RuleActionTypeRoute:
 		return &RuleActionDNSRoute{
-			Server: action.RouteOptions.Server,
+			Server:      action.RouteOptions.Server,
+			Speculative: action.RouteOptions.Speculative,
 			RuleActionDNSRouteOptions: RuleActionDNSRouteOptions{
 				Strategy:               C.DomainStrategy(action.RouteOptions.Strategy),
 				Timeout:                time.Duration(action.RouteOptions.Timeout),
@@ -139,19 +118,25 @@ func NewDNSRuleAction(logger logger.ContextLogger, action option.DNSRuleAction) 
 				DisableOptimisticCache: action.RouteOptions.DisableOptimisticCache,
 				RewriteTTL:             action.RouteOptions.RewriteTTL,
 				ClientSubnet:           netip.Prefix(common.PtrValueOrDefault(action.RouteOptions.ClientSubnet)),
+				RemoveClientSubnet:     action.RouteOptions.RemoveClientSubnet,
 				BypassIfFailed:         action.RouteOptions.BypassIfFailed,
+				IPv6ByOutbound:         action.RouteOptions.IPv6ByOutbound, //H
 			},
 		}
 	case C.RuleActionTypeEvaluate:
 		return &RuleActionEvaluate{
-			Server: action.RouteOptions.Server,
+			Server:      action.EvaluateOptions.Server,
+			Tag:         action.EvaluateOptions.Tag,
+			Speculative: action.EvaluateOptions.Speculative,
 			RuleActionDNSRouteOptions: RuleActionDNSRouteOptions{
-				Strategy:               C.DomainStrategy(action.RouteOptions.Strategy),
-				Timeout:                time.Duration(action.RouteOptions.Timeout),
-				DisableCache:           action.RouteOptions.DisableCache,
-				DisableOptimisticCache: action.RouteOptions.DisableOptimisticCache,
-				RewriteTTL:             action.RouteOptions.RewriteTTL,
-				ClientSubnet:           netip.Prefix(common.PtrValueOrDefault(action.RouteOptions.ClientSubnet)),
+				Strategy:               C.DomainStrategy(action.EvaluateOptions.Strategy),
+				Timeout:                time.Duration(action.EvaluateOptions.Timeout),
+				DisableCache:           action.EvaluateOptions.DisableCache,
+				DisableOptimisticCache: action.EvaluateOptions.DisableOptimisticCache,
+				RewriteTTL:             action.EvaluateOptions.RewriteTTL,
+				ClientSubnet:           netip.Prefix(common.PtrValueOrDefault(action.EvaluateOptions.ClientSubnet)),
+				RemoveClientSubnet:     action.EvaluateOptions.RemoveClientSubnet,
+				IPv6ByOutbound:         action.EvaluateOptions.IPv6ByOutbound, //H
 			},
 		}
 	case C.RuleActionTypeRespond:
@@ -164,6 +149,8 @@ func NewDNSRuleAction(logger logger.ContextLogger, action option.DNSRuleAction) 
 			DisableOptimisticCache: action.RouteOptionsOptions.DisableOptimisticCache,
 			RewriteTTL:             action.RouteOptionsOptions.RewriteTTL,
 			ClientSubnet:           netip.Prefix(common.PtrValueOrDefault(action.RouteOptionsOptions.ClientSubnet)),
+			RemoveClientSubnet:     action.RouteOptionsOptions.RemoveClientSubnet,
+			IPv6ByOutbound:         action.RouteOptionsOptions.IPv6ByOutbound, //H
 		}
 	case C.RuleActionTypeReject:
 		return &RuleActionReject{
@@ -295,7 +282,8 @@ func (r *RuleActionRouteOptions) Descriptions() []string {
 }
 
 type RuleActionDNSRoute struct {
-	Server string
+	Server      string
+	Speculative bool
 	RuleActionDNSRouteOptions
 }
 
@@ -304,11 +292,13 @@ func (r *RuleActionDNSRoute) Type() string {
 }
 
 func (r *RuleActionDNSRoute) String() string {
-	return formatDNSRouteAction("route", r.Server, r.RuleActionDNSRouteOptions)
+	return formatDNSRouteAction("route", r.Server, r.Speculative, r.RuleActionDNSRouteOptions)
 }
 
 type RuleActionEvaluate struct {
-	Server string
+	Server      string
+	Tag         string
+	Speculative bool
 	RuleActionDNSRouteOptions
 }
 
@@ -317,7 +307,7 @@ func (r *RuleActionEvaluate) Type() string {
 }
 
 func (r *RuleActionEvaluate) String() string {
-	return formatDNSRouteAction("evaluate", r.Server, r.RuleActionDNSRouteOptions)
+	return formatDNSRouteAction("evaluate", r.Server, r.Speculative, r.RuleActionDNSRouteOptions)
 }
 
 type RuleActionRespond struct{}
@@ -330,9 +320,12 @@ func (r *RuleActionRespond) String() string {
 	return "respond"
 }
 
-func formatDNSRouteAction(action string, server string, options RuleActionDNSRouteOptions) string {
+func formatDNSRouteAction(action string, server string, speculative bool, options RuleActionDNSRouteOptions) string {
 	var descriptions []string
 	descriptions = append(descriptions, server)
+	if speculative {
+		descriptions = append(descriptions, "speculative")
+	}
 	if options.DisableCache {
 		descriptions = append(descriptions, "disable-cache")
 	}
@@ -348,6 +341,9 @@ func formatDNSRouteAction(action string, server string, options RuleActionDNSRou
 	if options.ClientSubnet.IsValid() {
 		descriptions = append(descriptions, F.ToString("client-subnet=", options.ClientSubnet))
 	}
+	if options.RemoveClientSubnet {
+		descriptions = append(descriptions, "remove-client-subnet")
+	}
 	return F.ToString(action, "(", strings.Join(descriptions, ","), ")")
 }
 
@@ -358,7 +354,9 @@ type RuleActionDNSRouteOptions struct {
 	DisableOptimisticCache bool
 	RewriteTTL             *uint32
 	ClientSubnet           netip.Prefix
+	RemoveClientSubnet     bool
 	BypassIfFailed         bool
+	IPv6ByOutbound         string //H
 }
 
 func (r *RuleActionDNSRouteOptions) Type() string {
@@ -382,20 +380,10 @@ func (r *RuleActionDNSRouteOptions) String() string {
 	if r.ClientSubnet.IsValid() {
 		descriptions = append(descriptions, F.ToString("client-subnet=", r.ClientSubnet))
 	}
+	if r.RemoveClientSubnet {
+		descriptions = append(descriptions, "remove-client-subnet")
+	}
 	return F.ToString("route-options(", strings.Join(descriptions, ","), ")")
-}
-
-type RuleActionDirect struct {
-	Dialer      N.Dialer
-	description string
-}
-
-func (r *RuleActionDirect) Type() string {
-	return C.RuleActionTypeDirect
-}
-
-func (r *RuleActionDirect) String() string {
-	return "direct" + r.description
 }
 
 var (

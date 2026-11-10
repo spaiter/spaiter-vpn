@@ -5,10 +5,10 @@ package tls
 import (
 	"context"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/certificate"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/logger"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/certificate"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 const appleTLSEngineName = "Apple TLS engine"

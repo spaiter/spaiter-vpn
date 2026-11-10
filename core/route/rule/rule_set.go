@@ -4,23 +4,23 @@ import (
 	"context"
 	"reflect"
 
+	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"go4.org/netipx"
 )
 
-func NewRuleSet(ctx context.Context, logger logger.ContextLogger, options option.RuleSet) (adapter.RuleSet, error) {
+func NewRuleSet(ctx context.Context, logger logger.ContextLogger, tag string, options option.RuleSet) (adapter.RuleSet, error) {
 	switch options.Type {
 	case C.RuleSetTypeInline, C.RuleSetTypeLocal, "":
-		return NewLocalRuleSet(ctx, logger, options)
+		return NewLocalRuleSet(ctx, logger, tag, options)
 	case C.RuleSetTypeRemote:
-		return NewRemoteRuleSet(ctx, logger, options)
+		return NewRemoteRuleSet(ctx, logger, tag, options)
 	default:
 		return nil, E.New("unknown rule-set type: ", options.Type)
 	}
@@ -32,7 +32,7 @@ func extractIPSetFromRule(rawRule adapter.HeadlessRule) []*netipx.IPSet {
 		return common.FlatMap(rule.destinationIPCIDRItems, func(rawItem RuleItem) []*netipx.IPSet {
 			switch item := rawItem.(type) {
 			case *IPCIDRItem:
-				return []*netipx.IPSet{item.ipSet}
+				return []*netipx.IPSet{item.ipSet.IPSet()}
 			default:
 				return nil
 			}

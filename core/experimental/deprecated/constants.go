@@ -3,10 +3,10 @@ package deprecated
 import (
 	"fmt"
 
+	"github.com/sagernet/sing-box/common/badversion"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/experimental/locale"
 	F "github.com/sagernet/sing/common/format"
-	"github.com/spaiter/spaiter-vpn/core/common/badversion"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/experimental/locale"
 
 	"golang.org/x/mod/semver"
 )
@@ -36,10 +36,14 @@ func (n Note) Impending() bool {
 }
 
 func (n Note) Message() string {
+	return n.MessageForLocale(locale.Current())
+}
+
+func (n Note) MessageForLocale(selectedLocale *locale.Locale) string {
 	if n.MigrationLink != "" {
-		return fmt.Sprintf(locale.Current().DeprecatedMessage, n.Description, n.DeprecatedVersion, n.ScheduledVersion)
+		return fmt.Sprintf(selectedLocale.DeprecatedMessage, n.Description, n.DeprecatedVersion, n.ScheduledVersion)
 	} else {
-		return fmt.Sprintf(locale.Current().DeprecatedMessageNoLink, n.Description, n.DeprecatedVersion, n.ScheduledVersion)
+		return fmt.Sprintf(selectedLocale.DeprecatedMessageNoLink, n.Description, n.DeprecatedVersion, n.ScheduledVersion)
 	}
 }
 
@@ -101,14 +105,6 @@ var OptionLegacyRuleSetDownloadDetour = Note{
 	EnvName:           "LEGACY_RULE_SET_DOWNLOAD_DETOUR",
 }
 
-var OptionLegacyTailscaleEndpointDialer = Note{
-	Name:              "legacy-tailscale-endpoint-dialer",
-	Description:       "legacy dialer options in Tailscale endpoint",
-	DeprecatedVersion: "1.14.0",
-	ScheduledVersion:  "1.16.0",
-	EnvName:           "LEGACY_TAILSCALE_ENDPOINT_DIALER",
-}
-
 var OptionRuleSetIPCIDRAcceptEmpty = Note{
 	Name:              "dns-rule-rule-set-ip-cidr-accept-empty",
 	Description:       "Legacy `rule_set_ip_cidr_accept_empty` DNS rule item",
@@ -162,17 +158,26 @@ var OptionImplicitDefaultHTTPClient = Note{
 	EnvName:           "IMPLICIT_DEFAULT_HTTP_CLIENT",
 }
 
+var OptionTunStack = Note{
+	Name:              "tun-stack",
+	Description:       "`stack` option in TUN",
+	DeprecatedVersion: "1.15.0",
+	ScheduledVersion:  "1.17.0",
+	EnvName:           "TUN_STACK",
+	MigrationLink:     "https://sing-box.sagernet.org/migration/#migrate-tun-stack",
+}
+
 var Options = []Note{
 	OptionOutboundDNSRuleItem,
 	OptionMissingDomainResolver,
 	OptionLegacyDomainStrategyOptions,
 	OptionInlineACME,
 	OptionLegacyRuleSetDownloadDetour,
-	OptionLegacyTailscaleEndpointDialer,
 	OptionRuleSetIPCIDRAcceptEmpty,
 	OptionLegacyDNSAddressFilter,
 	OptionLegacyDNSRuleStrategy,
 	OptionIndependentDNSCache,
 	OptionStoreRDRC,
 	OptionImplicitDefaultHTTPClient,
+	OptionTunStack,
 }

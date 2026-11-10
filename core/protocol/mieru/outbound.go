@@ -6,16 +6,16 @@ import (
 	"net"
 	"os"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/outbound"
+	"github.com/sagernet/sing-box/common/dialer"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/outbound"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	mieruclient "github.com/enfein/mieru/v3/apis/client"
 	mierucommon "github.com/enfein/mieru/v3/apis/common"
@@ -45,6 +45,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if err != nil {
 		return nil, fmt.Errorf("failed to build mieru client config: %w", err)
 	}
+	config.Resolver = newMieruResolver(ctx, outboundDialer) //H
 	c := mieruclient.NewClient()
 	if err := c.Store(config); err != nil {
 		return nil, fmt.Errorf("failed to store mieru client config: %w", err)

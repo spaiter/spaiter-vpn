@@ -6,15 +6,15 @@ import (
 	"os"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/outbound"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/outbound"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 func RegisterOutbound(registry *outbound.Registry) {
@@ -59,5 +59,8 @@ func (d *Outbound) NewConnection(ctx context.Context, conn net.Conn, metadata ad
 }
 
 func (d *Outbound) NewPacketConnection(ctx context.Context, conn N.PacketConn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
-	NewDNSPacketConnection(ctx, d.router, conn, nil, metadata)
+	err := NewDNSPacketConnection(ctx, d.router, conn, nil, metadata) //H
+	if onClose != nil {                                               //H: the router tracks the connection by it
+		onClose(err) //H
+	} //H
 }

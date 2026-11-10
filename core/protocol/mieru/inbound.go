@@ -9,18 +9,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/inbound"
+	"github.com/sagernet/sing-box/common/listener"
+	"github.com/sagernet/sing-box/common/uot"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/buf"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/inbound"
-	"github.com/spaiter/spaiter-vpn/core/common/listener"
-	"github.com/spaiter/spaiter-vpn/core/common/uot"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	mierucommon "github.com/enfein/mieru/v3/apis/common"
 	mieruconstant "github.com/enfein/mieru/v3/apis/constant"
@@ -28,6 +28,14 @@ import (
 	mieruserver "github.com/enfein/mieru/v3/apis/server"
 	mierupb "github.com/enfein/mieru/v3/pkg/appctl/appctlpb"
 	"google.golang.org/protobuf/proto"
+)
+
+const (
+	// A failed Accept is retried after a short pause that grows up to
+	// acceptErrorBackoffMax, so a permanently failing listener costs a few
+	// calls per second instead of a whole core.
+	acceptErrorBackoffInitial = 100 * time.Millisecond
+	acceptErrorBackoffMax     = 5 * time.Second
 )
 
 func RegisterInbound(registry *inbound.Registry) {
@@ -75,7 +83,10 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	return inboundInstance, nil
 }
 
-func (h *Inbound) Start(stage adapter.StartStage) error {
+func (h *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage == adapter.StartStateInitialize {
+		scope.Add(h.Close) // H: closed with the box
+	}
 	if stage != adapter.StartStateStart {
 		return nil
 	}
@@ -101,14 +112,6 @@ func (h *Inbound) Close() error {
 	}
 	return nil
 }
-
-const (
-	// A failed Accept is retried after a short pause that grows up to
-	// acceptErrorBackoffMax, so a permanently failing listener costs a few
-	// calls per second instead of a whole core.
-	acceptErrorBackoffInitial = 100 * time.Millisecond
-	acceptErrorBackoffMax     = 5 * time.Second
-)
 
 func (h *Inbound) acceptLoop() {
 	backoff := acceptErrorBackoffInitial

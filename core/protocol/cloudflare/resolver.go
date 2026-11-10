@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/spaiter/spaiter-vpn/core/adapter"
+	"github.com/sagernet/sing-box/adapter"
 
 	mDNS "github.com/miekg/dns"
 )

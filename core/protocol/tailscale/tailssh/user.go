@@ -1,9 +1,9 @@
-//go:build with_gvisor
+//go:build with_tailscale
 
 package tailssh
 
 import (
-	"github.com/spaiter/spaiter-vpn/core/adapter"
+	"github.com/sagernet/sing-box/adapter"
 )
 
 func resolveLocalUser(platformInterface adapter.PlatformInterface, username string) (*adapter.PlatformUser, error) {

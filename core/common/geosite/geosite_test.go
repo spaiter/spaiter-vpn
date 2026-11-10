@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/spaiter/spaiter-vpn/core/common/geosite"
+	"github.com/sagernet/sing-box/common/geosite"
 
 	"github.com/stretchr/testify/require"
 )

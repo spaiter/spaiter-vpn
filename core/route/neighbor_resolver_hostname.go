@@ -5,7 +5,7 @@ import (
 	"net/netip"
 	"strings"
 
-	"github.com/spaiter/spaiter-vpn/core/dns"
+	"github.com/sagernet/sing-box/dns"
 )
 
 func lookupAddressesByHostname(

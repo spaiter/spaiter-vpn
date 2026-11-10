@@ -4,8 +4,17 @@ import (
 	"context"
 	"net"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/outbound"
+	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/mux"
+	"github.com/sagernet/sing-box/common/wholepacket"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/transport/sip003"
 	"github.com/sagernet/sing-shadowsocks2"
-	"github.com/sagernet/sing-shadowsocks2/shadowaead_2022"
+	"github.com/sagernet/sing-shadowsocks2/shadowaead_2022" //H
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -13,19 +22,17 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/uot"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/outbound"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	"github.com/spaiter/spaiter-vpn/core/common/mux"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	"github.com/spaiter/spaiter-vpn/core/transport/sip003"
 )
 
 func RegisterOutbound(registry *outbound.Registry) {
 	outbound.Register[option.ShadowsocksOutboundOptions](registry, C.TypeShadowsocks, NewOutbound)
 }
+
+var (
+	_ adapter.OutboundWithMultiplex   = (*Outbound)(nil)
+	_ adapter.InterfaceUpdateListener = (*Outbound)(nil)
+	_ adapter.IdleConnectionKeeper    = (*Outbound)(nil)
+)
 
 type Outbound struct {
 	outbound.Adapter
@@ -125,14 +132,36 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	}
 }
 
-func (h *Outbound) InterfaceUpdated() {
+func (h *Outbound) MultiplexEnabled() bool {
+	return h.multiplexDialer != nil
+}
+
+func (h *Outbound) InterfaceUpdated(ctx context.Context) {
 	if h.multiplexDialer != nil {
 		h.multiplexDialer.Reset()
 	}
 }
 
-func (h *Outbound) Close() error {
-	return common.Close(common.PtrOrNil(h.multiplexDialer))
+func (h *Outbound) SetKeepIdleConnections(keep bool) {
+	if h.multiplexDialer != nil {
+		h.multiplexDialer.SetKeepIdleConnections(keep)
+	}
+}
+
+func (h *Outbound) CloseIdleConnections() {
+	if h.multiplexDialer != nil {
+		h.multiplexDialer.CloseIdleConnections()
+	}
+}
+
+func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage != adapter.StartStateInitialize {
+		return nil
+	}
+	if h.multiplexDialer != nil {
+		scope.Add(h.multiplexDialer.Close)
+	}
+	return nil
 }
 
 var _ N.Dialer = (*shadowsocksDialer)(nil)
@@ -155,16 +184,16 @@ func (h *shadowsocksDialer) DialContext(ctx context.Context, network string, des
 		if err != nil {
 			return nil, err
 		}
-		if _, is2022 := h.method.(*shadowaead_2022.Method); is2022 {
-			return dialShadowsocks2022(ctx, h.method, outConn, destination)
-		}
+		if _, is2022 := h.method.(*shadowaead_2022.Method); is2022 { //H
+			return dialShadowsocks2022(ctx, h.method, outConn, destination) //H
+		} //H
 		return h.method.DialEarlyConn(outConn, destination), nil
 	case N.NetworkUDP:
 		outConn, err := h.dialer.DialContext(ctx, N.NetworkUDP, h.serverAddr)
 		if err != nil {
 			return nil, err
 		}
-		return bufio.NewBindPacketConn(h.method.DialPacketConn(outConn), destination), nil
+		return bufio.NewBindPacketConn(wholepacket.Wrap(h.method.DialPacketConn(outConn)), destination), nil //H
 	default:
 		return nil, E.Extend(N.ErrUnknownNetwork, network)
 	}
@@ -178,5 +207,5 @@ func (h *shadowsocksDialer) ListenPacket(ctx context.Context, destination M.Sock
 	if err != nil {
 		return nil, err
 	}
-	return h.method.DialPacketConn(outConn), nil
+	return wholepacket.Wrap(h.method.DialPacketConn(outConn)), nil //H: QUIC through Shadowsocks cut full packets off
 }

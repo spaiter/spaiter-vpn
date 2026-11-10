@@ -15,17 +15,17 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kianmhz/GooseRelayVPN/goose"
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/outbound"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/uot"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/outbound"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/gooserelay/goose"
 )
 
 const (
@@ -203,14 +203,37 @@ func (h *Outbound) diagnoseAndMarkReady(runCtx context.Context) {
 	h.logger.ErrorContext(runCtx, "goose-relay: all ", len(keys), " endpoints failed diagnose")
 }
 
-func (h *Outbound) IsReady() bool {
+// Status is failed once no endpoint answered. //H
+func (h *Outbound) Status() adapter.Status {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	switch {
+	case h.started > 0:
+		return adapter.StatusReady
+	case h.started < 0:
+		return adapter.StatusFailed
+	}
+	return adapter.StatusConnecting
+}
+
+// StatusError is why it failed: no endpoint answered the check. //H
+func (h *Outbound) StatusError() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.started < 0 {
+		return E.New("all ", len(h.options.ScriptKeys), " endpoints failed the check")
+	}
+	return nil
+}
+
+func (h *Outbound) isReady() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.started > 0
 }
 
 func (h *Outbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
-	if !h.IsReady() {
+	if !h.isReady() {
 		return nil, E.New("outbound is not started")
 	}
 	switch N.NetworkName(network) {
@@ -225,7 +248,7 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	if h.uotClient == nil {
 		return nil, E.New("UDP over TCP is not enabled for this outbound")
 	}
-	if !h.IsReady() {
+	if !h.isReady() {
 		return nil, E.New("outbound is not started")
 	}
 	return h.uotClient.ListenPacket(ctx, destination)
@@ -236,14 +259,10 @@ func (h *Outbound) DisplayType() string {
 	h.mu.Lock()
 	state := h.started
 	h.mu.Unlock()
-	switch {
-	case state == 0:
-		return str + " ⚠️ Connecting..."
-	case state < 0:
-		return str + " ❌ Failed!"
-	default:
-		return fmt.Sprint(str, " ✔️ ", len(h.options.ScriptKeys), " endpoints")
+	if state <= 0 { // the status is shown on its own
+		return str
 	}
+	return fmt.Sprint(str, " · ", len(h.options.ScriptKeys), " endpoints")
 }
 
 func (h *Outbound) Close() error {

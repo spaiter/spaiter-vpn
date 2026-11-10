@@ -3,8 +3,8 @@ package adapter
 import (
 	"context"
 
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 )
 
 type Service interface {
@@ -22,6 +22,5 @@ type ServiceManager interface {
 	Lifecycle
 	Services() []Service
 	Get(tag string) (Service, bool)
-	Remove(tag string) error
 	Create(ctx context.Context, logger log.ContextLogger, tag string, serviceType string, options any) error
 }

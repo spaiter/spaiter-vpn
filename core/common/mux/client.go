@@ -4,14 +4,14 @@ import (
 	"context"
 	"net"
 
+	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-mux"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 type Client = mux.Client
@@ -51,9 +51,9 @@ type clientDialer struct {
 }
 
 func (d *clientDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
-	return d.Dialer.DialContext(adapter.OverrideContext(ctx), network, destination)
+	return d.Dialer.DialContext(adapter.ContextForMultiplexSession(ctx), network, destination)
 }
 
 func (d *clientDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
-	return d.Dialer.ListenPacket(adapter.OverrideContext(ctx), destination)
+	return d.Dialer.ListenPacket(adapter.ContextForMultiplexSession(ctx), destination)
 }

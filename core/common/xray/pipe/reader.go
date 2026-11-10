@@ -3,7 +3,7 @@ package pipe
 import (
 	"time"
 
-	"github.com/spaiter/spaiter-vpn/core/common/xray/buf"
+	"github.com/sagernet/sing-box/common/xray/buf"
 )
 
 // Reader is a buf.Reader that reads content from a pipe.

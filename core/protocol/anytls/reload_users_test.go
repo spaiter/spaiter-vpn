@@ -3,7 +3,7 @@ package anytls
 import (
 	"testing"
 
-	"github.com/spaiter/spaiter-vpn/core/option"
+	"github.com/sagernet/sing-box/option"
 )
 
 // apply hands over what the inbound registry built, and that is a POINTER to

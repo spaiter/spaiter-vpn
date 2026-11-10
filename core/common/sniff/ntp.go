@@ -5,8 +5,8 @@ import (
 	"encoding/binary"
 	"os"
 
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
+	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
 )
 
 func NTP(ctx context.Context, metadata *adapter.InboundContext, packet []byte) error {

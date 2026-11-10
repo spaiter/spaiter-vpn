@@ -6,16 +6,16 @@ import (
 	"net/netip"
 	"slices"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/outbound"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-tun"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/outbound"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 func RegisterOutbound(registry *outbound.Registry) {
@@ -57,12 +57,8 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	}, nil
 }
 
-func (o *Outbound) Start(stage adapter.StartStage) error {
-	return o.backend.Start(stage)
-}
-
-func (o *Outbound) Close() error {
-	return o.backend.Close()
+func (o *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	return o.backend.Start(stage, scope)
 }
 
 func (o *Outbound) PreferredDomain(metadata *adapter.InboundContext, domain string) bool {
@@ -110,11 +106,8 @@ func (o *Outbound) PortMTU() uint32 {
 	return o.backend.PortMTU()
 }
 
-func (o *Outbound) PortSelectorRange() (uint16, uint16) {
-	if rangedBackend, isRanged := o.backend.(tun.PortWithSelectorRange); isRanged {
-		return rangedBackend.PortSelectorRange()
-	}
-	return 0, 0
+func (o *Outbound) UpstreamPort() any {
+	return o.backend
 }
 
 func (o *Outbound) AttachReturn(returnPath tun.Return) error {

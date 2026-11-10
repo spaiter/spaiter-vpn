@@ -2,11 +2,12 @@ package rule
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 
+	"github.com/sagernet/sing-box/adapter"
 	E "github.com/sagernet/sing/common/exceptions"
 	F "github.com/sagernet/sing/common/format"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 )
 
 var _ RuleItem = (*PackageNameRegexItem)(nil)
@@ -38,14 +39,12 @@ func NewPackageNameRegexItem(expressions []string) (*PackageNameRegexItem, error
 }
 
 func (r *PackageNameRegexItem) Match(metadata *adapter.InboundContext) bool {
-	if metadata.ProcessInfo == nil || len(metadata.ProcessInfo.AndroidPackageNames) == 0 {
+	if metadata.ProcessInfo == nil || len(metadata.ProcessInfo.PackageNames) == 0 {
 		return false
 	}
 	for _, matcher := range r.matchers {
-		for _, packageName := range metadata.ProcessInfo.AndroidPackageNames {
-			if matcher.MatchString(packageName) {
-				return true
-			}
+		if slices.ContainsFunc(metadata.ProcessInfo.PackageNames, matcher.MatchString) {
+			return true
 		}
 	}
 	return false

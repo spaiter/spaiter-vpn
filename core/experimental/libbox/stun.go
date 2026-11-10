@@ -3,7 +3,7 @@ package libbox
 import (
 	"context"
 
-	"github.com/spaiter/spaiter-vpn/core/common/stun"
+	"github.com/sagernet/sing-box/common/stun"
 )
 
 type STUNTest struct {

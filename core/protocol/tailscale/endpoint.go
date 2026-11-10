@@ -1,4 +1,4 @@
-//go:build with_gvisor
+//go:build with_tailscale
 
 package tailscale
 
@@ -9,25 +9,29 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
-	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/sagernet/gvisor/pkg/tcpip"
-	"github.com/sagernet/gvisor/pkg/tcpip/adapters/gonet"
-	"github.com/sagernet/gvisor/pkg/tcpip/header"
-	"github.com/sagernet/gvisor/pkg/tcpip/stack"
-	"github.com/sagernet/gvisor/pkg/tcpip/transport/icmp"
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/endpoint"
+	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/iponly"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/dns"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/protocol/tailscale/tailssh"
+	R "github.com/sagernet/sing-box/route/rule"
+	"github.com/sagernet/sing-box/service/oomkiller"
 	"github.com/sagernet/sing-tun"
-	"github.com/sagernet/sing-tun/ping"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/bufio"
-	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
 	F "github.com/sagernet/sing/common/format"
 	"github.com/sagernet/sing/common/logger"
@@ -36,42 +40,36 @@ import (
 	"github.com/sagernet/sing/common/ntp"
 	"github.com/sagernet/sing/service"
 	"github.com/sagernet/sing/service/filemanager"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/endpoint"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/dns"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	R "github.com/spaiter/spaiter-vpn/core/route/rule"
-	_ "github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/feature/relayserver"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/ipn"
-	tsDNS "github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/net/dns"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/net/netmon"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/net/tsaddr"
-	tsTUN "github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/net/tstun"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/tailcfg"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/tsnet"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/types/ipproto"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/types/nettype"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/version"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/wgengine"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/wgengine/filter"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/wgengine/router"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/wgengine/wgcfg"
+	tailscaleroot "github.com/sagernet/tailscale"
+	_ "github.com/sagernet/tailscale/feature/relayserver"
+	"github.com/sagernet/tailscale/ipn"
+	"github.com/sagernet/tailscale/ipn/ipnlocal"
+	tsDNS "github.com/sagernet/tailscale/net/dns"
+	nDNSResolver "github.com/sagernet/tailscale/net/dns/resolver"
+	"github.com/sagernet/tailscale/net/tsaddr"
+	tsTUN "github.com/sagernet/tailscale/net/tstun"
+	"github.com/sagernet/tailscale/tailcfg"
+	"github.com/sagernet/tailscale/tsnet"
+	"github.com/sagernet/tailscale/version"
+	"github.com/sagernet/tailscale/wgengine"
+	"github.com/sagernet/tailscale/wgengine/router"
+	"github.com/sagernet/tailscale/wgengine/wgcfg"
 
 	mDNS "github.com/miekg/dns"
-	"go4.org/netipx"
 )
 
 var (
 	_ adapter.OutboundWithPreferredRoutes = (*Endpoint)(nil)
-	_ adapter.FlowOutbound                = (*Endpoint)(nil)
+	_ adapter.InterfaceUpdateListener     = (*Endpoint)(nil)
+	_ adapter.Referrer                    = (*Endpoint)(nil)
+	_ adapter.OutboundWithMultiplex       = (*Endpoint)(nil)
+	_ adapter.OnDemandEndpoint            = (*Endpoint)(nil)
 	_ dialer.PacketDialerWithDestination  = (*Endpoint)(nil)
+	_ tun.Port                            = (*Endpoint)(nil)
 )
 
 func init() {
-	version.SetVersion("sing-box " + C.Version)
+	version.SetVersion(strings.TrimSpace(tailscaleroot.VersionDotTxt) + "-0-(sing-box " + C.Version + ")")
 }
 
 func RegisterEndpoint(registry *endpoint.Registry) {
@@ -87,16 +85,19 @@ type Endpoint struct {
 	dnsRouter         adapter.DNSRouter
 	network           adapter.NetworkManager
 	platformInterface adapter.PlatformInterface
+	detour            string
 	server            *tsnet.Server
-	stack             *stack.Stack
-	icmpForwarder     *tun.ICMPForwarder
-	filter            *atomic.Pointer[filter.Filter]
+	stack             *tun.Go
+	returnAccess      sync.Mutex
+	returnPath        tun.Return
+	wgEngine          wgengine.ExportedUserspaceEngine
 	onReconfigHook    wgengine.ReconfigListener
+	sshReconfigHook   wgengine.ReconfigListener
 
-	cfg           *wgcfg.Config
-	dnsCfg        *tsDNS.Config
-	routeDomains  common.TypedValue[map[string]bool]
-	routePrefixes atomic.Pointer[netipx.IPSet]
+	cfg       *wgcfg.Config
+	routerCfg *router.Config
+	dnsCfg    *tsDNS.Config
+	domains   atomic.Pointer[tailnetDomains]
 
 	acceptRoutes               bool
 	exitNode                   string
@@ -107,17 +108,23 @@ type Endpoint struct {
 	relayServerPort            *uint16
 	relayServerStaticEndpoints []netip.AddrPort
 
-	udpTimeout time.Duration
+	sshServerInstance *tailssh.Server
+	sshServerOptions  *option.TailscaleSSHServerOptions
+	taildrop          *taildropManager
+	localBackend      atomic.Pointer[ipnlocal.LocalBackend]
+	onDemand          bool
+	suspendAccess     sync.Mutex
+	idleRequested     atomic.Bool
+	resumeDone        chan struct{}
+	resumePending     atomic.Bool
+	suspended         atomic.Bool
 
 	systemInterface     bool
 	systemInterfaceName string
 	systemInterfaceMTU  uint32
-	serverStarted       bool
+	keyAuth             bool
 	started             atomic.Bool
-	systemTun           tun.Tun
 	systemDialer        *dialer.DefaultDialer
-	fallbackTCPCloser   func()
-	icmpPort            *ping.Port
 }
 
 func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.TailscaleEndpointOptions) (adapter.Endpoint, error) {
@@ -125,7 +132,11 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	if stateDirectory == "" {
 		stateDirectory = "tailscale"
 	}
+	platformInterface := service.FromContext[adapter.PlatformInterface](ctx)
 	hostname := options.Hostname
+	if hostname == "" && platformInterface != nil {
+		hostname = platformInterface.TailscaleHostname()
+	}
 	if hostname == "" {
 		osHostname, _ := os.Hostname()
 		osHostname = strings.TrimSpace(osHostname)
@@ -136,6 +147,12 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	}
 	stateDirectory = filemanager.BasePath(ctx, os.ExpandEnv(stateDirectory))
 	stateDirectory, _ = filepath.Abs(stateDirectory)
+	if options.SSHServer != nil && options.SSHServer.Enabled {
+		err := adapter.CheckSecurityFeature(ctx, "Tailscale `ssh_server`")
+		if err != nil {
+			return nil, err
+		}
+	}
 	for _, advertiseRoute := range options.AdvertiseRoutes {
 		if advertiseRoute.Addr().IsUnspecified() && advertiseRoute.Bits() == 0 {
 			return nil, E.New("`advertise_routes` cannot be default, use `advertise_exit_node` instead.")
@@ -144,27 +161,10 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	if options.AdvertiseExitNode && options.ExitNode != "" {
 		return nil, E.New("cannot advertise an exit node and use an exit node at the same time.")
 	}
-	var udpTimeout time.Duration
-	if options.UDPTimeout != 0 {
-		udpTimeout = time.Duration(options.UDPTimeout)
-	} else {
-		udpTimeout = C.UDPTimeout
-	}
-	var remoteIsDomain bool
-	if options.ControlURL != "" {
-		controlURL, err := url.Parse(options.ControlURL)
-		if err != nil {
-			return nil, E.Cause(err, "parse control URL")
-		}
-		remoteIsDomain = M.ParseSocksaddr(controlURL.Hostname()).IsDomain()
-	} else {
-		// controlplane.tailscale.com
-		remoteIsDomain = true
-	}
 	outboundDialer, err := dialer.NewWithOptions(dialer.Options{
 		Context:          ctx,
 		Options:          options.DialerOptions,
-		RemoteIsDomain:   remoteIsDomain,
+		RemoteIsDomain:   true,
 		ResolverOnDetour: true,
 		NewDialer:        true,
 	})
@@ -173,7 +173,13 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	}
 	dialerQueryOptions := outboundDialer.(dialer.ResolveDialer).QueryOptions()
 	dnsRouter := service.FromContext[adapter.DNSRouter](ctx)
-	return &Endpoint{
+	taildropDirectory := options.TaildropDirectory
+	if taildropDirectory == "" {
+		taildropDirectory = "Taildrop"
+	}
+	taildropDirectory = filemanager.BasePath(ctx, os.ExpandEnv(taildropDirectory))
+	taildropDirectory, _ = filepath.Abs(taildropDirectory)
+	tailscaleEndpoint := &Endpoint{
 		Adapter:           endpoint.NewAdapter(C.TypeTailscale, tag, []string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, nil),
 		ctx:               ctx,
 		router:            router,
@@ -181,7 +187,8 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		dnsRouter:         dnsRouter,
 		queryOptions:      dialerQueryOptions,
 		network:           service.FromContext[adapter.NetworkManager](ctx),
-		platformInterface: service.FromContext[adapter.PlatformInterface](ctx),
+		platformInterface: platformInterface,
+		detour:            options.Detour,
 		server: &tsnet.Server{
 			Dir:      stateDirectory,
 			Hostname: hostname,
@@ -194,6 +201,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 			Ephemeral:     options.Ephemeral,
 			AuthKey:       options.AuthKey,
 			ControlURL:    options.ControlURL,
+			Port:          options.ListenPort,
 			AdvertiseTags: options.AdvertiseTags,
 			Dialer:        &endpointDialer{Dialer: outboundDialer, logger: logger},
 			LookupHook: func(ctx context.Context, host string) ([]netip.Addr, error) {
@@ -221,58 +229,62 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		advertiseTags:              options.AdvertiseTags,
 		relayServerPort:            options.RelayServerPort,
 		relayServerStaticEndpoints: options.RelayServerStaticEndpoints,
-		udpTimeout:                 udpTimeout,
+		sshServerOptions:           options.SSHServer,
+		taildrop:                   newTaildropManager(ctx, logger, tag, taildropDirectory, platformInterface),
 		systemInterface:            options.SystemInterface,
 		systemInterfaceName:        options.SystemInterfaceName,
 		systemInterfaceMTU:         options.SystemInterfaceMTU,
-	}, nil
+		keyAuth:                    options.AuthKey != "",
+		onDemand:                   options.OnDemand,
+	}
+	tailscaleEndpoint.server.NetstackHandler = tailscaleEndpoint
+	return tailscaleEndpoint, nil
 }
 
-func (t *Endpoint) Start(stage adapter.StartStage) error {
+func (t *Endpoint) References() []string {
+	if t.detour == "" {
+		return nil
+	}
+	return []string{t.detour}
+}
+
+func (t *Endpoint) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	switch stage {
 	case adapter.StartStateInitialize:
-		// PeerDNSQueryHandler hook was removed from tsnet.Server upstream;
-		// peer DNS queries no longer route through dnsRouter. See
-		// peerDNSQueryHandler below, kept unused pending a replacement hook.
+		t.server.NetstackMemoryPressure = oomkiller.MemoryPressure(t.ctx)
+		mkdirErr := filemanager.MkdirAll(t.ctx, t.server.Dir, 0o700)
+		if mkdirErr != nil {
+			return E.Cause(mkdirErr, "create state directory")
+		}
+		if !version.IsAppleTV() {
+			mkdirErr = filemanager.MkdirAll(t.ctx, t.taildrop.directory, 0o700)
+			if mkdirErr != nil {
+				return E.Cause(mkdirErr, "create taildrop directory")
+			}
+		}
+		t.server.PeerDNSQueryHandler = (*peerDNSQueryHandler)(t)
 	case adapter.StartStateStart:
-		return t.start()
+		return t.start(scope)
 	case adapter.StartStatePostStart:
-		return t.postStart()
+		return t.postStart(scope)
 	}
 	return nil
 }
 
-func (t *Endpoint) start() error {
-	if t.platformInterface != nil {
-		err := t.network.UpdateInterfaces()
-		if err != nil {
-			return err
-		}
-		netmon.RegisterInterfaceGetter(func() ([]netmon.Interface, error) {
-			return common.Map(t.network.InterfaceFinder().Interfaces(), func(it control.Interface) netmon.Interface {
-				return netmon.Interface{
-					Interface: &net.Interface{
-						Index:        it.Index,
-						MTU:          it.MTU,
-						Name:         it.Name,
-						HardwareAddr: it.HardwareAddr,
-						Flags:        it.Flags,
-					},
-					AltAddrs: common.Map(it.Addresses, func(it netip.Prefix) net.Addr {
-						return &net.IPNet{
-							IP:   it.Addr().AsSlice(),
-							Mask: net.CIDRMask(it.Bits(), it.Addr().BitLen()),
-						}
-					}),
-				}
-			}), nil
-		})
+func (t *Endpoint) start(scope *adapter.Scope) error {
+	binding, err := newSystemBinding(t.ctx, t.logger)
+	if err != nil {
+		return err
 	}
+	t.server.ControlFunc = binding.control
+	t.server.ListenPacketFunc = binding.listenPacket
+	t.server.DefaultRouteFunc = binding.defaultRoute
 	if t.systemInterface {
 		mtu := t.systemInterfaceMTU
 		if mtu == 0 {
 			mtu = uint32(tsTUN.DefaultTUNMTU())
 		}
+		t.systemInterfaceMTU = mtu
 		tunName := t.systemInterfaceName
 		if tunName == "" {
 			tunName = tun.CalculateInterfaceName("tailscale")
@@ -291,120 +303,183 @@ func (t *Endpoint) start() error {
 		if err != nil {
 			return err
 		}
+		scope.Add(systemTun.Close)
 		err = systemTun.Start()
 		if err != nil {
-			_ = systemTun.Close()
 			return err
 		}
 		wgTunDevice, err := newTunDeviceAdapter(systemTun, int(mtu), t.logger)
 		if err != nil {
-			_ = systemTun.Close()
 			return err
 		}
 		systemDialer, err := dialer.NewDefault(t.ctx, option.DialerOptions{
-			BindInterface: tunName,
+			AbstractDialerOptions: option.AbstractDialerOptions{
+				BindInterface: tunName,
+			},
 		})
 		if err != nil {
-			_ = systemTun.Close()
 			return err
 		}
-		t.systemTun = systemTun
 		t.systemDialer = systemDialer
-		t.server.TunDevice = wgTunDevice
+		t.server.Tun = wgTunDevice
 	}
-	if runtime.GOOS == "android" && t.platformInterface != nil {
-		setAndroidProtectFunc(func(fd int) error {
-			return t.platformInterface.AutoDetectInterfaceControl(fd)
-		})
-	}
-	// Auto-redirect output-mark control (t.network.AutoRedirectOutputMark/
-	// AutoRedirectOutputMarkFunc/AutoDetectInterfaceFunc) has no equivalent
-	// hook in the current netns package (netns.SetControlFunc was removed);
-	// non-Android auto-detect-interface binding for Tailscale's own sockets
-	// is not currently applied.
 	return nil
 }
 
-func (t *Endpoint) postStart() error {
+func (t *Endpoint) postStart(scope *adapter.Scope) error {
 	err := t.server.Start()
 	if err != nil {
-		if t.systemTun != nil {
-			_ = t.systemTun.Close()
-		}
 		return err
 	}
-	t.serverStarted = true
-	if t.fallbackTCPCloser == nil {
-		t.fallbackTCPCloser = t.server.RegisterFallbackTCPHandler(func(src, dst netip.AddrPort) (handler func(net.Conn), intercept bool) {
-			return func(conn net.Conn) {
-				ctx := log.ContextWithNewID(t.ctx)
-				source := M.SocksaddrFrom(src.Addr(), src.Port())
-				destination := M.SocksaddrFrom(dst.Addr(), dst.Port())
-				t.NewConnectionEx(ctx, conn, source, destination, nil)
-			}, true
-		})
-	}
-	t.server.ExportLocalBackend().ExportEngine().(wgengine.ExportedUserspaceEngine).SetOnReconfigListener(t.onReconfig)
-
-	ipStack := t.server.ExportNetstack().ExportIPStack()
-	gErr := ipStack.SetSpoofing(tun.DefaultNIC, true)
-	if gErr != nil {
-		return gonet.TranslateNetstackError(gErr)
-	}
-	gErr = ipStack.SetPromiscuousMode(tun.DefaultNIC, true)
-	if gErr != nil {
-		return gonet.TranslateNetstackError(gErr)
-	}
-	icmpForwarder := tun.NewICMPForwarder(ipStack, t, t.logger)
-	ipStack.SetTransportProtocolHandler(icmp.ProtocolNumber4, icmpForwarder.HandlePacket)
-	ipStack.SetTransportProtocolHandler(icmp.ProtocolNumber6, icmpForwarder.HandlePacket)
-	t.stack = ipStack
-	t.icmpForwarder = icmpForwarder
-	netstack := t.server.ExportNetstack()
-	if netstack != nil {
-		previousTCP := netstack.GetTCPHandlerForFlow
-		netstack.GetTCPHandlerForFlow = func(src, dst netip.AddrPort) (handler func(net.Conn), intercept bool) {
-			if previousTCP != nil {
-				handler, intercept = previousTCP(src, dst)
-				if handler != nil || !intercept {
-					return handler, intercept
-				}
-			}
-			return func(conn net.Conn) {
-				ctx := log.ContextWithNewID(t.ctx)
-				source := M.SocksaddrFrom(src.Addr(), src.Port())
-				destination := M.SocksaddrFrom(dst.Addr(), dst.Port())
-				t.NewConnectionEx(ctx, conn, source, destination, nil)
-			}, true
-		}
-
-		previousUDP := netstack.GetUDPHandlerForFlow
-		netstack.GetUDPHandlerForFlow = func(src, dst netip.AddrPort) (handler func(nettype.ConnPacketConn), intercept bool) {
-			if previousUDP != nil {
-				handler, intercept = previousUDP(src, dst)
-				if handler != nil || !intercept {
-					return handler, intercept
-				}
-			}
-			return func(conn nettype.ConnPacketConn) {
-				ctx := log.ContextWithNewID(t.ctx)
-				source := M.SocksaddrFrom(src.Addr(), src.Port())
-				destination := M.SocksaddrFrom(dst.Addr(), dst.Port())
-				packetConn := bufio.NewUnbindPacketConnWithAddr(conn, destination)
-				t.NewPacketConnectionEx(ctx, packetConn, source, destination, nil)
-			}, true
-		}
-	}
-
+	scope.Add(t.server.Close)
 	localBackend := t.server.ExportLocalBackend()
+	t.localBackend.Store(localBackend)
+	scope.Add(func() error {
+		t.localBackend.Store(nil)
+		return nil
+	})
+	scope.Add(func() error {
+		t.taildrop.close()
+		return nil
+	})
+	if !version.IsAppleTV() {
+		registerTaildropEndpoint(localBackend, t)
+		scope.Add(func() error {
+			unregisterTaildropEndpoint(localBackend)
+			return nil
+		})
+		go t.taildrop.start()
+	}
+	wgEngine := localBackend.ExportEngine().(wgengine.ExportedUserspaceEngine)
+	wgEngine.SetOnReconfigListener(t.onReconfig)
+	t.wgEngine = wgEngine
+
+	t.stack = t.server.ExportNetstack().ExportIPStack()
+
+	sshEnabled := t.sshServerOptions != nil && t.sshServerOptions.Enabled
+	if sshEnabled {
+		degraded, fatal := tailssh.CheckServerSupport(t.platformInterface)
+		if fatal != nil {
+			t.logger.Warn(E.Cause(fatal, "SSH server unavailable"))
+			sshEnabled = false
+		} else if degraded != "" {
+			t.logger.Warn("SSH server degraded: ", degraded)
+		}
+	}
+	err = t.editPrefs(sshEnabled)
+	if err != nil {
+		return err
+	}
+	if sshEnabled {
+		sshServer, err := tailssh.New(t.ctx, t.server, t.platformInterface, t.sshServerOptions, t.logger)
+		if err != nil {
+			return E.Cause(err, "create SSH server")
+		}
+		err = sshServer.Start()
+		if err != nil {
+			return E.Cause(err, "start SSH server")
+		}
+		scope.Add(sshServer.Close)
+		t.sshReconfigHook = sshServer.OnReconfig
+		t.sshServerInstance = sshServer
+	}
+	go t.watchState(scope.Context())
+	t.started.Store(true)
+	scope.Add(func() error {
+		t.started.Store(false)
+		return nil
+	})
+	return nil
+}
+
+func (t *Endpoint) watchState(ctx context.Context) {
+	localBackend := t.server.ExportLocalBackend()
+	var reportedAuthURL string
+	exitNodePending := t.exitNode != ""
+	running := false
+	tryApplyExitNode := func() {
+		err := t.applyExitNode()
+		if err != nil {
+			t.logger.Error("set exit node: ", err)
+		} else {
+			exitNodePending = false
+		}
+	}
+	for {
+		var busError string
+		localBackend.WatchNotifications(ctx, ipn.NotifyInitialState|ipn.NotifyPeerPatches, nil, func(roNotify *ipn.Notify) (keepGoing bool) {
+			if roNotify.ErrMessage != nil {
+				busError = *roNotify.ErrMessage
+				return false
+			}
+			if running && exitNodePending && len(roNotify.PeersChanged) > 0 {
+				tryApplyExitNode()
+			}
+			if roNotify.State == nil && roNotify.BrowseToURL == nil {
+				return true
+			}
+			status := localBackend.StatusWithoutPeers()
+			running = status.BackendState == ipn.Running.String()
+			switch status.BackendState {
+			case ipn.NoState.String(), ipn.NeedsLogin.String():
+				if t.exitNode != "" {
+					exitNodePending = true
+				}
+				authURL := status.AuthURL
+				if authURL == "" || authURL == reportedAuthURL {
+					return true
+				}
+				reportedAuthURL = authURL
+				t.logger.Info("Waiting for authentication: ", authURL)
+				if t.platformInterface != nil && t.platformInterface.UsePlatformNotification() {
+					err := t.platformInterface.SendNotification(&adapter.Notification{
+						Identifier: "tailscale-authentication",
+						TypeName:   "Tailscale Authentication Notifications",
+						TypeID:     10,
+						Title:      "Tailscale Authentication",
+						Body:       F.ToString("Tailscale outbound[", t.Tag(), "] is waiting for authentication."),
+						OpenURL:    authURL,
+					})
+					if err != nil {
+						t.logger.Error("send authentication notification: ", err)
+					}
+				}
+			case ipn.Running.String():
+				reportedAuthURL = ""
+				if exitNodePending {
+					tryApplyExitNode()
+				}
+				t.suspendIfRequested()
+			}
+			return true
+		})
+		if ctx.Err() != nil {
+			return
+		}
+		if busError != "" {
+			t.logger.Warn("restarting state watcher: ", busError)
+		} else {
+			t.logger.Warn("state watcher stopped unexpectedly, restarting")
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func (t *Endpoint) editPrefs(sshEnabled bool) error {
 	perfs := &ipn.MaskedPrefs{
 		Prefs: ipn.Prefs{
 			RouteAll:        t.acceptRoutes,
 			AdvertiseRoutes: t.advertiseRoutes,
+			RunSSH:          sshEnabled,
 		},
 		RouteAllSet:                   true,
 		ExitNodeIPSet:                 true,
 		AdvertiseRoutesSet:            true,
+		RunSSHSet:                     true,
 		RelayServerPortSet:            true,
 		RelayServerStaticEndpointsSet: true,
 	}
@@ -417,72 +492,31 @@ func (t *Endpoint) postStart() error {
 	if len(t.relayServerStaticEndpoints) > 0 {
 		perfs.RelayServerStaticEndpoints = t.relayServerStaticEndpoints
 	}
-	_, err = localBackend.EditPrefs(perfs)
+	_, err := t.server.ExportLocalBackend().EditPrefs(perfs)
 	if err != nil {
 		return E.Cause(err, "update prefs")
 	}
-	t.filter = localBackend.ExportFilter()
-	go t.watchState()
-	t.started.Store(true)
 	return nil
 }
 
-func (t *Endpoint) watchState() {
-	localBackend := t.server.ExportLocalBackend()
-	localBackend.WatchNotifications(t.ctx, ipn.NotifyInitialState, nil, func(roNotify *ipn.Notify) (keepGoing bool) {
-		if roNotify.State != nil && *roNotify.State != ipn.NeedsLogin && *roNotify.State != ipn.NoState {
-			return false
-		}
-		authURL := localBackend.StatusWithoutPeers().AuthURL
-		if authURL != "" {
-			t.logger.Info("Waiting for authentication: ", authURL)
-			if t.platformInterface != nil {
-				err := t.platformInterface.SendNotification(&adapter.Notification{
-					Identifier: "tailscale-authentication",
-					TypeName:   "Tailscale Authentication Notifications",
-					TypeID:     10,
-					Title:      "Tailscale Authentication",
-					Body:       F.ToString("Tailscale outbound[", t.Tag(), "] is waiting for authentication."),
-					OpenURL:    authURL,
-				})
-				if err != nil {
-					t.logger.Error("send authentication notification: ", err)
-				}
-			}
-			return false
-		}
-		return true
-	})
-	if t.exitNode != "" {
-		localBackend.WatchNotifications(t.ctx, ipn.NotifyInitialState, nil, func(roNotify *ipn.Notify) (keepGoing bool) {
-			if roNotify.State == nil || *roNotify.State != ipn.Running {
-				return true
-			}
-			status, err := common.Must1(t.server.LocalClient()).Status(t.ctx)
-			if err != nil {
-				t.logger.Error("set exit node: ", err)
-				return
-			}
-			perfs := &ipn.MaskedPrefs{
-				Prefs: ipn.Prefs{
-					ExitNodeAllowLANAccess: t.exitNodeAllowLANAccess,
-				},
-				ExitNodeIPSet:             true,
-				ExitNodeAllowLANAccessSet: true,
-			}
-			err = perfs.SetExitNodeIP(t.exitNode, status)
-			if err != nil {
-				t.logger.Error("set exit node: ", err)
-				return true
-			}
-			_, err = localBackend.EditPrefs(perfs)
-			if err != nil {
-				t.logger.Error("set exit node: ", err)
-				return true
-			}
-			return false
-		})
+func (t *Endpoint) applyExitNode() error {
+	status, err := common.Must1(t.server.LocalClient()).Status(t.ctx)
+	if err != nil {
+		return err
 	}
+	perfs := &ipn.MaskedPrefs{
+		Prefs: ipn.Prefs{
+			ExitNodeAllowLANAccess: t.exitNodeAllowLANAccess,
+		},
+		ExitNodeIPSet:             true,
+		ExitNodeAllowLANAccessSet: true,
+	}
+	err = perfs.SetExitNodeIP(t.exitNode, status)
+	if err != nil {
+		return err
+	}
+	_, err = t.server.ExportLocalBackend().EditPrefs(perfs)
+	return err
 }
 
 func (t *Endpoint) SetTailscaleExitNode(ctx context.Context, stableID string) error {
@@ -528,26 +562,182 @@ func (t *Endpoint) SetTailscaleExitNode(ctx context.Context, stableID string) er
 	return nil
 }
 
-func (t *Endpoint) Close() error {
-	var err error
-	t.started.Store(false)
-	if t.serverStarted {
-		err = common.Close(common.PtrOrNil(t.server))
-		t.serverStarted = false
+func (t *Endpoint) Logout(ctx context.Context) error {
+	if !t.started.Load() {
+		return E.New("Tailscale is not ready yet")
 	}
-	netmon.RegisterInterfaceGetter(nil)
-	if runtime.GOOS == "android" {
-		setAndroidProtectFunc(nil)
+	err := common.Must1(t.server.LocalClient()).Logout(ctx)
+	if err != nil {
+		return E.Cause(err, "tailscale logout")
 	}
-	if t.fallbackTCPCloser != nil {
-		t.fallbackTCPCloser()
-		t.fallbackTCPCloser = nil
+	// LocalBackend.Logout deletes the profile and restarts the backend with
+	// empty preferences, and only tsnet.Server.Start performs the login
+	// bootstrap, so redo it here to obtain a new auth URL.
+	localBackend := t.server.ExportLocalBackend()
+	prefs := ipn.NewPrefs()
+	prefs.Hostname = t.server.Hostname
+	prefs.WantRunning = true
+	prefs.ControlURL = t.server.ControlURL
+	prefs.AdvertiseTags = t.server.AdvertiseTags
+	err = localBackend.Start(ipn.Options{UpdatePrefs: prefs})
+	if err != nil {
+		return E.Cause(err, "restart backend")
 	}
-	if t.systemTun != nil {
-		t.systemTun.Close()
-		t.systemTun = nil
+	err = t.editPrefs(t.sshServerInstance != nil)
+	if err != nil {
+		return err
 	}
-	return err
+	err = localBackend.StartLoginInteractive(ctx)
+	if err != nil {
+		return E.Cause(err, "start interactive login")
+	}
+	return nil
+}
+
+func (t *Endpoint) MultiplexEnabled() bool {
+	return true
+}
+
+func (t *Endpoint) InterfaceUpdated(ctx context.Context) {
+	if !t.started.Load() {
+		return
+	}
+	netMon, loaded := t.server.Sys().NetMon.GetOK()
+	if loaded && netMon != nil {
+		netMon.InjectEvent()
+	}
+}
+
+func (t *Endpoint) OnDemand() bool {
+	return t.onDemand
+}
+
+func (t *Endpoint) SetKeepIdleConnections(keep bool) {
+	t.idleRequested.Store(!keep)
+	if !keep {
+		t.suspendAccess.Lock()
+		t.suspendLocked()
+		t.suspendAccess.Unlock()
+		return
+	}
+	t.requestResume()
+}
+
+func (t *Endpoint) requestResume() {
+	if !t.suspended.Load() || !t.resumePending.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer t.resumePending.Store(false)
+		err := t.resume(t.ctx)
+		if err != nil {
+			t.logger.Error(E.Cause(err, "resume"))
+		}
+	}()
+}
+
+func (t *Endpoint) suspendIfRequested() {
+	if !t.idleRequested.Load() {
+		return
+	}
+	t.suspendAccess.Lock()
+	if t.idleRequested.Load() {
+		t.suspendLocked()
+	}
+	t.suspendAccess.Unlock()
+}
+
+func (t *Endpoint) suspendLocked() {
+	if t.suspended.Load() || t.resumeDone != nil {
+		return
+	}
+	localBackend := t.localBackend.Load()
+	if localBackend == nil || localBackend.State() != ipn.Running {
+		return
+	}
+	_, err := localBackend.EditPrefs(&ipn.MaskedPrefs{
+		Prefs:          ipn.Prefs{WantRunning: false},
+		WantRunningSet: true,
+	})
+	if err != nil {
+		t.logger.Error(E.Cause(err, "suspend"))
+		return
+	}
+	t.suspended.Store(true)
+}
+
+func (t *Endpoint) resume(ctx context.Context) error {
+	t.idleRequested.Store(false)
+	if !t.suspended.Load() {
+		return nil
+	}
+	t.suspendAccess.Lock()
+	if !t.suspended.Load() {
+		t.suspendAccess.Unlock()
+		return nil
+	}
+	resumeDone := t.resumeDone
+	if resumeDone == nil {
+		localBackend := t.localBackend.Load()
+		if localBackend == nil {
+			t.suspendAccess.Unlock()
+			return E.New("Tailscale is not ready yet")
+		}
+		_, err := localBackend.EditPrefs(&ipn.MaskedPrefs{
+			Prefs:          ipn.Prefs{WantRunning: true},
+			WantRunningSet: true,
+		})
+		if err != nil {
+			t.suspendAccess.Unlock()
+			return err
+		}
+		resumeDone = make(chan struct{})
+		t.resumeDone = resumeDone
+		go t.awaitRunning(localBackend, resumeDone)
+	}
+	t.suspendAccess.Unlock()
+	select {
+	case <-resumeDone:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	if t.suspended.Load() {
+		return E.New("Tailscale backend is not running")
+	}
+	return nil
+}
+
+func (t *Endpoint) awaitRunning(localBackend *ipnlocal.LocalBackend, resumeDone chan struct{}) {
+	running := localBackend.State() == ipn.Running
+	if !running {
+		watchCtx, cancel := context.WithTimeout(t.ctx, C.TCPTimeout)
+		localBackend.WatchNotifications(watchCtx, ipn.NotifyInitialState, nil, func(notify *ipn.Notify) bool {
+			if notify.State != nil && *notify.State == ipn.Running {
+				running = true
+				return false
+			}
+			return notify.ErrMessage == nil
+		})
+		cancel()
+	}
+	t.suspendAccess.Lock()
+	t.resumeDone = nil
+	if running {
+		t.suspended.Store(false)
+		if t.idleRequested.Load() {
+			t.suspendLocked()
+		}
+	} else {
+		_, err := localBackend.EditPrefs(&ipn.MaskedPrefs{
+			Prefs:          ipn.Prefs{WantRunning: false},
+			WantRunningSet: true,
+		})
+		if err != nil {
+			t.logger.Error(E.Cause(err, "revert resume"))
+		}
+	}
+	t.suspendAccess.Unlock()
+	close(resumeDone)
 }
 
 func (t *Endpoint) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
@@ -560,6 +750,10 @@ func (t *Endpoint) DialContext(ctx context.Context, network string, destination 
 	if !t.started.Load() {
 		return nil, E.New("Tailscale is not ready yet")
 	}
+	resumeErr := t.resume(ctx)
+	if resumeErr != nil {
+		return nil, resumeErr
+	}
 	if destination.IsDomain() {
 		destinationAddresses, err := t.dnsRouter.Lookup(ctx, destination.Fqdn, adapter.DNSQueryOptions{})
 		if err != nil {
@@ -570,46 +764,27 @@ func (t *Endpoint) DialContext(ctx context.Context, network string, destination 
 	if t.systemDialer != nil {
 		return t.systemDialer.DialContext(ctx, network, destination)
 	}
-	addr4, addr6 := t.server.TailscaleIPs()
-	remoteAddr := tcpip.FullAddress{
-		NIC:  1,
-		Port: destination.Port,
-		Addr: addressFromAddr(destination.Addr),
+	address4, address6 := t.server.TailscaleIPs()
+	local := address4
+	if destination.IsIPv6() {
+		local = address6
 	}
-	var localAddr tcpip.FullAddress
-	var networkProtocol tcpip.NetworkProtocolNumber
-	if destination.IsIPv4() {
-		if !addr4.IsValid() {
-			return nil, E.New("missing Tailscale IPv4 address")
-		}
-		networkProtocol = header.IPv4ProtocolNumber
-		localAddr = tcpip.FullAddress{
-			NIC:  1,
-			Addr: addressFromAddr(addr4),
-		}
-	} else {
-		if !addr6.IsValid() {
-			return nil, E.New("missing Tailscale IPv6 address")
-		}
-		networkProtocol = header.IPv6ProtocolNumber
-		localAddr = tcpip.FullAddress{
-			NIC:  1,
-			Addr: addressFromAddr(addr6),
-		}
+	if !local.IsValid() {
+		return nil, E.New("missing Tailscale address for ", destination)
 	}
 	switch N.NetworkName(network) {
 	case N.NetworkTCP:
-		tcpConn, err := gonet.DialTCPWithBind(ctx, t.stack, localAddr, remoteAddr, networkProtocol)
+		conn, err := t.stack.DialTCP(ctx, local, destination.AddrPort())
 		if err != nil {
 			return nil, err
 		}
-		return tcpConn, nil
+		return conn, nil
 	case N.NetworkUDP:
-		udpConn, err := gonet.DialUDP(t.stack, &localAddr, &remoteAddr, networkProtocol)
+		conn, err := t.stack.DialUDP(netip.AddrPortFrom(local, 0), destination.AddrPort())
 		if err != nil {
 			return nil, err
 		}
-		return udpConn, nil
+		return conn, nil
 	default:
 		return nil, E.Extend(N.ErrUnknownNetwork, network)
 	}
@@ -619,32 +794,26 @@ func (t *Endpoint) listenPacketWithAddress(ctx context.Context, destination M.So
 	if !t.started.Load() {
 		return nil, E.New("Tailscale is not ready yet")
 	}
+	resumeErr := t.resume(ctx)
+	if resumeErr != nil {
+		return nil, resumeErr
+	}
 	if t.systemDialer != nil {
 		return t.systemDialer.ListenPacket(ctx, destination)
 	}
-	addr4, addr6 := t.server.TailscaleIPs()
-	bind := tcpip.FullAddress{
-		NIC: 1,
+	address4, address6 := t.server.TailscaleIPs()
+	local := address4
+	if destination.IsIPv6() {
+		local = address6
 	}
-	var networkProtocol tcpip.NetworkProtocolNumber
-	if destination.IsIPv4() {
-		if !addr4.IsValid() {
-			return nil, E.New("missing Tailscale IPv4 address")
-		}
-		networkProtocol = header.IPv4ProtocolNumber
-		bind.Addr = addressFromAddr(addr4)
-	} else {
-		if !addr6.IsValid() {
-			return nil, E.New("missing Tailscale IPv6 address")
-		}
-		networkProtocol = header.IPv6ProtocolNumber
-		bind.Addr = addressFromAddr(addr6)
+	if !local.IsValid() {
+		return nil, E.New("missing Tailscale address for ", destination)
 	}
-	udpConn, err := gonet.DialUDP(t.stack, &bind, nil, networkProtocol)
+	conn, err := t.stack.ListenUDP(netip.AddrPortFrom(local, 0))
 	if err != nil {
 		return nil, err
 	}
-	return udpConn, nil
+	return conn, nil
 }
 
 func (t *Endpoint) ListenPacketWithDestination(ctx context.Context, destination M.Socksaddr) (net.PacketConn, netip.Addr, error) {
@@ -658,7 +827,7 @@ func (t *Endpoint) ListenPacketWithDestination(ctx context.Context, destination 
 		for _, address := range destinationAddresses {
 			packetConn, packetErr := t.listenPacketWithAddress(ctx, M.SocksaddrFrom(address, destination.Port))
 			if packetErr == nil {
-				return packetConn, address, nil
+				return iponly.NewPacketConn(t.logger, packetConn), address, nil
 			}
 			errors = append(errors, packetErr)
 		}
@@ -669,9 +838,9 @@ func (t *Endpoint) ListenPacketWithDestination(ctx context.Context, destination 
 		return nil, netip.Addr{}, err
 	}
 	if destination.IsIP() {
-		return packetConn, destination.Addr, nil
+		return iponly.NewPacketConn(t.logger, packetConn), destination.Addr, nil
 	}
-	return packetConn, netip.Addr{}, nil
+	return iponly.NewPacketConn(t.logger, packetConn), netip.Addr{}, nil
 }
 
 func (t *Endpoint) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
@@ -685,111 +854,23 @@ func (t *Endpoint) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	return packetConn, nil
 }
 
-// JudgeFlow implements tun.Handler for traffic arriving from Tailscale peers
-// via the gVisor ICMP forwarder, checking Tailscale's own ACL filter before
-// falling through to the sing-box router.
-func (t *Endpoint) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
-	inet4Address, inet6Address := t.server.TailscaleIPs()
-	if destination.Addr() == inet4Address || destination.Addr() == inet6Address {
-		return tun.FlowVerdict{Action: tun.ActionAccept}
-	}
-	tsFilter := t.filter.Load()
-	if tsFilter != nil {
-		var (
-			ipProto         ipproto.Proto
-			destinationPort uint16
-		)
-		switch network {
-		case uint8(header.TCPProtocolNumber):
-			ipProto = ipproto.TCP
-			destinationPort = destination.Port()
-		case uint8(header.UDPProtocolNumber):
-			ipProto = ipproto.UDP
-			destinationPort = destination.Port()
-		case uint8(header.ICMPv4ProtocolNumber):
-			ipProto = ipproto.ICMPv4
-		case uint8(header.ICMPv6ProtocolNumber):
-			ipProto = ipproto.ICMPv6
-		}
-		switch tsFilter.Check(source.Addr(), destination.Addr(), destinationPort, ipProto) {
-		case filter.Drop:
-			return tun.FlowVerdict{Action: tun.ActionReject}
-		case filter.DropSilently:
-			return tun.FlowVerdict{Action: tun.ActionDrop}
-		}
-	}
-	return adapter.JudgeFlow(t.router, t.Tag(), t.Type(), network, source, destination, firstPacket)
-}
-
-// PreMatchFlow reports whether this endpoint accepts a direct-route (tun.Port)
-// flow for the given network/destination, checking Tailscale's own ACL
-// filter. Only ICMP is supported (see icmpFlowPort); other networks fall
-// through to normal outbound dialing.
-func (t *Endpoint) PreMatchFlow(network string, destination netip.Addr) adapter.PreMatchAction {
-	if !t.started.Load() {
-		return adapter.PreMatchReject
-	}
-	if network != N.NetworkICMP || t.systemDialer == nil {
-		return adapter.PreMatchContinue
-	}
-	tsFilter := t.filter.Load()
-	if tsFilter != nil {
-		var ipProto ipproto.Proto
-		if !destination.Is6() {
-			ipProto = ipproto.ICMPv4
-		} else {
-			ipProto = ipproto.ICMPv6
-		}
-		switch tsFilter.Check(destination, destination, 0, ipProto) {
-		case filter.Drop:
-			return adapter.PreMatchReject
-		case filter.DropSilently:
-			return adapter.PreMatchDrop
-		}
-	}
-	return adapter.PreMatchFlow
-}
-
-func (t *Endpoint) icmpFlowPort() *ping.Port {
-	if t.icmpPort == nil {
-		t.icmpPort = ping.NewPort(t.ctx, t.logger, func(destination netip.Addr) control.Func {
-			return t.systemDialer.DialerForICMPDestination(destination).Control
-		}, t.udpTimeout)
-	}
-	return t.icmpPort
-}
-
-func (t *Endpoint) PortAddresses() (netip.Addr, netip.Addr) {
-	return t.icmpFlowPort().PortAddresses()
-}
-
-func (t *Endpoint) PortMTU() uint32 {
-	return t.icmpFlowPort().PortMTU()
-}
-
-func (t *Endpoint) AttachReturn(returnPath tun.Return) error {
-	return t.icmpFlowPort().AttachReturn(returnPath)
-}
-
-func (t *Endpoint) DetachReturn(returnPath tun.Return) error {
-	return t.icmpFlowPort().DetachReturn(returnPath)
-}
-
-func (t *Endpoint) WritePackets(packets [][]byte) error {
-	return t.icmpFlowPort().WritePackets(packets)
-}
-
-func (t *Endpoint) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
+func (t *Endpoint) NewConnectionEx(_ context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
+	ctx := log.ContextWithNewID(t.ctx)
 	var metadata adapter.InboundContext
 	metadata.Inbound = t.Tag()
 	metadata.InboundType = t.Type()
 	metadata.Source = source
-	addr4, addr6 := t.server.TailscaleIPs()
-	switch destination.Addr {
-	case addr4:
-		destination.Addr = netip.AddrFrom4([4]uint8{127, 0, 0, 1})
-	case addr6:
-		destination.Addr = netip.IPv6Loopback()
+	destinationAddress := tsaddr.UnmapVia(destination.Addr)
+	if destinationAddress != destination.Addr {
+		destination.Addr = destinationAddress
+	} else {
+		addr4, addr6 := t.server.TailscaleIPs()
+		switch destination.Addr {
+		case addr4:
+			destination.Addr = netip.AddrFrom4([4]uint8{127, 0, 0, 1})
+		case addr6:
+			destination.Addr = netip.IPv6Loopback()
+		}
 	}
 	metadata.Destination = destination
 	t.logger.InfoContext(ctx, "inbound connection from ", source)
@@ -797,21 +878,28 @@ func (t *Endpoint) NewConnectionEx(ctx context.Context, conn net.Conn, source M.
 	t.router.RouteConnectionEx(ctx, conn, metadata, onClose)
 }
 
-func (t *Endpoint) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
+func (t *Endpoint) NewPacketConnectionEx(_ context.Context, conn N.PacketConn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
+	ctx := log.ContextWithNewID(t.ctx)
 	var metadata adapter.InboundContext
 	metadata.Inbound = t.Tag()
 	metadata.InboundType = t.Type()
 	metadata.Source = source
-	addr4, addr6 := t.server.TailscaleIPs()
-	switch destination.Addr {
-	case addr4:
-		metadata.OriginDestination = destination
-		destination.Addr = netip.AddrFrom4([4]uint8{127, 0, 0, 1})
-		conn = bufio.NewNATPacketConn(bufio.NewNetPacketConn(conn), metadata.OriginDestination, destination)
-	case addr6:
-		metadata.OriginDestination = destination
-		destination.Addr = netip.IPv6Loopback()
-		conn = bufio.NewNATPacketConn(bufio.NewNetPacketConn(conn), metadata.OriginDestination, destination)
+	originDestination := destination
+	destinationAddress := tsaddr.UnmapVia(destination.Addr)
+	if destinationAddress != destination.Addr {
+		destination.Addr = destinationAddress
+	} else {
+		addr4, addr6 := t.server.TailscaleIPs()
+		switch destination.Addr {
+		case addr4:
+			destination.Addr = netip.AddrFrom4([4]uint8{127, 0, 0, 1})
+		case addr6:
+			destination.Addr = netip.IPv6Loopback()
+		}
+	}
+	if destination != originDestination {
+		metadata.OriginDestination = originDestination
+		conn = bufio.NewNATPacketConn(bufio.NewNetPacketConn(conn), originDestination, destination)
 	}
 	metadata.Destination = destination
 	t.logger.InfoContext(ctx, "inbound packet connection from ", source)
@@ -820,19 +908,27 @@ func (t *Endpoint) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn,
 }
 
 func (t *Endpoint) PreferredDomain(metadata *adapter.InboundContext, domain string) bool {
-	routeDomains := t.routeDomains.Load()
-	if routeDomains == nil {
+	domains := t.domains.Load()
+	if domains == nil {
 		return false
 	}
-	return routeDomains[strings.ToLower(domain)]
+	canonicalDomain := mDNS.CanonicalName(domain)
+	if slices.Contains(domains.searchDomains, canonicalDomain) {
+		return true
+	}
+	var magicHosts nDNSResolver.MagicDNSHosts
+	if t.started.Load() {
+		magicHosts = t.server.ExportLocalBackend().ExportMagicDNSHosts()
+	}
+	return domains.match(magicHosts, canonicalDomain, !strings.Contains(domain, "."))
 }
 
 func (t *Endpoint) PreferredAddress(metadata *adapter.InboundContext, address netip.Addr) bool {
-	routePrefixes := t.routePrefixes.Load()
-	if routePrefixes == nil {
+	if !t.started.Load() {
 		return false
 	}
-	return routePrefixes.Contains(address)
+	peer, found := t.server.ExportLocalBackend().PeerForIP(address)
+	return found && !peer.IsSelf && peer.Route.Bits() > 0
 }
 
 func (t *Endpoint) Server() *tsnet.Server {
@@ -843,39 +939,26 @@ func (t *Endpoint) onReconfig(cfg *wgcfg.Config, routerCfg *router.Config, dnsCf
 	if cfg == nil || dnsCfg == nil {
 		return
 	}
-	if (t.cfg != nil && reflect.DeepEqual(t.cfg, cfg)) && (t.dnsCfg != nil && reflect.DeepEqual(t.dnsCfg, dnsCfg)) {
+	// The engine invokes the listener on every Reconfig call, including
+	// unchanged ones: SSH policy lives only in the netmap, outside the
+	// three configs, so the SSH hook must run before the change check.
+	if t.sshReconfigHook != nil {
+		t.sshReconfigHook(cfg, routerCfg, dnsCfg)
+	}
+	if t.cfg != nil && reflect.DeepEqual(t.cfg, cfg) &&
+		t.routerCfg != nil && reflect.DeepEqual(t.routerCfg, routerCfg) &&
+		t.dnsCfg != nil && reflect.DeepEqual(t.dnsCfg, dnsCfg) {
 		return
 	}
 	t.cfg = cfg
+	t.routerCfg = routerCfg
 	t.dnsCfg = dnsCfg
 
-	routeDomains := make(map[string]bool)
-	for fqdn := range dnsCfg.Routes {
-		routeDomains[fqdn.WithoutTrailingDot()] = true
-	}
-	for _, fqdn := range dnsCfg.SearchDomains {
-		routeDomains[fqdn.WithoutTrailingDot()] = true
-	}
-	t.routeDomains.Store(routeDomains)
-
-	var builder netipx.IPSetBuilder
-	for _, peer := range cfg.Peers {
-		for _, allowedIP := range peer.AllowedIPs {
-			builder.AddPrefix(allowedIP)
-		}
-	}
-	t.routePrefixes.Store(common.Must1(builder.IPSet()))
+	domains := newTailnetDomains(dnsCfg)
+	t.domains.Store(&domains)
 
 	if t.onReconfigHook != nil {
 		t.onReconfigHook(cfg, routerCfg, dnsCfg)
-	}
-}
-
-func addressFromAddr(destination netip.Addr) tcpip.Address {
-	if destination.Is6() {
-		return tcpip.AddrFrom16(destination.As16())
-	} else {
-		return tcpip.AddrFrom4(destination.As4())
 	}
 }
 
@@ -944,5 +1027,7 @@ func (t *peerDNSQueryHandler) HandlePeerDNSQuery(ctx context.Context, query []by
 		}
 		return nil, err
 	}
-	return response.Pack()
+	compressedResponse := *response
+	compressedResponse.Compress = true
+	return compressedResponse.Pack()
 }

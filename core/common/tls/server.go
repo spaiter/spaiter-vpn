@@ -5,11 +5,11 @@ import (
 	"net"
 	"os"
 
+	"github.com/sagernet/sing-box/common/badtls"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	aTLS "github.com/sagernet/sing/common/tls"
-	"github.com/spaiter/spaiter-vpn/core/common/badtls"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 type ServerOptions struct {

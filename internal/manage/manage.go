@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sagernet/sing-box/option"
 	singjson "github.com/sagernet/sing/common/json"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 // Client talks to a running sing-box instance.

@@ -3,10 +3,10 @@
 package usbip
 
 import (
+	boxService "github.com/sagernet/sing-box/adapter/service"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-usbip"
-	boxService "github.com/spaiter/spaiter-vpn/core/adapter/service"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 func RegisterService(registry *boxService.Registry) {

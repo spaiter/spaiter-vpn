@@ -6,9 +6,11 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/sagernet/sing-box/hiddify/peeruser"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 // peerState is the peer list currently programmed into the device, keyed by
@@ -119,7 +121,7 @@ func (e *Endpoint) ReloadPeers(options any) error {
 	}
 
 	e.peerState.peers = desired
-	e.peerNames.Store(newPeerNameTable(opts.Peers))
+	e.peerUsers.Store(newPeerUsers(opts.Peers))
 	e.logger.Info("peers reloaded: ", added, " added, ", changed, " changed, ", removed, " removed")
 	return nil
 }
@@ -148,4 +150,11 @@ func peersEqual(a, b option.AwgPeerOptions) bool {
 		}
 	}
 	return true
+}
+
+// newPeerUsers maps the peers' allowed IPs to their user names, for metadata.User. //H
+func newPeerUsers(peers []option.AwgPeerOptions) *peeruser.Users {
+	return peeruser.New(common.Map(peers, func(it option.AwgPeerOptions) peeruser.Peer {
+		return peeruser.Peer{User: it.Username, AllowedIPs: it.AllowedIPs}
+	}))
 }

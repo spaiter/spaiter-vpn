@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/json/badoption"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"github.com/spaiter/spaiter-vpn/internal/keys"
 )
@@ -601,7 +601,7 @@ func buildEndpoint(spec Spec, p Protocol, secrets *Secrets, prev *Secrets) (*opt
 			// Name attributes the peer's traffic to a user, which is what
 			// drives the per-user stats and lets the XDP blocker ban the
 			// offender's other addresses rather than just this one.
-			Name:       secrets.Users[i].Name,
+			Username:   secrets.Users[i].Name,
 			PublicKey:  publicKey,
 			AllowedIPs: badoption.Listable[netip.Prefix]{peerSingle},
 		})
@@ -662,12 +662,12 @@ func awgOptions(o keys.AWGObfuscation) option.AwgOptions {
 		I2:   o.I2,
 
 		HeaderProtectionKey:    o.HeaderProtectionKey,
-		ContentPaddingAddition: o.ContentPaddingAddition,
-		RekeyAfterTime:         o.RekeyAfterTime,
-		RekeyTimeout:           o.RekeyTimeout,
-		RejectAfterTime:        o.RejectAfterTime,
-		KeepaliveTimeout:       o.KeepaliveTimeout,
-		MaxHandshakeAttempts:   o.MaxHandshakeAttempts,
+		ContentPaddingAddition: option.AwgRange(o.ContentPaddingAddition),
+		RekeyAfterTime:         option.AwgRange(o.RekeyAfterTime),
+		RekeyTimeout:           option.AwgRange(o.RekeyTimeout),
+		RejectAfterTime:        option.AwgRange(o.RejectAfterTime),
+		KeepaliveTimeout:       option.AwgRange(o.KeepaliveTimeout),
+		MaxHandshakeAttempts:   option.AwgRange(o.MaxHandshakeAttempts),
 		RandomTrailers:         o.RandomTrailers,
 	}
 }

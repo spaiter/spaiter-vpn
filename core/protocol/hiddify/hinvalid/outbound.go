@@ -5,14 +5,14 @@ import (
 	"net"
 	"syscall"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/outbound"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/outbound"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 func RegisterOutbound(registry *outbound.Registry) {
@@ -28,6 +28,9 @@ type Outbound struct {
 }
 
 func New(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, invalidOptions option.HInvalidOptions) (adapter.Outbound, error) {
+	if invalidOptions.Err != nil {
+		logger.Error(invalidOptions.Err)
+	}
 	return &Outbound{
 		Adapter:        outbound.NewAdapter(C.TypeHInvalidConfig, tag, []string{N.NetworkTCP, N.NetworkUDP}, nil),
 		logger:         logger,
@@ -45,6 +48,15 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	return nil, syscall.EPERM
 }
 
-func (h *Outbound) DisplayType() string {
-	return C.ProxyDisplayName(h.Tag()) + " " + h.InvalidOptions.Err.Error()
+// Status is failed when the configuration could not be read: it never carries traffic.
+func (h *Outbound) Status() adapter.Status {
+	if h.InvalidOptions.Err != nil {
+		return adapter.StatusFailed
+	}
+	return adapter.StatusReady
+}
+
+// StatusError is why the configuration could not be read; the display type shows it.
+func (h *Outbound) StatusError() error {
+	return h.InvalidOptions.Err
 }

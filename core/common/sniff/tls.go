@@ -6,11 +6,11 @@ import (
 	"errors"
 	"io"
 
+	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
 )
 
 func TLSClientHello(ctx context.Context, metadata *adapter.InboundContext, reader io.Reader) error {

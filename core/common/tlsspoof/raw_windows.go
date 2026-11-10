@@ -11,9 +11,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/sagernet/sing-box/common/windivert"
 	"github.com/sagernet/sing-tun/gtcpip/header"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/common/windivert"
 
 	"golang.org/x/sys/windows"
 )

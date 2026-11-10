@@ -6,8 +6,8 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 
+	"github.com/sagernet/sing-box/common/xray"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/common/xray"
 )
 
 var byteGroups = []int{8, 4, 4, 4, 12}
@@ -57,7 +57,7 @@ func New() UUID {
 func ParseBytes(b []byte) (UUID, error) {
 	var uuid UUID
 	if len(b) != 16 {
-		return uuid, E.New("invalid UUID: ", b)
+		return uuid, E.New("invalid UUID length: ", len(b)) // E.New panics on a []byte
 	}
 	copy(uuid[:], b)
 	return uuid, nil

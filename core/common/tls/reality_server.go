@@ -11,14 +11,14 @@ import (
 	"net"
 	"time"
 
+	"github.com/sagernet/sing-box/common/dialer"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/ntp"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	utls "github.com/metacubex/utls"
 )
@@ -108,9 +108,9 @@ func NewRealityServer(ctx context.Context, logger log.ContextLogger, options opt
 		tlsConfig.ShortIds[[8]byte{0}] = true
 	} else {
 		for i, shortIDString := range options.Reality.ShortID {
-			if len(shortIDString) > 16 {
-				return nil, E.New("invalid short_id[", i, "]: ", shortIDString, ": longer than 16 hex digits")
-			}
+			if len(shortIDString) > 16 { //H: hex.Decode panics when the input does not fit in 8 bytes
+				return nil, E.New("invalid short_id[", i, "]: ", shortIDString, ": longer than 16 hex digits") //H
+			} //H
 			var shortID [8]byte
 			decodedLen, err := hex.Decode(shortID[:], []byte(shortIDString))
 			if err != nil {
@@ -257,5 +257,5 @@ func (c *realityConnWrapper) ReaderReplaceable() bool {
 }
 
 func (c *realityConnWrapper) WriterReplaceable() bool {
-	return true
+	return false
 }

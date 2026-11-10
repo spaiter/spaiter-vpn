@@ -27,7 +27,13 @@ const (
 	TypeVLESS              = "vless"
 	TypeTUIC               = "tuic"
 	TypeHysteria2          = "hysteria2"
+	TypeOpenConnect        = "openconnect"
+	TypeOpenVPNClient      = "openvpn-client"
+	TypeOpenVPNServer      = "openvpn-server"
+	TypeMASQUEClient       = "masque-client"
+	TypeMASQUEServer       = "masque-server"
 	TypeTailscale          = "tailscale"
+	TypeTailcat            = "tailcat"
 	TypeCloudflared        = "cloudflared"
 	TypeDERP               = "derp"
 	TypeResolved           = "resolved"
@@ -49,21 +55,35 @@ const (
 	TypeTunnelClient       = "tunnel_client"
 	TypeTunnelServer       = "tunnel_server"
 
-	TypeHInvalidConfig = "hinvalid"       //H
-	TypeXray           = "xray"           //H
-	TypeCustom         = "custom"         //H
-	TypeAwg            = "awg"            //H
-	TypeBalancer       = "balancer"       //H
-	TypeDNSTT          = "dnstt"          //H
-	TypeGooseRelay     = "gooserelay"     //H
-	TypeSmartDNSPool   = "smart_dns_pool" //H — local recursive-resolver pool with AIMD throttling + recovery probing (github.com/hiddify/hmrd_multi_resolver_dns)
-	TypeXDPBlocker     = "xdp-blocker"    //H
-	TypeMTProto        = "mtproto"        //H — Telegram MTProto proxy (github.com/9seconds/mtg)
+	TypeHInvalidConfig = "hinvalid"   //H
+	TypeXray           = "xray"       //H
+	TypeCustom         = "custom"     //H
+	TypeAwg            = "awg"        //H
+	TypeBalancer       = "balancer"   //H
+	TypeFallback       = "fallback"   //H
+	TypeSudoku         = "sudoku"     //H
+	TypeBond           = "bond"       //H
+	TypeCall           = "call"       //H
+	TypeDNSTT          = "dnstt"      //H
+	TypeGooseRelay     = "gooserelay" //H
+	TypeMasterDNS      = "masterdns"  //H
+	TypeSoar           = "soar"       //H
+	TypeTrustTunnel    = "trusttunnel"
+	TypeXDPBlocker     = "xdp-blocker" //H
+	TypeMTProto        = "mtproto"     //H: Telegram MTProto proxy (github.com/9seconds/mtg)
 )
 
 const (
 	TypeSelector = "selector"
 	TypeURLTest  = "urltest"
+)
+
+// Display names of a warp endpoint, and of a masque outbound to WARP, by tunnel. //H
+const (
+	DisplayWARPWireGuard = "WARP · WG"
+	DisplayWARPAWG       = "WARP · AWG"
+	DisplayWARPMASQUE    = "WARP · MASQUE"
+	DisplayWARPAuto      = "WARP · Auto" // auto mode, before it chose a tunnel
 )
 
 func ProxyDisplayName(proxyType string) string {
@@ -118,8 +138,20 @@ func ProxyDisplayName(proxyType string) string {
 		return "Hysteria2"
 	case TypeAnyTLS:
 		return "AnyTLS"
+	case TypeOpenConnect:
+		return "OpenConnect"
+	case TypeOpenVPNClient:
+		return "OpenVPN Client"
+	case TypeOpenVPNServer:
+		return "OpenVPN Server"
+	case TypeMASQUEClient:
+		return "MASQUE Client"
+	case TypeMASQUEServer:
+		return "MASQUE Server"
 	case TypeTailscale:
 		return "Tailscale"
+	case TypeTailcat:
+		return "Tailcat"
 	case TypeCloudflared:
 		return "Cloudflared"
 	case TypeWARP:
@@ -144,10 +176,24 @@ func ProxyDisplayName(proxyType string) string {
 		return "Awg"
 	case TypeBalancer:
 		return "Balancer"
+	case TypeFallback: //H
+		return "Fallback" //H
+	case TypeSudoku: //H
+		return "Sudoku" //H
+	case TypeBond: //H
+		return "Bond" //H
+	case TypeCall: //H
+		return "Call" //H
 	case TypeDNSTT:
 		return "DNSTT"
 	case TypeGooseRelay:
 		return "GooseRelay"
+	case TypeMasterDNS: //H
+		return "MasterDNS" //H
+	case TypeSoar: //H
+		return "Soar" //H
+	case TypeTrustTunnel:
+		return "TrustTunnel"
 	case TypeSelector:
 		return "Selector"
 	case TypeURLTest:
@@ -158,3 +204,5 @@ func ProxyDisplayName(proxyType string) string {
 }
 
 const DefaultBrowserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
+
+const URLTestModeFailover = "failover" //H: keep the selected member until it fails

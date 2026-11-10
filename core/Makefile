@@ -1,20 +1,21 @@
 NAME = sing-box
 COMMIT = $(shell git rev-parse --short HEAD)
-TAGS ?= with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,badlinkname,tfogo_checklinkname0,with_grpc,with_awg
+TAGS ?= with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_clash_api,badlinkname,tfogo_checklinkname0,with_grpc,with_awg,with_embedded_tor,with_openvpn,with_openconnect,with_masque,with_sudoku,with_call,with_bond,with_kcp,with_xdrive
+TAGS_TEST ?= $(TAGS)
 
 GOHOSTOS = $(shell go env GOHOSTOS)
 GOHOSTARCH = $(shell go env GOHOSTARCH)
-VERSION=$(shell CGO_ENABLED=0 GOOS=$(GOHOSTOS) GOARCH=$(GOHOSTARCH) go run github.com/spaiter/spaiter-vpn/core/cmd/internal/read_tag@latest)
+VERSION=$(shell CGO_ENABLED=0 GOOS=$(GOHOSTOS) GOARCH=$(GOHOSTARCH) go run github.com/sagernet/sing-box/cmd/internal/read_tag@latest)
 
 LDFLAGS_SHARED = $(shell cat release/LDFLAGS)
-PARAMS = -v -trimpath -ldflags "-X 'github.com/spaiter/spaiter-vpn/core/constant.Version=$(VERSION)' $(LDFLAGS_SHARED) -s -w -buildid="
+PARAMS = -v -trimpath -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=$(VERSION)' $(LDFLAGS_SHARED) -s -w -buildid="
 MAIN_PARAMS = $(PARAMS) -tags "$(TAGS)"
 MAIN = ./cmd/sing-box
 PREFIX ?= $(shell go env GOPATH)
 SING_FFI ?= sing-ffi
 LIBBOX_FFI_CONFIG ?= ./experimental/libbox/ffi.json
 
-.PHONY: test release docs build
+.PHONY: test release docs build schema
 
 build:
 	export GOTOOLCHAIN=local && \
@@ -31,6 +32,9 @@ ci_build:
 
 generate_completions:
 	go run -v --tags "$(TAGS),generate,generate_completions" $(MAIN)
+
+schema:
+	go run -ldflags "$(LDFLAGS_SHARED)" --tags "$(TAGS)" $(MAIN) schema -o docs/schema.json
 
 install:
 	go build -o $(PREFIX)/bin/$(NAME) $(MAIN_PARAMS) $(MAIN)
@@ -59,8 +63,7 @@ lint_install:
 
 proto:
 	@go run ./cmd/internal/protogen
-	@gofumpt -l -w .
-	@gofumpt -l -w .
+	@golangci-lint fmt
 
 proto_install:
 	go install -v google.golang.org/protobuf/cmd/protoc-gen-go@latest
@@ -90,6 +93,9 @@ release_install:
 
 update_android_version:
 	go run ./cmd/internal/update_android_version
+
+update_desktop_version:
+	go run ./cmd/internal/update_desktop_version
 
 build_android:
 	cd ../sing-box-for-android && ./gradlew :app:clean :app:assembleOtherRelease :app:assembleOtherLegacyRelease && ./gradlew --stop
@@ -126,6 +132,7 @@ build_ios_deb:
 
 upload_ios_deb:
 	ghr --replace --draft --prerelease "v${VERSION}" ../sing-box-for-apple/build/jailbreak/"SFI-${VERSION}-iphoneos-arm64.deb"
+	ghr --replace --draft --prerelease "v${VERSION}" ../sing-box-for-apple/build/jailbreak/"SFI-${VERSION}-iphoneos-arm64e.deb"
 
 release_ios: build_ios upload_ios_app_store
 
@@ -208,7 +215,7 @@ update_apple_version:
 	go run ./cmd/internal/update_apple_version
 
 update_macos_version:
-	MACOS_PROJECT_VERSION=$(shell go run -v ./cmd/internal/app_store_connect next_macos_project_version) go run ./cmd/internal/update_apple_version
+	MACOS_PROJECT_VERSION=$(shell go run ./cmd/internal/app_store_connect next_project_version macos) go run ./cmd/internal/update_apple_version
 
 release_apple: lib_apple update_apple_version release_ios release_macos release_tvos release_macos_standalone
 
@@ -217,11 +224,13 @@ release_apple_beta: update_apple_version release_ios release_macos release_tvos
 publish_testflight:
 	go run -v ./cmd/internal/app_store_connect publish_testflight $(filter-out $@,$(MAKECMDGOALS))
 
-prepare_app_store:
-	go run -v ./cmd/internal/app_store_connect prepare_app_store
+submit_app_store:
+	go run -v ./cmd/internal/app_store_connect submit_app_store $(filter-out $@,$(MAKECMDGOALS))
+
+release_app_store: release_ios release_tvos submit_app_store
 
 publish_app_store:
-	go run -v ./cmd/internal/app_store_connect publish_app_store
+	go run -v ./cmd/internal/app_store_connect publish_app_store $(filter-out $@,$(MAKECMDGOALS))
 
 test:
 	@go test -v ./... && \

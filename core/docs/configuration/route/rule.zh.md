@@ -2,6 +2,11 @@
 icon: material/new-box
 ---
 
+!!! quote "sing-box 1.15.0 中的更改"
+
+    :material-plus: [dns_server_address](#dns_server_address)  
+    :material-plus: [dns_search_domain](#dns_search_domain)
+
 !!! quote "sing-box 1.14.0 中的更改"
 
     :material-plus: [source_mac_address](#source_mac_address)  
@@ -166,6 +171,16 @@ icon: material/new-box
           "tailscale",
           "wireguard"
         ],
+        "dns_server_address": {
+          "local": [
+            "192.168.1.1/32"
+          ]
+        },
+        "dns_search_domain": {
+          "ts-dns": [
+            "example.ts.net"
+          ]
+        },
         "source_mac_address": [
           "00:11:22:33:44:55"
         ],
@@ -210,9 +225,9 @@ icon: material/new-box
     (`port` || `port_range`) &&  
     (`source_geoip` || `source_ip_cidr` || `source_ip_is_private`) &&  
     (`source_port` || `source_port_range`) &&  
-    `other fields`
+    `其他字段`
 
-    另外，引用规则集中的每个分支都可视为与外层规则合并，不同分支之间仍保持 OR 语义。
+    当规则集仅包含一条默认规则且非 invert 时，其中字段视为按以上规则与外层规则合并；否则，作为一条 `其他字段` 匹配；不同规则集之间始终保持 or。
 
 #### inbound
 
@@ -469,25 +484,35 @@ icon: material/new-box
 | `wireguard` | 匹配对端的 allowed IPs              |
 | `bridge`    | 匹配除本机本地地址外的所有地址，仅在[预匹配](/zh/configuration/shared/pre-match/)中 |
 
-#### source_mac_address
+#### dns_server_address
 
-!!! question "自 sing-box 1.14.0 起"
+!!! question "自 sing-box 1.15.0 起"
 
-!!! quote ""
+匹配指定 DNS 服务器的服务器地址。
 
-    仅支持 Linux、macOS，或在 Android 和 macOS 图形客户端中支持。参阅 [邻居解析](/configuration/shared/neighbor/) 了解设置方法。
+| 类型            | 匹配                               |
+|---------------|----------------------------------|
+| `local`       | 匹配系统 DNS 服务器                     |
+| `dhcp`        | 匹配通过 DHCP 获取的 DNS 服务器             |
+| `resolved`    | 匹配 systemd-resolved 链路中的 DNS 服务器  |
+| `tailscale`   | 匹配 tailnet 的 DNS 解析器              |
+| `openvpn`     | 匹配 VPN 服务器推送的 DNS 服务器             |
+| `openconnect` | 匹配 VPN 服务器推送的 DNS 服务器             |
 
-匹配源设备 MAC 地址。
+#### dns_search_domain
 
-#### source_hostname
+!!! question "自 sing-box 1.15.0 起"
 
-!!! question "自 sing-box 1.14.0 起"
+匹配指定 DNS 服务器的搜索域。
 
-!!! quote ""
-
-    仅支持 Linux、macOS，或在 Android 和 macOS 图形客户端中支持。参阅 [邻居解析](/configuration/shared/neighbor/) 了解设置方法。
-
-匹配源设备从 DHCP 租约获取的主机名。
+| 类型            | 匹配                            |
+|---------------|-------------------------------|
+| `local`       | 匹配系统搜索域                       |
+| `dhcp`        | 匹配通过 DHCP 获取的搜索域              |
+| `resolved`    | 匹配 systemd-resolved 链路中的搜索域    |
+| `tailscale`   | 匹配 tailnet 的搜索域                |
+| `openvpn`     | 匹配 VPN 服务器推送的搜索域              |
+| `openconnect` | 匹配 VPN 服务器推送的搜索域              |
 
 #### source_mac_address
 

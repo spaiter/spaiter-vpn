@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/sagernet/cors"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 
 	"golang.org/x/net/http2"
 	"google.golang.org/grpc"

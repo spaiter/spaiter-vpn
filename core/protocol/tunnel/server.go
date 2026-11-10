@@ -8,18 +8,18 @@ import (
 	"time"
 
 	"github.com/gofrs/uuid/v5"
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/endpoint"
+	"github.com/sagernet/sing-box/adapter/outbound"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/endpoint"
-	"github.com/spaiter/spaiter-vpn/core/adapter/outbound"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 func RegisterServerEndpoint(registry *endpoint.Registry) {
@@ -81,8 +81,8 @@ func NewServerEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 	return server, nil
 }
 
-func (s *ServerEndpoint) Start(stage adapter.StartStage) error {
-	return s.inbound.Start(stage)
+func (s *ServerEndpoint) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	return s.inbound.Start(stage, scope) // H: the inbound registers its own cleanup
 }
 
 func (s *ServerEndpoint) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
@@ -100,10 +100,10 @@ func (s *ServerEndpoint) DialContext(ctx context.Context, network string, destin
 			s.mtx.Lock()
 			var ok bool
 			ch, ok = s.conns[tunnelDestination]
+			s.mtx.Unlock() //H: was left locked when the user was not found
 			if !ok {
 				return nil, E.New("user ", metadata.TunnelDestination, " not found")
 			}
-			s.mtx.Unlock()
 		}
 		if metadata.TunnelSource != "" {
 			tunnelSource, err := uuid.FromString(metadata.TunnelSource)
@@ -183,14 +183,14 @@ func (s *ServerEndpoint) connHandler(ctx context.Context, conn net.Conn, metadat
 		if sourceUUID == request.DestinationUUID {
 			return E.New("routing loop on ", sourceUUID)
 		}
-		s.mtx.Lock()
 		if request.DestinationUUID != s.uuid {
-			_, ok = s.keys[request.DestinationUUID]
+			s.mtx.Lock()                            //H: was left locked when the user was not found
+			_, ok = s.keys[request.DestinationUUID] //H
+			s.mtx.Unlock()                          //H
 			if !ok {
-				return E.New("user ", sourceUUID, " not found")
+				return E.New("user ", request.DestinationUUID, " not found") //H: named the source user
 			}
 		}
-		s.mtx.Unlock()
 		metadata.Inbound = s.Tag()
 		metadata.InboundType = C.TypeTunnelServer
 		metadata.Destination = request.Destination

@@ -5,9 +5,9 @@ import (
 	"net"
 	"sync"
 
-	"github.com/spaiter/spaiter-vpn/core/common/xray"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/errors"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/stats"
+	"github.com/sagernet/sing-box/common/xray"
+	"github.com/sagernet/sing-box/common/xray/errors"
+	"github.com/sagernet/sing-box/common/xray/stats"
 )
 
 // BufferToBytesWriter is a Writer that writes alloc.Buffer into underlying writer.
@@ -118,7 +118,7 @@ func (w *BufferedWriter) Write(b []byte) (int, error) {
 
 		nBytes, err := w.buffer.Write(b)
 		totalBytes += nBytes
-		if err != nil {
+		if err != nil && err != ErrBufferFull { // a full buffer is flushed below
 			return totalBytes, err
 		}
 		if !w.buffered || w.buffer.IsFull() {

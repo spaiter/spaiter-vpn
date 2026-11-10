@@ -11,22 +11,26 @@ import (
 
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
+	"github.com/sagernet/sing-box"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/include"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/bufio"
 	"github.com/sagernet/sing/common/debug"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/protocol/socks"
-	"github.com/spaiter/spaiter-vpn/core"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/include"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {
-	goleak.VerifyTestMain(m)
+	goleak.VerifyTestMain(m,
+		// kcp-go (via dnstt -> vaydns) starts its global scheduler at package init.
+		goleak.IgnoreTopFunction("github.com/xtaci/kcp-go/v5.(*TimedSched).sched"),   //H
+		goleak.IgnoreTopFunction("github.com/xtaci/kcp-go/v5.(*TimedSched).prepend"), //H
+	)
 }
 
 var globalCtx context.Context

@@ -5,8 +5,8 @@ import (
 	"net/netip"
 	"sync"
 
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing/common/logger"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 )
 
 type platformNeighborResolver struct {

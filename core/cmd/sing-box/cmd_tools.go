@@ -4,9 +4,10 @@ import (
 	"errors"
 	"os"
 
+	"github.com/sagernet/sing-box"
 	E "github.com/sagernet/sing/common/exceptions"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core"
+	"github.com/sagernet/sing/service"
 
 	"github.com/spf13/cobra"
 )
@@ -30,7 +31,7 @@ func createPreStartedClient() (*box.Box, error) {
 			return nil, err
 		}
 	}
-	instance, err := box.New(box.Options{Context: globalCtx, Options: options})
+	instance, err := box.New(box.Options{Context: service.ExtendContext(globalCtx), Options: options})
 	if err != nil {
 		return nil, E.Cause(err, "create service")
 	}

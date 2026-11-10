@@ -5,10 +5,10 @@ package httpclient
 import (
 	"time"
 
+	"github.com/sagernet/sing-box/common/tls"
+	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 func newHTTP3FallbackTransport(

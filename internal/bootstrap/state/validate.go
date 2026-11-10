@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	C "github.com/spaiter/spaiter-vpn/core/constant"
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/spaiter/spaiter-vpn/internal/profile"
 )
 

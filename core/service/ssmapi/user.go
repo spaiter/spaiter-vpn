@@ -3,8 +3,8 @@ package ssmapi
 import (
 	"sync"
 
+	"github.com/sagernet/sing-box/adapter"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 )
 
 type UserManager struct {

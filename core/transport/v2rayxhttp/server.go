@@ -16,6 +16,12 @@ import (
 
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/tls"
+	"github.com/sagernet/sing-box/common/xray/signal/done"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	qtls "github.com/sagernet/sing-quic"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/logger"
@@ -23,12 +29,6 @@ import (
 	N "github.com/sagernet/sing/common/network"
 	aTLS "github.com/sagernet/sing/common/tls"
 	sHttp "github.com/sagernet/sing/protocol/http"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/signal/done"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 var _ adapter.V2RayServerTransport = (*Server)(nil)

@@ -3,10 +3,10 @@
 package netns
 
 import (
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 type Manager struct{}
@@ -22,11 +22,7 @@ func (m *Manager) Name() string {
 	return "netns"
 }
 
-func (m *Manager) Start(stage adapter.StartStage) error {
-	return nil
-}
-
-func (m *Manager) Close() error {
+func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	return nil
 }
 

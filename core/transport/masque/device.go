@@ -8,7 +8,7 @@ import (
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/logger"
 	N "github.com/sagernet/sing/common/network"
-	wgTun "github.com/spaiter/spaiter-vpn/core/thirdparty/wireguard-go/tun"
+	wgTun "github.com/sagernet/wireguard-go/tun"
 )
 
 type Device interface {

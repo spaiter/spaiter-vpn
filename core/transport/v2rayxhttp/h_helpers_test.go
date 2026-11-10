@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sagernet/sing-box/common/xray/buf"
+	Xbadoption "github.com/sagernet/sing-box/common/xray/json/badoption"
+	"github.com/sagernet/sing-box/common/xray/pipe"
+	"github.com/sagernet/sing-box/option"
 	M "github.com/sagernet/sing/common/metadata"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/buf"
-	Xbadoption "github.com/spaiter/spaiter-vpn/core/common/xray/json/badoption"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/pipe"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"github.com/stretchr/testify/require"
 	"golang.org/x/net/http2/hpack"

@@ -1,9 +1,9 @@
 package hysteria2
 
 import (
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 // userName resolves an authenticated user index to a display name, bounds-

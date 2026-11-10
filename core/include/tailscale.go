@@ -3,12 +3,12 @@
 package include
 
 import (
-	"github.com/spaiter/spaiter-vpn/core/adapter/certificate"
-	"github.com/spaiter/spaiter-vpn/core/adapter/endpoint"
-	"github.com/spaiter/spaiter-vpn/core/adapter/service"
-	"github.com/spaiter/spaiter-vpn/core/dns"
-	"github.com/spaiter/spaiter-vpn/core/protocol/tailscale"
-	"github.com/spaiter/spaiter-vpn/core/service/derp"
+	"github.com/sagernet/sing-box/adapter/certificate"
+	"github.com/sagernet/sing-box/adapter/endpoint"
+	"github.com/sagernet/sing-box/adapter/service"
+	"github.com/sagernet/sing-box/dns"
+	"github.com/sagernet/sing-box/protocol/tailscale"
+	"github.com/sagernet/sing-box/service/derp"
 )
 
 func registerTailscaleEndpoint(registry *endpoint.Registry) {

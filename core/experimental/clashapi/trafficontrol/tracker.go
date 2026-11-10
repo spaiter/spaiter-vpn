@@ -6,13 +6,13 @@ import (
 	"time"
 
 	"github.com/gofrs/uuid/v5"
+	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/bufio"
 	F "github.com/sagernet/sing/common/format"
 	"github.com/sagernet/sing/common/json"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
 )
 
 type TrackerMetadata struct {
@@ -43,10 +43,10 @@ func (t TrackerMetadata) MarshalJSON() ([]byte, error) {
 	}
 	var processPath string
 	if t.Metadata.ProcessInfo != nil {
-		if t.Metadata.ProcessInfo.ProcessPath != "" {
-			processPath = t.Metadata.ProcessInfo.ProcessPath
-		} else if len(t.Metadata.ProcessInfo.AndroidPackageNames) > 0 {
-			processPath = t.Metadata.ProcessInfo.AndroidPackageNames[0]
+		if len(t.Metadata.ProcessInfo.ProcessPaths) > 0 {
+			processPath = t.Metadata.ProcessInfo.ProcessPaths[0]
+		} else if len(t.Metadata.ProcessInfo.PackageNames) > 0 {
+			processPath = t.Metadata.ProcessInfo.PackageNames[0]
 		}
 		if processPath == "" {
 			if t.Metadata.ProcessInfo.UserId != -1 {
@@ -86,7 +86,7 @@ func (t TrackerMetadata) MarshalJSON() ([]byte, error) {
 		"upload":      t.Upload.Load(),
 		"download":    t.Download.Load(),
 		"start":       t.CreatedAt,
-		"chains":      t.Chain,
+		"chains":      chains, //H: the balancer chain built above was not used
 		"rule":        rule,
 		"rulePayload": "",
 	})
@@ -151,7 +151,11 @@ func NewTCPTracker(conn net.Conn, manager *Manager, metadata adapter.InboundCont
 		if !isGroup {
 			break
 		}
-		next = group.Now()
+		selected := group.Selected(N.NetworkTCP)
+		if selected == nil {
+			break
+		}
+		next = selected.Tag()
 	}
 	upload := new(atomic.Int64)
 	download := new(atomic.Int64)
@@ -242,7 +246,11 @@ func NewUDPTracker(conn N.PacketConn, manager *Manager, metadata adapter.Inbound
 		if !isGroup {
 			break
 		}
-		next = group.Now()
+		selected := group.Selected(N.NetworkUDP)
+		if selected == nil {
+			break
+		}
+		next = selected.Tag()
 	}
 	upload := new(atomic.Int64)
 	download := new(atomic.Int64)

@@ -5,8 +5,8 @@ package libbox
 import (
 	"net/netip"
 
+	"github.com/sagernet/sing-box/protocol/bridge"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/protocol/bridge"
 )
 
 func NewBridgeService(options *BridgeOptions) (BridgeSession, error) {

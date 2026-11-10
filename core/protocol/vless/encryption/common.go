@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sagernet/sing-box/common/xray/crypto"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/crypto"
 	"golang.org/x/crypto/chacha20poly1305"
 	"lukechampine.com/blake3"
 )

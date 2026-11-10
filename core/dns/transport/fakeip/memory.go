@@ -4,8 +4,8 @@ import (
 	"net/netip"
 	"sync"
 
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing/common/logger"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 )
 
 var _ adapter.FakeIPStorage = (*MemoryStorage)(nil)
@@ -32,9 +32,6 @@ func (s *MemoryStorage) FakeIPMetadata() *adapter.FakeIPMetadata {
 
 func (s *MemoryStorage) FakeIPSaveMetadata(metadata *adapter.FakeIPMetadata) error {
 	return nil
-}
-
-func (s *MemoryStorage) FakeIPSaveMetadataAsync(metadata *adapter.FakeIPMetadata) {
 }
 
 func (s *MemoryStorage) FakeIPStore(address netip.Addr, domain string) error {

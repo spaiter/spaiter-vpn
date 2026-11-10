@@ -1,8 +1,8 @@
 package hysteria
 
 import (
+	"github.com/sagernet/sing-box/option"
 	qtls "github.com/sagernet/sing-quic"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 func buildBaseQUICOptions(options option.QUICOptions) qtls.QUICOptions {

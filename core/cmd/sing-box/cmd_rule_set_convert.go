@@ -5,12 +5,12 @@ import (
 	"os"
 	"strings"
 
+	"github.com/sagernet/sing-box/common/convertor/adguard"
+	"github.com/sagernet/sing-box/common/srs"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/common/convertor/adguard"
-	"github.com/spaiter/spaiter-vpn/core/common/srs"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"github.com/spf13/cobra"
 )

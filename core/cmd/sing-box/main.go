@@ -2,7 +2,7 @@
 
 package main
 
-import "github.com/spaiter/spaiter-vpn/core/log"
+import "github.com/sagernet/sing-box/log"
 
 func main() {
 	if err := mainCommand.Execute(); err != nil {

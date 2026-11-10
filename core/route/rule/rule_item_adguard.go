@@ -3,8 +3,8 @@ package rule
 import (
 	"strings"
 
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing/common/domain"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 )
 
 var _ RuleItem = (*AdGuardDomainItem)(nil)

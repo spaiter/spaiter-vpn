@@ -4,8 +4,8 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/json"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"github.com/go-chi/render"
 )

@@ -8,17 +8,17 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"net"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/dns"
+	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	aTLS "github.com/sagernet/sing/common/tls"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/dns"
-	"github.com/spaiter/spaiter-vpn/core/option"
+	"github.com/sagernet/sing/service/filemanager"
 
 	mDNS "github.com/miekg/dns"
 	"golang.org/x/crypto/cryptobyte"
@@ -29,7 +29,7 @@ func parseECHClientConfig(ctx context.Context, clientConfig ECHCapableConfig, op
 	if len(options.ECH.Config) > 0 {
 		echConfig = []byte(strings.Join(options.ECH.Config, "\n"))
 	} else if options.ECH.ConfigPath != "" {
-		content, err := os.ReadFile(options.ECH.ConfigPath)
+		content, err := filemanager.ReadFile(ctx, options.ECH.ConfigPath)
 		if err != nil {
 			return nil, E.Cause(err, "read ECH config")
 		}
@@ -60,7 +60,7 @@ func parseECHServerConfig(ctx context.Context, options option.InboundTLSOptions,
 	if len(options.ECH.Key) > 0 {
 		echKey = []byte(strings.Join(options.ECH.Key, "\n"))
 	} else if options.ECH.KeyPath != "" {
-		content, err := os.ReadFile(options.ECH.KeyPath)
+		content, err := filemanager.ReadFile(ctx, options.ECH.KeyPath)
 		if err != nil {
 			return E.Cause(err, "read ECH keys")
 		}
@@ -128,55 +128,70 @@ func (s *ECHClientConfig) ClientHandshake(ctx context.Context, conn net.Conn) (a
 }
 
 func (s *ECHClientConfig) fetchAndHandshake(ctx context.Context, conn net.Conn) (aTLS.Conn, error) {
+	if err := s.FetchConfig(ctx); err != nil {
+		return nil, err
+	}
+	return s.Client(conn)
+}
+
+// FetchConfig resolves the ECH config list now. Protocols that hand a cloned *tls.Config to
+// another stack (MASQUE over http2/quic-go) call Client()/STDConfig() and never reach
+// ClientHandshake, so waiting for the first handshake would leave ECH unset. //H
+func (s *ECHClientConfig) FetchConfig(ctx context.Context) error {
 	s.access.Lock()
 	defer s.access.Unlock()
-	if len(s.ECHConfigList()) == 0 || s.lastTTL == 0 || time.Since(s.lastUpdate) > s.lastTTL {
-		queryServerName := s.queryServerName
-		if queryServerName == "" {
-			queryServerName = s.ServerName()
-		}
-		message := &mDNS.Msg{
-			MsgHdr: mDNS.MsgHdr{
-				RecursionDesired: true,
+	return s.fetchConfigLocked(ctx)
+}
+
+func (s *ECHClientConfig) fetchConfigLocked(ctx context.Context) error {
+	if len(s.ECHConfigList()) > 0 && s.lastTTL != 0 && time.Since(s.lastUpdate) <= s.lastTTL {
+		return nil
+	}
+	queryServerName := s.queryServerName
+	if queryServerName == "" {
+		queryServerName = s.ServerName()
+	}
+	message := &mDNS.Msg{
+		MsgHdr: mDNS.MsgHdr{
+			RecursionDesired: true,
+		},
+		Question: []mDNS.Question{
+			{
+				Name:   mDNS.Fqdn(queryServerName),
+				Qtype:  mDNS.TypeHTTPS,
+				Qclass: mDNS.ClassINET,
 			},
-			Question: []mDNS.Question{
-				{
-					Name:   mDNS.Fqdn(queryServerName),
-					Qtype:  mDNS.TypeHTTPS,
-					Qclass: mDNS.ClassINET,
-				},
-			},
-		}
-		response, err := s.dnsRouter.Exchange(ctx, message, adapter.DNSQueryOptions{})
-		if err != nil {
-			return nil, E.Cause(err, "fetch ECH config list")
-		}
-		if response.Rcode != mDNS.RcodeSuccess {
-			return nil, E.Cause(dns.RcodeError(response.Rcode), "fetch ECH config list")
-		}
-	match:
-		for _, rr := range response.Answer {
-			switch resource := rr.(type) {
-			case *mDNS.HTTPS:
-				for _, value := range resource.Value {
-					if value.Key().String() == "ech" {
-						echConfigList, err := base64.StdEncoding.DecodeString(value.String())
-						if err != nil {
-							return nil, E.Cause(err, "decode ECH config")
-						}
-						s.lastTTL = time.Duration(rr.Header().Ttl) * time.Second
-						s.lastUpdate = time.Now()
-						s.SetECHConfigList(echConfigList)
-						break match
+		},
+	}
+	response, err := s.dnsRouter.Exchange(ctx, message, adapter.DNSQueryOptions{})
+	if err != nil {
+		return E.Cause(err, "fetch ECH config list")
+	}
+	if response.Rcode != mDNS.RcodeSuccess {
+		return E.Cause(dns.RcodeError(response.Rcode), "fetch ECH config list")
+	}
+match:
+	for _, rr := range response.Answer {
+		switch resource := rr.(type) {
+		case *mDNS.HTTPS:
+			for _, value := range resource.Value {
+				if value.Key().String() == "ech" {
+					echConfigList, err := base64.StdEncoding.DecodeString(value.String())
+					if err != nil {
+						return E.Cause(err, "decode ECH config")
 					}
+					s.lastTTL = time.Duration(rr.Header().Ttl) * time.Second
+					s.lastUpdate = time.Now()
+					s.SetECHConfigList(echConfigList)
+					break match
 				}
 			}
 		}
-		if len(s.ECHConfigList()) == 0 {
-			return nil, E.New("no ECH config found in DNS records")
-		}
 	}
-	return s.Client(conn)
+	if len(s.ECHConfigList()) == 0 {
+		return E.New("no ECH config found in DNS records")
+	}
+	return nil
 }
 
 func (s *ECHClientConfig) Clone() Config {

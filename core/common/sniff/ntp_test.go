@@ -6,9 +6,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/sniff"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/sniff"
+	C "github.com/sagernet/sing-box/constant"
 
 	"github.com/stretchr/testify/require"
 )

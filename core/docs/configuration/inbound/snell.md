@@ -1,3 +1,9 @@
+---
+icon: material/new-box
+---
+
+!!! question "Since sing-box 1.14.0"
+
 ### Structure
 
 ```json
@@ -7,14 +13,19 @@
 
   ... // Listen Fields
 
-  "psk": "my-pre-shared-key",
-  "version": 4,
-  "obfs_mode": "",
-  "obfs_host": ""
+  "version": 5,
+  "psk": "password",
+  "users": [
+    {
+      "name": "sekai",
+      "userkey": "user-password"
+    }
+  ],
+  "obfs_mode": ""
 }
 ```
 
-### Multi-User Structure
+### Version 6 Structure
 
 ```json
 {
@@ -23,19 +34,15 @@
 
   ... // Listen Fields
 
+  "version": 6,
+  "psk": "password",
   "users": [
     {
-      "name": "alice",
-      "psk": "alice-pre-shared-key"
-    },
-    {
-      "name": "bob",
-      "psk": "bob-pre-shared-key"
+      "name": "sekai",
+      "userkey": "user-password"
     }
   ],
-  "version": 4,
-  "obfs_mode": "",
-  "obfs_host": ""
+  "mode": ""
 }
 ```
 
@@ -45,43 +52,45 @@ See [Listen Fields](/configuration/shared/listen/) for details.
 
 ### Fields
 
+#### version
+
+==Required==
+
+The Snell protocol version, one of `5` `6`.
+
+Version `5` supports HTTP obfuscation (`obfs_mode`); version `6` replaces it
+with traffic shaping (`mode`) and requires a `psk` of 12 to 255 bytes.
+
+!!! note
+
+    Since we intentionally do not support the QUIC proxy mode of Snell v5, the v5 wire protocol
+    is effectively identical to v4, so no separate v4 server or v5 client is provided.
+
 #### psk
 
-==Required if `users` is not set==
+==Required==
 
-The pre-shared key for single-user authentication. Mutually exclusive with `users`.
+The pre-shared key.
 
 #### users
 
-==Required if `psk` is not set==
+Snell users.
 
-User list for multi-user mode. Each entry has a `name` and a `psk`. Mutually exclusive with `psk`.
-
-The matched user name is available to routing rules via `auth_user`.
-
-#### version
-
-Snell protocol version. Must be `4` or `5`.
-
-Defaults to `4`.
-
-!!! note "QUIC Proxy Mode (v5)"
-    When `version` is `5`, the server automatically accepts QUIC traffic on the
-    same port. The destination address and the first QUIC Initial packet are
-    encrypted by Snell; subsequent packets are forwarded as-is (QUIC provides
-    its own encryption). No additional configuration is required.
+When set, the server runs in multi-user mode: each entry has a `name` (optional, used in
+logs) and a `userkey` (the user's key).
 
 #### obfs_mode
 
-Simple-obfs obfuscation mode.
+==Version 5 only==
 
-One of `http` `tls`, or empty to disable.
+HTTP obfuscation mode, one of `none` `http`.
 
-!!! warning
-    TLS obfuscation is not supported for v4/v5. Use [ShadowTLS](/configuration/inbound/shadowtls/) instead.
+`none` is used by default.
 
-#### obfs_host
+#### mode
 
-The obfuscation hostname used for HTTP/TLS obfuscation.
+==Version 6 only==
 
-Defaults to `bing.com` if not set.
+Traffic shaping mode, one of `default` `unshaped` `unsafe-raw`.
+
+`default` is used by default.

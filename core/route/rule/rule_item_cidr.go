@@ -2,10 +2,13 @@ package rule
 
 import (
 	"net/netip"
+	"slices"
 	"strings"
 
-	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/ipset"
+	"github.com/sagernet/sing/common"
+	"github.com/sagernet/sing/common/json/badoption"
 
 	"go4.org/netipx"
 )
@@ -13,25 +16,15 @@ import (
 var _ RuleItem = (*IPCIDRItem)(nil)
 
 type IPCIDRItem struct {
-	ipSet       *netipx.IPSet
+	ipSet       *ipset.Set
 	isSource    bool
 	description string
 }
 
-func NewIPCIDRItem(isSource bool, prefixStrings []string) (*IPCIDRItem, error) {
+func NewIPCIDRItem(isSource bool, prefixables []*badoption.Prefixable) (*IPCIDRItem, error) {
 	var builder netipx.IPSetBuilder
-	for i, prefixString := range prefixStrings {
-		prefix, err := netip.ParsePrefix(prefixString)
-		if err == nil {
-			builder.AddPrefix(prefix)
-			continue
-		}
-		addr, addrErr := netip.ParseAddr(prefixString)
-		if addrErr == nil {
-			builder.Add(addr)
-			continue
-		}
-		return nil, E.Cause(err, "parse [", i, "]")
+	for _, prefixable := range prefixables {
+		builder.AddPrefix(prefixable.Build(netip.Prefix{}))
 	}
 	var description string
 	if isSource {
@@ -39,25 +32,28 @@ func NewIPCIDRItem(isSource bool, prefixStrings []string) (*IPCIDRItem, error) {
 	} else {
 		description = "ip_cidr="
 	}
-	if dLen := len(prefixStrings); dLen == 1 {
-		description += prefixStrings[0]
-	} else if dLen > 3 {
-		description += "[" + strings.Join(prefixStrings[:3], " ") + "...]"
+	prefixString := func(it *badoption.Prefixable) string {
+		return it.Build(netip.Prefix{}).String()
+	}
+	if prefixCount := len(prefixables); prefixCount == 1 {
+		description += prefixString(prefixables[0])
+	} else if prefixCount > 3 {
+		description += "[" + strings.Join(common.Map(prefixables[:3], prefixString), " ") + "...]"
 	} else {
-		description += "[" + strings.Join(prefixStrings, " ") + "]"
+		description += "[" + strings.Join(common.Map(prefixables, prefixString), " ") + "]"
 	}
 	ipSet, err := builder.IPSet()
 	if err != nil {
 		return nil, err
 	}
 	return &IPCIDRItem{
-		ipSet:       ipSet,
+		ipSet:       ipset.FromIPSet(ipSet),
 		isSource:    isSource,
 		description: description,
 	}, nil
 }
 
-func NewRawIPCIDRItem(isSource bool, ipSet *netipx.IPSet) *IPCIDRItem {
+func NewRawIPCIDRItem(isSource bool, ipSet *ipset.Set) *IPCIDRItem {
 	var description string
 	if isSource {
 		description = "source_ip_cidr="
@@ -83,24 +79,13 @@ func (r *IPCIDRItem) Match(metadata *adapter.InboundContext) bool {
 			// does not expose any address answers for matching.
 			return metadata.IPCIDRAcceptEmpty
 		}
-		for _, address := range addresses {
-			if r.ipSet.Contains(address) {
-				return true
-			}
-		}
-		return false
+		return slices.ContainsFunc(addresses, r.ipSet.Contains)
 	}
 	if metadata.Destination.IsIP() {
 		return r.ipSet.Contains(metadata.Destination.Addr)
 	}
-	addresses := metadata.DestinationAddresses
-	if len(addresses) > 0 {
-		for _, address := range addresses {
-			if r.ipSet.Contains(address) {
-				return true
-			}
-		}
-		return false
+	if len(metadata.DestinationAddresses) > 0 {
+		return common.Any(metadata.DestinationAddresses, r.ipSet.Contains)
 	}
 	return metadata.IPCIDRAcceptEmpty
 }

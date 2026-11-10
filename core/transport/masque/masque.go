@@ -10,13 +10,14 @@ import (
 	"net/netip"
 	"strings"
 
+	connectip "github.com/Diniboy1123/connect-ip-go"
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
 	qtls "github.com/sagernet/sing-quic"
+	"github.com/sagernet/sing/common/bufio"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	aTLS "github.com/sagernet/sing/common/tls"
-	connectip "github.com/spaiter/spaiter-vpn/core/thirdparty/connect-ip-go"
 	"github.com/yosida95/uritemplate/v3"
 	"golang.org/x/net/http2"
 )
@@ -60,13 +61,20 @@ func ConnectTunnel(ctx context.Context, dialer N.Dialer, tlsConfig aTLS.Config, 
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
+	udpConn = WholePacketConn(udpConn) //H: a full QUIC packet was cut off through Shadowsocks
 	conn, err := qtls.Dial(
 		ctx,
-		udpConn,
-		quicEndpoint,
+		bufio.NewBindPacketConn(udpConn, quicEndpoint),
 		tlsConfig,
 		quicConfig,
 	)
+	var rejection *tls.ECHRejectionError //H: as in newHTTP2Client, once without ECH when the peer rejects it
+	if errors.As(err, &rejection) {
+		if capable, ok := tlsConfig.(interface{ SetECHConfigList([]byte) }); ok {
+			capable.SetECHConfigList(nil)
+		}
+		conn, err = qtls.Dial(ctx, bufio.NewBindPacketConn(udpConn, quicEndpoint), tlsConfig, quicConfig)
+	}
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -120,22 +128,36 @@ func newHTTP2Client(dialer N.Dialer, baseTLSConfig aTLS.Config, endpoint *net.TC
 	}
 	tlsConfig := baseTLSConfig.Clone()
 	tlsConfig.SetNextProtos([]string{"h2"})
+	dialTLS := func(ctx context.Context) (net.Conn, error) {
+		conn, err := dialer.DialContext(ctx, "tcp", M.SocksaddrFromNetIP(endpoint.AddrPort()))
+		if err != nil {
+			return nil, err
+		}
+		tlsConn, err := tlsConfig.Client(conn)
+		if err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+		if err = tlsConn.HandshakeContext(ctx); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+		return tlsConn, nil
+	}
 	return &http.Client{
 		Transport: &http2.Transport{
 			DialTLSContext: func(ctx context.Context, network, _ string, _ *tls.Config) (net.Conn, error) {
-				conn, err := dialer.DialContext(ctx, network, M.SocksaddrFromNetIP(endpoint.AddrPort()))
-				if err != nil {
-					return nil, err
+				conn, err := dialTLS(ctx)
+				var rejection *tls.ECHRejectionError
+				if errors.As(err, &rejection) {
+					// The peer does not accept the offered ECH config (WARP does not). Drop it and
+					// retry once rather than failing the tunnel. //H
+					if capable, ok := tlsConfig.(interface{ SetECHConfigList([]byte) }); ok {
+						capable.SetECHConfigList(nil)
+					}
+					return dialTLS(ctx)
 				}
-				tlsConn, err := tlsConfig.Client(conn)
-				if err != nil {
-					return nil, err
-				}
-				if err := tlsConn.HandshakeContext(ctx); err != nil {
-					_ = conn.Close()
-					return nil, err
-				}
-				return tlsConn, nil
+				return conn, err
 			},
 		},
 	}, nil

@@ -5,12 +5,12 @@ import (
 	"net"
 	"net/netip"
 
+	"github.com/sagernet/sing-box/adapter"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/uot"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 )
 
 var _ adapter.ConnectionRouterEx = (*Router)(nil)

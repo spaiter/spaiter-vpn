@@ -7,11 +7,11 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/experimental/clashapi/trafficontrol"
 	"github.com/sagernet/sing/common/json"
 	"github.com/sagernet/ws"
 	"github.com/sagernet/ws/wsutil"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/experimental/clashapi/trafficontrol"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/render"
@@ -21,7 +21,7 @@ import (
 func connectionRouter(ctx context.Context, network adapter.NetworkManager, trafficManager *trafficontrol.Manager) http.Handler {
 	r := chi.NewRouter()
 	r.Get("/", getConnections(ctx, trafficManager))
-	r.Delete("/", closeAllConnections(network, trafficManager))
+	r.Delete("/", closeAllConnections(ctx, network, trafficManager))
 	r.Delete("/{id}", closeConnection(trafficManager))
 	return r
 }
@@ -96,13 +96,13 @@ func closeConnection(trafficManager *trafficontrol.Manager) func(w http.Response
 	}
 }
 
-func closeAllConnections(network adapter.NetworkManager, trafficManager *trafficontrol.Manager) func(w http.ResponseWriter, r *http.Request) {
+func closeAllConnections(ctx context.Context, network adapter.NetworkManager, trafficManager *trafficontrol.Manager) func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		snapshot := trafficManager.Snapshot()
 		for _, c := range snapshot.Connections {
 			c.Close()
 		}
-		network.ResetNetwork()
+		network.ResetNetwork(ctx)
 		render.NoContent(w, r)
 	}
 }

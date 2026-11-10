@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
+	C "github.com/sagernet/sing-box/constant"
 	N "github.com/sagernet/sing/common/network"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
 
 	"golang.org/x/net/publicsuffix"
 )
@@ -41,7 +41,7 @@ func NewConn(conn net.Conn, ctx context.Context, splitPacket bool, splitRecord b
 }
 
 func (c *Conn) Write(b []byte) (n int, err error) {
-	if !c.firstPacketWritten {
+	if !c.firstPacketWritten && len(b) > 0 {
 		defer func() {
 			c.firstPacketWritten = true
 		}()

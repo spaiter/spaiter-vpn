@@ -5,9 +5,9 @@ import (
 	"os/user"
 	"syscall"
 
+	"github.com/sagernet/sing-box/common/process"
 	E "github.com/sagernet/sing/common/exceptions"
 	F "github.com/sagernet/sing/common/format"
-	"github.com/spaiter/spaiter-vpn/core/common/process"
 )
 
 func FindConnectionOwner(ipProtocol int32, sourceAddress string, sourcePort int32, destinationAddress string, destinationPort int32) (*ConnectionOwner, error) {
@@ -33,8 +33,11 @@ func FindConnectionOwner(ipProtocol int32, sourceAddress string, sourcePort int3
 		return nil, err
 	}
 	result := &ConnectionOwner{
-		UserId:      owner.UserId,
-		ProcessPath: owner.ProcessPath,
+		UserId:       owner.UserId,
+		processPaths: owner.ProcessPaths,
+	}
+	if len(owner.ProcessPaths) > 0 {
+		result.ProcessPath = owner.ProcessPaths[0]
 	}
 	if owner.UserId != -1 && owner.UserName == "" {
 		osUser, _ := user.LookupId(F.ToString(owner.UserId))

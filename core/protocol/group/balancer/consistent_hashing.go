@@ -1,13 +1,12 @@
 package balancer
 
 import (
-	"math"
 	"sync"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/option"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/contrab/maphash"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 type ConsistentHashing struct {
@@ -18,6 +17,7 @@ type ConsistentHashing struct {
 	maxAcceptableDelay   map[string]uint16
 	mu                   sync.Mutex
 	delayAcceptableRatio float64
+	alive                map[string]string
 }
 
 func NewConsistentHashing(outbounds []adapter.Outbound, options option.BalancerOutboundOptions) *ConsistentHashing {
@@ -27,7 +27,7 @@ func NewConsistentHashing(outbounds []adapter.Outbound, options option.BalancerO
 		outbounds:            cOutbounds,
 		hash:                 maphash.NewHasher[string](),
 		maxRetry:             options.MaxRetry,
-		delayAcceptableRatio: options.DelayAcceptableRatio,
+		delayAcceptableRatio: acceptableRatio(options),
 	}
 }
 
@@ -41,14 +41,16 @@ func (s *ConsistentHashing) UpdateOutboundsInfo(history map[string]*adapter.URLT
 	delayMap := getDelayMap(history)
 	res := map[string]uint16{}
 	for net, d := range minDelay {
-		acceptableDelay := uint16(math.Max(100, float64(d)) * s.delayAcceptableRatio)
-		res[net] = acceptableDelay
+		res[net] = getMaxAcceptableDelay(d, s.delayAcceptableRatio)
 	}
+	alive := aliveSet(s.outbounds, delayMap, res)
 	s.mu.Lock()
+	changed := aliveSetChanged(s.alive, alive) // not every update: interrupt_exist_connections would close all connections each time
 	s.delays = delayMap
 	s.maxAcceptableDelay = res
+	s.alive = alive
 	s.mu.Unlock()
-	return true
+	return changed
 }
 func (g *ConsistentHashing) Select(metadata adapter.InboundContext, net string, touch bool) adapter.Outbound {
 	g.mu.Lock()

@@ -5,10 +5,10 @@ import (
 	"os"
 	"testing"
 
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/json/badoption"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"github.com/gofrs/uuid/v5"
 	"github.com/spyzhov/ajson"

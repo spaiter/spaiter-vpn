@@ -3,8 +3,8 @@
 package include
 
 import (
-	"github.com/spaiter/spaiter-vpn/core/adapter/endpoint"
-	"github.com/spaiter/spaiter-vpn/core/protocol/wireguard"
+	"github.com/sagernet/sing-box/adapter/endpoint"
+	"github.com/sagernet/sing-box/protocol/wireguard"
 )
 
 func registerWireGuardEndpoint(registry *endpoint.Registry) {

@@ -1,7 +1,7 @@
 package libbox
 
 import (
-	"github.com/spaiter/spaiter-vpn/core/experimental/deprecated"
+	"github.com/sagernet/sing-box/experimental/deprecated"
 )
 
 var _ = deprecated.Note(DeprecatedNote{})

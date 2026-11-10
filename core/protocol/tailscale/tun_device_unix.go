@@ -1,4 +1,4 @@
-//go:build with_gvisor && !windows
+//go:build with_tailscale && !windows
 
 package tailscale
 
@@ -12,7 +12,7 @@ import (
 
 	singTun "github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/logger"
-	wgTun "github.com/spaiter/spaiter-vpn/core/thirdparty/wireguard-go/tun"
+	wgTun "github.com/sagernet/wireguard-go/tun"
 )
 
 type tunDeviceAdapter struct {

@@ -4,11 +4,11 @@ import (
 	"net/netip"
 	"strings"
 
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/control"
 	"github.com/sagernet/sing/common/json/badjson"
 	"github.com/sagernet/sing/common/json/badoption"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 )
 
 var _ RuleItem = (*InterfaceAddressItem)(nil)

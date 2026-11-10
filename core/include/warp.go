@@ -3,8 +3,8 @@
 package include
 
 import (
-	"github.com/spaiter/spaiter-vpn/core/adapter/endpoint"
-	"github.com/spaiter/spaiter-vpn/core/protocol/warp"
+	"github.com/sagernet/sing-box/adapter/endpoint"
+	"github.com/sagernet/sing-box/protocol/warp"
 )
 
 func registerWarpEndpoint(registry *endpoint.Registry) {

@@ -3,13 +3,13 @@ package rule
 import (
 	"context"
 
+	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 func NewRule(ctx context.Context, logger log.ContextLogger, options option.Rule, checkOutbound bool) (adapter.Rule, error) {
@@ -47,17 +47,13 @@ type DefaultRule struct {
 	abstractDefaultRule
 }
 
-func (r *DefaultRule) matchStates(metadata *adapter.InboundContext) ruleMatchStateSet {
-	return r.abstractDefaultRule.matchStates(metadata)
-}
-
 type RuleItem interface {
 	Match(metadata *adapter.InboundContext) bool
 	String() string
 }
 
 func NewDefaultRule(ctx context.Context, logger log.ContextLogger, options option.DefaultRule) (*DefaultRule, error) {
-	action, err := NewRuleAction(ctx, logger, options.RuleAction)
+	action, err := NewRuleAction(logger, options.RuleAction)
 	if err != nil {
 		return nil, E.Cause(err, "action")
 	}
@@ -84,6 +80,11 @@ func NewDefaultRule(ctx context.Context, logger log.ContextLogger, options optio
 			return nil, E.New("invalid ip version: ", options.IPVersion)
 		}
 	}
+	if options.IPv6UnavailableVia != "" { //H
+		item := NewIPv6UnavailableItem(ctx, options.IPv6UnavailableVia) //H
+		rule.items = append(rule.items, item)                           //H
+		rule.allItems = append(rule.allItems, item)                     //H
+	} //H
 	if len(options.Network) > 0 {
 		item := NewNetworkItem(options.Network)
 		rule.items = append(rule.items, item)
@@ -297,6 +298,16 @@ func NewDefaultRule(ctx context.Context, logger log.ContextLogger, options optio
 		rule.items = append(rule.items, item)
 		rule.allItems = append(rule.allItems, item)
 	}
+	if options.DNSServerAddress != nil && options.DNSServerAddress.Size() > 0 {
+		item := NewDNSServerAddressItem(ctx, options.DNSServerAddress)
+		rule.items = append(rule.items, item)
+		rule.allItems = append(rule.allItems, item)
+	}
+	if options.DNSSearchDomain != nil && options.DNSSearchDomain.Size() > 0 {
+		item := NewDNSSearchDomainItem(ctx, options.DNSSearchDomain)
+		rule.items = append(rule.items, item)
+		rule.allItems = append(rule.allItems, item)
+	}
 	if len(options.RuleSet) > 0 {
 		//nolint:staticcheck
 		if options.Deprecated_RulesetIPCIDRMatchSource {
@@ -319,12 +330,8 @@ type LogicalRule struct {
 	abstractLogicalRule
 }
 
-func (r *LogicalRule) matchStates(metadata *adapter.InboundContext) ruleMatchStateSet {
-	return r.abstractLogicalRule.matchStates(metadata)
-}
-
 func NewLogicalRule(ctx context.Context, logger log.ContextLogger, options option.LogicalRule) (*LogicalRule, error) {
-	action, err := NewRuleAction(ctx, logger, options.RuleAction)
+	action, err := NewRuleAction(logger, options.RuleAction)
 	if err != nil {
 		return nil, E.Cause(err, "action")
 	}

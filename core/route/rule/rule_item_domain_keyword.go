@@ -3,7 +3,7 @@ package rule
 import (
 	"strings"
 
-	"github.com/spaiter/spaiter-vpn/core/adapter"
+	"github.com/sagernet/sing-box/adapter"
 )
 
 var _ RuleItem = (*DomainKeywordItem)(nil)

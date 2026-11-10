@@ -4,9 +4,9 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/json"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/render"

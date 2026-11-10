@@ -2,45 +2,39 @@ package outbound
 
 import (
 	"context"
-	"io"
+	"github.com/sagernet/sing-box/option"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/sagernet/sing/common/logger"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/taskmonitor"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
 )
 
 var _ adapter.OutboundManager = (*Manager)(nil)
 
 type Manager struct {
-	logger                  log.ContextLogger
 	registry                adapter.OutboundRegistry
 	endpoint                adapter.EndpointManager
 	defaultTag              string
 	access                  sync.RWMutex
-	started                 bool
-	stage                   adapter.StartStage
 	outbounds               []adapter.Outbound
 	outboundByTag           map[string]adapter.Outbound
-	dependByTag             map[string][]string
 	defaultOutbound         adapter.Outbound
 	defaultOutboundFallback func() (adapter.Outbound, error)
+	scope                   *adapter.Scope // H: where outbounds created by hot reload are started
+	started                 bool
 }
 
-func NewManager(logger logger.ContextLogger, registry adapter.OutboundRegistry, endpoint adapter.EndpointManager, defaultTag string) *Manager {
+func NewManager(registry adapter.OutboundRegistry, endpoint adapter.EndpointManager, defaultTag string) *Manager {
 	return &Manager{
-		logger:        logger,
 		registry:      registry,
 		endpoint:      endpoint,
 		defaultTag:    defaultTag,
 		outboundByTag: make(map[string]adapter.Outbound),
-		dependByTag:   make(map[string][]string),
 	}
 }
 
@@ -48,14 +42,10 @@ func (m *Manager) Initialize(defaultOutboundFallback func() (adapter.Outbound, e
 	m.defaultOutboundFallback = defaultOutboundFallback
 }
 
-func (m *Manager) Start(stage adapter.StartStage) error {
+func (m *Manager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	m.access.Lock()
-	if m.started && m.stage >= stage {
-		panic("already started")
-	}
-	m.started = true
-	m.stage = stage
-	if stage == adapter.StartStateStart {
+	m.scope = scope
+	if stage == adapter.StartStateInitialize {
 		if m.defaultTag != "" && m.defaultOutbound == nil {
 			defaultEndpoint, loaded := m.endpoint.Get(m.defaultTag)
 			if !loaded {
@@ -74,27 +64,32 @@ func (m *Manager) Start(stage adapter.StartStage) error {
 			m.outboundByTag[directOutbound.Tag()] = directOutbound
 			m.defaultOutbound = directOutbound
 		}
-		outbounds := m.outbounds
-		m.access.Unlock()
-		return m.startOutbounds(append(outbounds, common.Map(m.endpoint.Endpoints(), func(it adapter.Endpoint) adapter.Outbound { return it })...))
-	} else {
-		outbounds := m.outbounds
-		m.access.Unlock()
-		for _, outbound := range outbounds {
-			name := "outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
-			done := adapter.LogElapsed(m.logger, stage, " ", name)
-			err := adapter.LegacyStart(outbound, stage)
-			done()
-			if err != nil {
-				return E.Cause(err, stage, " ", name)
-			}
+	}
+	outbounds := m.outbounds
+	m.access.Unlock()
+	if stage == adapter.StartStateStart {
+		return m.startOutbounds(scope, append(outbounds, common.Map(m.endpoint.Endpoints(), func(it adapter.Endpoint) adapter.Outbound { return it })...))
+	}
+	for _, outbound := range outbounds {
+		lifecycle, isLifecycle := adapter.AsLifecycle(outbound) // H: also closes outbounds that only have Close
+		if !isLifecycle {
+			continue
 		}
+		name := "outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
+		err := scope.Start(name, lifecycle, stage)
+		if err != nil {
+			return err
+		}
+	}
+	if stage == adapter.StartStateStarted {
+		m.access.Lock()
+		m.started = true
+		m.access.Unlock()
 	}
 	return nil
 }
 
-func (m *Manager) startOutbounds(outbounds []adapter.Outbound) error {
-	monitor := taskmonitor.New(m.logger, C.StartTimeout)
+func (m *Manager) startOutbounds(scope *adapter.Scope, outbounds []adapter.Outbound) error {
 	started := make(map[string]bool)
 	for {
 		canContinue := false
@@ -112,27 +107,21 @@ func (m *Manager) startOutbounds(outbounds []adapter.Outbound) error {
 			}
 			started[outboundTag] = true
 			canContinue = true
+			if endpoint, isEndpoint := outboundToStart.(adapter.Endpoint); isEndpoint {
+				err := m.endpoint.StartEndpoint(endpoint)
+				if err != nil {
+					return err
+				}
+				continue
+			}
+			lifecycle, isLifecycle := adapter.AsLifecycle(outboundToStart) // H
+			if !isLifecycle {
+				continue
+			}
 			name := "outbound/" + outboundToStart.Type() + "[" + outboundTag + "]"
-			if starter, isStarter := outboundToStart.(adapter.Lifecycle); isStarter {
-				done := adapter.LogElapsed(m.logger, "start ", name)
-				monitor.Start("start ", name)
-				err := starter.Start(adapter.StartStateStart)
-				monitor.Finish()
-				done()
-				if err != nil {
-					return E.Cause(err, "start ", name)
-				}
-			} else if starter, isStarter := outboundToStart.(interface {
-				Start() error
-			}); isStarter {
-				done := adapter.LogElapsed(m.logger, "start ", name)
-				monitor.Start("start ", name)
-				err := starter.Start()
-				monitor.Finish()
-				done()
-				if err != nil {
-					return E.Cause(err, "start ", name)
-				}
+			err := scope.Start(name, lifecycle, adapter.StartStateStart)
+			if err != nil {
+				return err
 			}
 		}
 		if len(started) == len(outbounds) {
@@ -152,42 +141,15 @@ func (m *Manager) startOutbounds(outbounds []adapter.Outbound) error {
 			if common.Contains(oTree, problemOutboundTag) {
 				return E.New("circular outbound dependency: ", strings.Join(oTree, " -> "), " -> ", problemOutboundTag)
 			}
-			m.access.Lock()
-			problemOutbound := m.outboundByTag[problemOutboundTag]
-			m.access.Unlock()
+			problemOutbound := common.Find(outbounds, func(it adapter.Outbound) bool {
+				return it.Tag() == problemOutboundTag
+			})
 			if problemOutbound == nil {
 				return E.New("dependency[", problemOutboundTag, "] not found for outbound[", oCurrent.Tag(), "]")
 			}
 			return lintOutbound(append(oTree, problemOutboundTag), problemOutbound)
 		}
 		return lintOutbound([]string{currentOutbound.Tag()}, currentOutbound)
-	}
-	return nil
-}
-
-func (m *Manager) Close() error {
-	monitor := taskmonitor.New(m.logger, C.StopTimeout)
-	m.access.Lock()
-	if !m.started {
-		m.access.Unlock()
-		return nil
-	}
-	m.started = false
-	outbounds := m.outbounds
-	m.outbounds = nil
-	m.access.Unlock()
-	var err error
-	for _, outbound := range outbounds {
-		if closer, isCloser := outbound.(io.Closer); isCloser {
-			name := "outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
-			done := adapter.LogElapsed(m.logger, "close ", name)
-			monitor.Start("close ", name)
-			err = E.Append(err, closer.Close(), func(err error) error {
-				return E.Cause(err, "close ", name)
-			})
-			monitor.Finish()
-			done()
-		}
 	}
 	return nil
 }
@@ -215,96 +177,135 @@ func (m *Manager) Default() adapter.Outbound {
 }
 
 func (m *Manager) Remove(tag string) error {
+	return m.remove(tag, false)
+}
+
+// RemoveForReload removes an outbound even while others still depend on it; used by hot reload,
+// which recreates those dependents in the same reload. //H
+func (m *Manager) RemoveForReload(tag string) error {
+	return m.remove(tag, true)
+}
+
+func (m *Manager) remove(tag string, ignoreDependents bool) error {
 	m.access.Lock()
-	defer m.access.Unlock()
 	outbound, found := m.outboundByTag[tag]
 	if !found {
+		m.access.Unlock()
 		return os.ErrInvalid
 	}
-	delete(m.outboundByTag, tag)
-	index := common.Index(m.outbounds, func(it adapter.Outbound) bool {
-		return it == outbound
-	})
-	if index == -1 {
-		panic("invalid inbound index")
+	if !ignoreDependents {
+		dependBy := m.dependents(tag)
+		if len(dependBy) > 0 {
+			m.access.Unlock()
+			return E.New("outbound[", tag, "] is depended by ", strings.Join(dependBy, ", "))
+		}
 	}
-	m.outbounds = append(m.outbounds[:index], m.outbounds[index+1:]...)
-	started := m.started
+	delete(m.outboundByTag, tag)
+	index := slices.Index(m.outbounds, outbound)
+	if index == -1 {
+		panic("invalid outbound index")
+	}
+	m.outbounds = slices.Delete(slices.Clone(m.outbounds), index, index+1) // H: never change a slice already handed out
 	if m.defaultOutbound == outbound {
 		if len(m.outbounds) > 0 {
 			m.defaultOutbound = m.outbounds[0]
-			m.logger.Info("updated default outbound to ", m.defaultOutbound.Tag())
 		} else {
 			m.defaultOutbound = nil
 		}
 	}
-	dependBy := m.dependByTag[tag]
-	if len(dependBy) > 0 {
-		return E.New("outbound[", tag, "] is depended by ", strings.Join(dependBy, ", "))
-	}
-	dependencies := outbound.Dependencies()
-	for _, dependency := range dependencies {
-		if len(m.dependByTag[dependency]) == 1 {
-			delete(m.dependByTag, dependency)
-		} else {
-			m.dependByTag[dependency] = common.Filter(m.dependByTag[dependency], func(it string) bool {
-				return it != tag
-			})
-		}
-	}
+	started := m.started
+	m.access.Unlock()
 	if started {
-		return common.Close(outbound)
+		return adapter.CloseLate(m.scope, outbound)
 	}
 	return nil
+}
+
+// dependents lists the outbounds and endpoints that depend on tag. Call with access held.
+func (m *Manager) dependents(tag string) []string {
+	var dependBy []string
+	for _, outbound := range m.outbounds {
+		if common.Contains(outbound.Dependencies(), tag) {
+			dependBy = append(dependBy, outbound.Tag())
+		}
+	}
+	for _, endpoint := range m.endpoint.Endpoints() {
+		if common.Contains(endpoint.Dependencies(), tag) {
+			dependBy = append(dependBy, endpoint.Tag())
+		}
+	}
+	return dependBy
 }
 
 func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, inboundType string, options any) error {
 	if tag == "" {
 		return os.ErrInvalid
 	}
+	option.MigrateTLSFragment(options) //H: a tls_fragment in the tls block applies like the dialer's
 	outbound, err := m.registry.CreateOutbound(ctx, router, logger, tag, inboundType, options)
 	if err != nil {
 		return err
 	}
-	if m.started {
-		name := "outbound/" + outbound.Type() + "[" + outbound.Tag() + "]"
-		for _, stage := range adapter.ListStartStages {
-			done := adapter.LogElapsed(m.logger, stage, " ", name)
-			err = adapter.LegacyStart(outbound, stage)
-			done()
-			if err != nil {
-				return E.Cause(err, stage, " ", name)
-			}
+	m.access.Lock()
+	started := m.started
+	m.access.Unlock()
+	if started { // H: hot reload; started outside the lock, as starting may look up other outbounds
+		err = adapter.StartLate(m.scope, "outbound/"+outbound.Type()+"["+outbound.Tag()+"]", outbound)
+		if err != nil {
+			return err
 		}
 	}
 	m.access.Lock()
-	defer m.access.Unlock()
-	if existsOutbound, loaded := m.outboundByTag[tag]; loaded {
-		if m.started {
-			err = common.Close(existsOutbound)
-			if err != nil {
-				return E.Cause(err, "close outbound/", existsOutbound.Type(), "[", existsOutbound.Tag(), "]")
-			}
-		}
-		existsIndex := common.Index(m.outbounds, func(it adapter.Outbound) bool {
-			return it == existsOutbound
-		})
+	existsOutbound, replaced := m.outboundByTag[tag]
+	if replaced && !started {
+		m.access.Unlock()
+		return E.New("duplicate outbound tag: ", tag)
+	}
+	if replaced {
+		existsIndex := slices.Index(m.outbounds, existsOutbound)
 		if existsIndex == -1 {
-			panic("invalid inbound index")
+			panic("invalid outbound index")
 		}
-		m.outbounds = append(m.outbounds[:existsIndex], m.outbounds[existsIndex+1:]...)
+		// H: the replacement takes the old one's place (callers rely on the order, e.g. the main group
+		// comes first); a copy, so a slice already handed out never changes
+		m.outbounds = slices.Clone(m.outbounds)
+		m.outbounds[existsIndex] = outbound
+	} else {
+		m.outbounds = append(m.outbounds, outbound)
 	}
-	m.outbounds = append(m.outbounds, outbound)
 	m.outboundByTag[tag] = outbound
-	dependencies := outbound.Dependencies()
-	for _, dependency := range dependencies {
-		m.dependByTag[dependency] = append(m.dependByTag[dependency], tag)
-	}
-	if tag == m.defaultTag || (m.defaultTag == "" && m.defaultOutbound == nil) {
+	if tag == m.defaultTag || (m.defaultTag == "" && m.defaultOutbound == nil) || m.defaultOutbound == existsOutbound && replaced {
 		m.defaultOutbound = outbound
-		if m.started {
-			m.logger.Info("updated default outbound to ", outbound.Tag())
+	}
+	m.access.Unlock()
+	if replaced {
+		err = adapter.CloseLate(m.scope, existsOutbound)
+		if err != nil {
+			return E.Cause(err, "close outbound/", existsOutbound.Type(), "[", existsOutbound.Tag(), "]")
 		}
 	}
+	return nil
+}
+
+// SetDefaultTag changes the default outbound (route.final); used by hot reload. //H
+func (m *Manager) SetDefaultTag(tag string) error {
+	m.access.Lock()
+	m.defaultTag = tag
+	if tag == "" {
+		m.access.Unlock()
+		return nil
+	}
+	outbound, loaded := m.outboundByTag[tag]
+	m.access.Unlock()
+	if !loaded {
+		endpoint, endpointLoaded := m.endpoint.Get(tag)
+		if !endpointLoaded {
+			return E.New("default outbound not found: ", tag)
+		}
+		outbound = endpoint
+	}
+	m.access.Lock()
+	m.defaultOutbound = outbound
+	m.access.Unlock()
 	return nil
 }

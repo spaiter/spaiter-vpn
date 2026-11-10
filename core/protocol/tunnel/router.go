@@ -5,9 +5,9 @@ import (
 	"net"
 	"os"
 
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing/common/logger"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 )
 
 type Router struct {

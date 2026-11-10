@@ -2,10 +2,15 @@
 icon: material/new-box
 ---
 
+!!! quote "Changes in sing-box 1.15.0"
+
+    :material-plus: [on_demand](#on_demand)
+
 !!! quote "Changes in sing-box 1.14.0"
 
-    :material-plus: [control_http_client](#control_http_client)  
-    :material-delete-clock: [Dial Fields](#dial-fields)
+    :material-plus: [listen_port](#listen_port)  
+    :material-plus: [ssh_server](#ssh_server)  
+    :material-plus: [taildrop_directory](#taildrop_directory)
 
 !!! quote "Changes in sing-box 1.13.0"
 
@@ -27,7 +32,6 @@ icon: material/new-box
   "state_directory": "",
   "auth_key": "",
   "control_url": "",
-  "control_http_client": {}, // or ""
   "ephemeral": false,
   "hostname": "",
   "accept_routes": false,
@@ -36,12 +40,16 @@ icon: material/new-box
   "advertise_routes": [],
   "advertise_exit_node": false,
   "advertise_tags": [],
+  "listen_port": 0,
   "relay_server_port": 0,
   "relay_server_static_endpoints": [],
   "system_interface": false,
   "system_interface_name": "",
   "system_interface_mtu": 0,
   "udp_timeout": "5m",
+  "ssh_server": false,
+  "taildrop_directory": "",
+  "on_demand": false,
 
   ... // Dial Fields
 }
@@ -61,7 +69,7 @@ Example: `$HOME/.tailscale`
 
 !!! note
     
-    Auth key is not required. By default, sing-box will log the login URL (or popup a notification on graphical clients).
+    Auth key is not required. By default, sing-box will log the login URL.
 
 The auth key to create the node. If the node is already created (from state previously stored), then this field is not
 used.
@@ -81,6 +89,10 @@ Indicates whether the instance should register as an Ephemeral node (https://tai
 The hostname of the node.
 
 System hostname is used by default.
+
+!!! question "Since sing-box 1.14.0"
+
+    On iOS, tvOS and Android, the device name is used by default.
 
 Example: `localhost`
 
@@ -118,6 +130,14 @@ Tags to advertise for this node, for ACL enforcement purposes.
 
 Example: `["tag:server"]`
 
+#### listen_port
+
+!!! question "Since sing-box 1.14.0"
+
+The UDP port to listen on for WireGuard and peer-to-peer traffic.
+
+A port is automatically selected by default.
+
 #### relay_server_port
 
 !!! question "Since sing-box 1.13.0"
@@ -154,18 +174,75 @@ UDP NAT expiration time.
 
 `5m` will be used by default.
 
-#### control_http_client
+#### ssh_server
 
 !!! question "Since sing-box 1.14.0"
 
-HTTP Client for connecting to the Tailscale control plane.
+Run a Tailscale SSH server on tailnet port 22.
 
-See [HTTP Client Fields](/configuration/shared/http-client/) for details.
+Access is controlled by the SSH ACL in the Tailscale admin console, which maps each connection to a local user. How that user is resolved, and which users are allowed, depends on the platform:
+
+- **Linux** and **macOS**: switching to a user other than the one sing-box runs as requires running as root.
+- **Windows**: in the command line client, sessions mapped to a local account other than the one sing-box runs as are refused. In the graphical client, there is no such restriction.
+- **Android**: `root` is the superuser (UID 0) and `shell` is the ADB shell user (UID 2000); every other name is resolved as the package name of an installed application, running as that application's UID with its data directory as the home directory. `termux` is a shortcut for `com.termux`, and `sing-box` for the app's own package name; when Termux is installed, the `root` and `termux` users load the Termux environment. Running as the sing-box application itself requires no root, while any other user requires granted root access.
+- **macOS**: the SSH server is only available in the standalone version and requires the Helper Service; the App Store version is not supported.
+- **iOS**: the SSH server is only available in the jailbreak build; the App Store and TestFlight versions are not supported.
+- **tvOS**: not yet supported.
+
+Object format:
+
+```json
+{
+  "enabled": true,
+  "disable_pty": false,
+  "disable_sftp": false,
+  "disable_forwarding": false
+}
+```
+
+Setting `ssh_server` value to `true` is equivalent to `{ "enabled": true }`.
+
+#### ssh_server.enabled
+
+Enable the SSH server.
+
+#### ssh_server.disable_pty
+
+Refuse PTY allocation requests.
+
+#### ssh_server.disable_sftp
+
+Refuse the SFTP subsystem.
+
+#### ssh_server.disable_forwarding
+
+Refuse local and remote TCP and Unix-socket forwarding, including SSH agent forwarding.
+
+#### taildrop_directory
+
+!!! question "Since sing-box 1.14.0"
+
+The directory where files received from tailnet peers are stored.
+
+Relative paths are resolved against the working directory, as [state_directory](#state_directory)
+is.
+
+`Taildrop` is used by default.
+
+#### on_demand
+
+!!! question "Since sing-box 1.15.0"
+
+Allow the endpoint to be disconnected when necessary.
 
 ### Dial Fields
 
-!!! failure "Deprecated in sing-box 1.14.0"
+!!! note
 
-    Dial Fields in Tailscale endpoints are deprecated in sing-box 1.14.0 and will be removed in sing-box 1.16.0, use `control_http_client` instead.
+    Dial Fields in Tailscale endpoints only control how it connects to the control plane and have nothing to do with actual connections.
 
 See [Dial Fields](/configuration/shared/dial/) for details.
+
+### Interactive authentication
+
+Use `Tools` > `Endpoints` in the sing-box dashboard or any sing-box graphical client to authenticate and manage the endpoint.

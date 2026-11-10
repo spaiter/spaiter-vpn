@@ -1,10 +1,10 @@
-//go:build with_gvisor && android
+//go:build with_tailscale && android
 
 package tailssh
 
 import (
+	"github.com/sagernet/sing-box/adapter"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 )
 
 func resolveLocalUserNative(username string) (*adapter.PlatformUser, error) {

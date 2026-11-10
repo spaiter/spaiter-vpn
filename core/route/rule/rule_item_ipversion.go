@@ -1,7 +1,7 @@
 package rule
 
 import (
-	"github.com/spaiter/spaiter-vpn/core/adapter"
+	"github.com/sagernet/sing-box/adapter"
 )
 
 var _ RuleItem = (*IPVersionItem)(nil)

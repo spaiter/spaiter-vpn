@@ -1,8 +1,8 @@
 package include
 
 import (
-	"github.com/spaiter/spaiter-vpn/core/adapter/service"
-	"github.com/spaiter/spaiter-vpn/core/service/oomkiller"
+	"github.com/sagernet/sing-box/adapter/service"
+	"github.com/sagernet/sing-box/service/oomkiller"
 )
 
 func registerOOMKillerService(registry *service.Registry) {

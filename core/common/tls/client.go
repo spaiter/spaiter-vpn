@@ -8,15 +8,15 @@ import (
 	"os"
 	"strings"
 
+	"github.com/sagernet/sing-box/common/badtls"
+	"github.com/sagernet/sing-box/common/tlsspoof"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	aTLS "github.com/sagernet/sing/common/tls"
-	"github.com/spaiter/spaiter-vpn/core/common/badtls"
-	"github.com/spaiter/spaiter-vpn/core/common/tlsspoof"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 var errMissingServerName = E.New("missing server_name or insecure=true")
@@ -102,7 +102,7 @@ func NewClientWithOptions(options ClientOptions) (Config, error) {
 	}
 	if options.Options.Reality != nil && options.Options.Reality.Enabled {
 		return newRealityClient(options.Context, options.Logger, options.ServerAddress, options.Options, options.AllowEmptyServerName)
-	} else if options.Options.UTLS != nil && options.Options.UTLS.Enabled {
+	} else if options.Options.UTLS.UsesUTLS() {
 		return newUTLSClient(options.Context, options.Logger, options.ServerAddress, options.Options, options.AllowEmptyServerName)
 	}
 	return newSTDClient(options.Context, options.Logger, options.ServerAddress, options.Options, options.AllowEmptyServerName)

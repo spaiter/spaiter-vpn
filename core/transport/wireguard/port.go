@@ -7,7 +7,7 @@ import (
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing-tun/gtcpip/header"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/wireguard-go/device"
+	"github.com/sagernet/wireguard-go/device"
 )
 
 func (e *Endpoint) PortAddresses() (netip.Addr, netip.Addr) {
@@ -15,14 +15,19 @@ func (e *Endpoint) PortAddresses() (netip.Addr, netip.Addr) {
 }
 
 func (e *Endpoint) PortMTU() uint32 {
-	return e.options.MTU
+	return e.discoveredMTU() //H
+}
+
+func (e *Endpoint) UpstreamPort() any {
+	return e.tunDevice
 }
 
 func (e *Endpoint) WritePackets(packets [][]byte) error {
-	wgDevice := e.device
+	wgDevice := e.device.Load()
 	if wgDevice == nil {
 		return E.New("WireGuard device is not ready")
 	}
+	e.resume()
 	packetRefs := make([]*device.InputPacketRef, 0, len(packets))
 	refs := make([]device.InputPacketRef, len(packets))
 	packetSlices := make([][]byte, len(packets))
@@ -72,7 +77,7 @@ func (e *Endpoint) WritePackets(packets [][]byte) error {
 		} else {
 			source = e.tunDevice.Inet6Address()
 		}
-		reply, replyOk := tun.BuildUnreachable(packet, source, state.headroom)
+		reply, replyOk := tun.BuildICMPError(packet, tun.ICMPErrorNoRoute, source, 0, state.headroom)
 		if replyOk {
 			replies = append(replies, reply)
 		}
@@ -121,10 +126,14 @@ type returnPathState struct {
 
 type returnDeviceWrapper struct {
 	Device
-	state atomic.Pointer[returnPathState]
+	state  atomic.Pointer[returnPathState] //H
+	prober *mtuProber                      //H
 }
 
 func (d *returnDeviceWrapper) Write(bufs [][]byte, offset int) (int, error) {
+	if bufs = d.prober.filter(bufs, offset); len(bufs) == 0 { //H: MTU discovery replies
+		return 0, nil //H
+	} //H
 	state := d.state.Load()
 	if state == nil || len(bufs) == 0 {
 		return d.Device.Write(bufs, offset)

@@ -6,17 +6,17 @@ import (
 	"os"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/inbound"
+	"github.com/sagernet/sing-box/common/listener"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/sing/common/bufio"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/udpnat2"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/inbound"
-	"github.com/spaiter/spaiter-vpn/core/common/listener"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 func RegisterInbound(registry *inbound.Registry) {
@@ -70,15 +70,20 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	return inbound, nil
 }
 
-func (i *Inbound) Start(stage adapter.StartStage) error {
+func (i *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateStart {
 		return nil
 	}
-	return i.listener.Start()
+	err := i.listener.Start()
+	if err != nil {
+		return err
+	}
+	scope.Add(i.listener.Close)
+	return nil
 }
 
-func (i *Inbound) Close() error {
-	return i.listener.Close()
+func (i *Inbound) InterfaceUpdated(ctx context.Context) {
+	i.udpNat.Purge()
 }
 
 func (i *Inbound) NewPacket(buffer *buf.Buffer, source M.Socksaddr) {

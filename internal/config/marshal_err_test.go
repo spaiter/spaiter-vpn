@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spaiter/spaiter-vpn/core/option"
+	"github.com/sagernet/sing-box/option"
 )
 
 // An inbound with a type but no options cannot be rendered. That must be an

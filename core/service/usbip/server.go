@@ -6,15 +6,15 @@ import (
 	"context"
 	"net"
 
+	"github.com/sagernet/sing-box/adapter"
+	boxService "github.com/sagernet/sing-box/adapter/service"
+	"github.com/sagernet/sing-box/common/listener"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-usbip"
 	E "github.com/sagernet/sing/common/exceptions"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	boxService "github.com/spaiter/spaiter-vpn/core/adapter/service"
-	"github.com/spaiter/spaiter-vpn/core/common/listener"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 type ServerService struct {
@@ -83,15 +83,16 @@ func NewServerService(ctx context.Context, logger log.ContextLogger, tag string,
 	}
 }
 
-func (s *ServerService) Start(stage adapter.StartStage) error {
+func (s *ServerService) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateStart {
 		return nil
 	}
-	return s.inner.Start()
-}
-
-func (s *ServerService) Close() error {
-	return s.inner.Close()
+	err := s.inner.Start()
+	if err != nil {
+		return err
+	}
+	scope.Add(s.inner.Close)
+	return nil
 }
 
 func (s *dynamicServerService) AddDevice(info usbip.ProvidedDeviceInfo, transport usbip.DeviceTransport) (string, error) {

@@ -3,9 +3,9 @@ package rule
 import (
 	"reflect"
 
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 func ValidateNoNestedRuleActions(rule option.Rule) error {

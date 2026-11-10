@@ -3,9 +3,9 @@ package rule
 import (
 	"strings"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 var _ RuleItem = (*QueryTypeItem)(nil)

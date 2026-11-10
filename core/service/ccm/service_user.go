@@ -3,7 +3,7 @@ package ccm
 import (
 	"sync"
 
-	"github.com/spaiter/spaiter-vpn/core/option"
+	"github.com/sagernet/sing-box/option"
 )
 
 type UserManager struct {

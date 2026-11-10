@@ -1,4 +1,4 @@
-//go:build with_gvisor && !windows && !android
+//go:build with_tailscale && !windows && !android
 
 package tailssh
 
@@ -6,8 +6,8 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/util/osuser"
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/tailscale/util/osuser"
 )
 
 func resolveLocalUserNative(username string) (*adapter.PlatformUser, error) {

@@ -2,4 +2,4 @@
 
 package include
 
-import _ "github.com/spaiter/spaiter-vpn/core/experimental/clashapi"
+import _ "github.com/sagernet/sing-box/experimental/clashapi"

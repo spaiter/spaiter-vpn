@@ -10,9 +10,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/sagernet/sing-box/include"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/json"
-	"github.com/spaiter/spaiter-vpn/core/include"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 // Marshal renders the options as indented JSON.
@@ -23,6 +23,9 @@ import (
 // the same JSON object through it. Marshalling with encoding/json directly
 // would silently emit only the type and tag.
 func Marshal(ctx context.Context, options option.Options) ([]byte, error) {
+	if err := requireOptions(options); err != nil {
+		return nil, fmt.Errorf("marshal config: %w", err)
+	}
 	raw, err := json.MarshalContext(ctx, options)
 	if err != nil {
 		return nil, fmt.Errorf("marshal config: %w", err)
@@ -33,6 +36,33 @@ func Marshal(ctx context.Context, options option.Options) ([]byte, error) {
 	}
 	pretty.WriteByte('\n')
 	return pretty.Bytes(), nil
+}
+
+// requireOptions refuses an entry that has a type but no options. The core's JSON
+// layer used to fail on one and now writes it as a bare {type, tag}, which a
+// running core then rejects, so the generator has to be the one to notice.
+func requireOptions(options option.Options) error {
+	for i, in := range options.Inbounds {
+		if in.Options == nil {
+			return fmt.Errorf("inbound[%d] %q (%s) has no options", i, in.Tag, in.Type)
+		}
+	}
+	for i, out := range options.Outbounds {
+		if out.Options == nil {
+			return fmt.Errorf("outbound[%d] %q (%s) has no options", i, out.Tag, out.Type)
+		}
+	}
+	for i, ep := range options.Endpoints {
+		if ep.Options == nil {
+			return fmt.Errorf("endpoint[%d] %q (%s) has no options", i, ep.Tag, ep.Type)
+		}
+	}
+	for i, svc := range options.Services {
+		if svc.Options == nil {
+			return fmt.Errorf("service[%d] %q (%s) has no options", i, svc.Tag, svc.Type)
+		}
+	}
+	return nil
 }
 
 // tempFile is the part of *os.File that Write uses; a seam so tests can make

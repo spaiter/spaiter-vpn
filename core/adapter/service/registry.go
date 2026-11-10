@@ -2,12 +2,14 @@ package service
 
 import (
 	"context"
+	"maps"
+	"slices"
 	"sync"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/log"
 )
 
 type ConstructorFunc[T any] func(ctx context.Context, logger log.ContextLogger, tag string, options T) (adapter.Service, error)
@@ -42,6 +44,12 @@ func NewRegistry() *Registry {
 		optionsType: make(map[string]optionsConstructorFunc),
 		constructor: make(map[string]constructorFunc),
 	}
+}
+
+func (m *Registry) OptionTypes() []string {
+	m.access.Lock()
+	defer m.access.Unlock()
+	return slices.Sorted(maps.Keys(m.optionsType))
 }
 
 func (m *Registry) CreateOptions(outboundType string) (any, bool) {

@@ -4,9 +4,9 @@ import (
 	"net/netip"
 	"os"
 
+	"github.com/sagernet/sing-box/log"
 	E "github.com/sagernet/sing/common/exceptions"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/log"
 
 	"github.com/spf13/cobra"
 )

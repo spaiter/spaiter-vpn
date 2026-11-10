@@ -3,11 +3,18 @@ package dnstt
 import (
 	"context"
 	"fmt"
+	"github.com/sagernet/sing-box/common/dialer"
 	"net"
 	"sync"
 	"time"
 
-	multidns "github.com/hiddify/hmrd_multi_resolver_dns"
+	dnstt "github.com/net2share/vaydns/client"
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/outbound"
+	"github.com/sagernet/sing-box/common/dnspool"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json/badoption"
 	"github.com/sagernet/sing/common/logger"
@@ -15,17 +22,10 @@ import (
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/uot"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/outbound"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	dnstt "github.com/spaiter/spaiter-vpn/core/thirdparty/vaydns/client"
 )
 
 func RegisterOutbound(registry *outbound.Registry) {
 	outbound.Register[option.DnsttOptions](registry, C.TypeDNSTT, NewOutbound)
-	loadResolvers()
 }
 
 var _ adapter.Outbound = (*Outbound)(nil)
@@ -47,7 +47,7 @@ type Outbound struct {
 	resolve            bool
 	tunnel_index       int
 
-	mdMgr *multidns.Manager // smart pool, set when options.SmartPool
+	pool *dnspool.Pool // the outbound's own resolver pool, set when options.SmartPool is enabled
 
 	options option.DnsttOptions
 }
@@ -84,6 +84,20 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if len(resolvers) == 0 {
 		return nil, E.New("at least one resolver is required")
 	}
+	// the resolver sockets are opened by the DNSTT client, not through a sing-box dialer: give
+	// them the socket control of one (bind_interface, routing_mark, the platform's protect), or
+	// on a VPN their queries loop back into the tunnel
+	defaultDialer, err := dialer.NewDefault(ctx, options.DialerOptions)
+	if err != nil {
+		return nil, err
+	}
+	dialerControl, _ := defaultDialer.UDPListenerControl()
+	for i := range resolvers {
+		resolvers[i].Resolver.DialerControl = dialerControl
+	}
+	if options.Detour != "" {
+		logger.Warn("dnstt: detour is not supported, the DNS queries go out directly")
+	}
 	if options.RecordType == "" {
 		options.RecordType = "txt"
 	}
@@ -113,15 +127,24 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		options: options,
 	}
 
-	if options.SmartPool {
-		mgr, addr, err := multidns.StartLocal(multidns.Options{})
+	if options.SmartPool.IsEnabled() {
+		dial, err := dnspool.DialFunc(ctx, options.DialerOptions)
 		if err != nil {
 			return nil, err
 		}
-		out.mdMgr = mgr
-		out.resolvers = []dnstt.Resolver{{ResolverType: dnstt.ResolverTypeUDP, ResolverAddr: addr}}
+		poolOptions := dnspool.PoolOptionsFrom(options.SmartPool)
+		// DNSTT's KCP times its retransmissions by the round trip and loses more from a query
+		// held for capacity than from one failed at once: measured on one resolver limited to 30
+		// queries a second, 82 kbps held against 173 failing fast
+		poolOptions.FailFast = true
+		pool, err := dnspool.StartPool(logger, tag, poolOptions, dial)
+		if err != nil {
+			return nil, err
+		}
+		out.pool = pool
+		out.resolvers = []dnstt.Resolver{{ResolverType: dnstt.ResolverTypeUDP, ResolverAddr: pool.Addr()}}
 		out.tunnels = []*dnstt.Tunnel{nil}
-		logger.InfoContext(ctx, "dnstt smart_pool listening on ", addr)
+		logger.InfoContext(ctx, "dnstt smart_pool listening on ", pool.Addr())
 	}
 
 	return out, nil
@@ -129,7 +152,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 }
 
 func (h *Outbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
-	if !h.IsReady() {
+	if !h.isReady() {
 		return nil, E.New("outbound is not started")
 	}
 	if h.options.SingleResolver {
@@ -138,7 +161,7 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination 
 	return h.OpenStream(ctx)
 }
 func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
-	if !h.IsReady() {
+	if !h.isReady() {
 		return nil, E.New("outbound is not started")
 	}
 	ctx, metadata := adapter.ExtendContext(ctx)
@@ -151,17 +174,33 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	return nil, E.New("UoT is not enabled for this outbound")
 }
 
-func (c *Outbound) IsReady() bool {
+func (c *Outbound) isReady() bool {
 	return c.started > 0
 }
+
+// Status is failed once every resolver failed its test. //H
+func (c *Outbound) Status() adapter.Status {
+	switch {
+	case c.started > 0:
+		return adapter.StatusReady
+	case c.started < 0:
+		return adapter.StatusFailed
+	}
+	return adapter.StatusConnecting
+}
+
+// StatusError is why it failed: no resolver passed its test. //H
+func (c *Outbound) StatusError() error {
+	if c.started < 0 {
+		return E.New("none of the ", len(c.candidateResolvers), " resolvers passed the test")
+	}
+	return nil
+}
+
 func (w *Outbound) DisplayType() string {
-	str := C.ProxyDisplayName(w.Type())
-	if w.started == 0 {
-		str += " ⚠️ Connecting..."
-	} else if w.started < 0 {
-		str += " ❌ Failed!"
-	} else {
-		str += fmt.Sprint(" ✔️ ", len(w.resolvers), " resolvers")
+	str := C.ProxyDisplayName(w.Type()) // the status is shown on its own
+	if w.started > 0 {
+		str += fmt.Sprint(" · ", len(w.resolvers), " resolvers")
 	}
 	return str
 }
@@ -172,8 +211,8 @@ func (c *Outbound) Close() error {
 			t.Close()
 		}
 	}
-	if c.mdMgr != nil {
-		_ = c.mdMgr.Close()
+	if c.pool != nil {
+		_ = c.pool.Close()
 	}
 	return nil
 }

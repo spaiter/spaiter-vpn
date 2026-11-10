@@ -4,9 +4,10 @@
 package settings
 
 import (
+	"context"
 	"os"
 
-	"github.com/spaiter/spaiter-vpn/core/adapter"
+	"github.com/sagernet/sing-box/adapter"
 )
 
 type stubWIFIMonitor struct{}
@@ -15,7 +16,7 @@ func NewWIFIMonitor(callback func(adapter.WIFIState)) (WIFIMonitor, error) {
 	return nil, os.ErrInvalid
 }
 
-func (m *stubWIFIMonitor) ReadWIFIState() adapter.WIFIState {
+func (m *stubWIFIMonitor) ReadWIFIState(ctx context.Context) adapter.WIFIState {
 	return adapter.WIFIState{}
 }
 

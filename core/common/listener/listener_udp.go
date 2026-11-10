@@ -8,6 +8,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/redir"
 	"github.com/sagernet/sing/common/buf"
 	sBufio "github.com/sagernet/sing/common/bufio"
 	"github.com/sagernet/sing/common/control"
@@ -15,15 +17,16 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/redir"
 )
 
 const udpOutputBatchSize = 128
 
 func (l *Listener) ListenUDP() (net.PacketConn, error) {
+	return l.ListenUDPWithConfig(net.ListenConfig{})
+}
+
+func (l *Listener) ListenUDPWithConfig(listenConfig net.ListenConfig) (net.PacketConn, error) {
 	bindAddr := M.SocksaddrFrom(l.listenOptions.Listen.Build(netip.AddrFrom4([4]byte{127, 0, 0, 1})), l.listenOptions.ListenPort)
-	var listenConfig net.ListenConfig
 	if l.listenOptions.BindInterface != "" {
 		listenConfig.Control = control.Append(listenConfig.Control, control.BindToInterface(service.FromContext[adapter.NetworkManager](l.ctx).InterfaceFinder(), l.listenOptions.BindInterface, -1))
 	}
@@ -39,7 +42,9 @@ func (l *Listener) ListenUDP() (net.PacketConn, error) {
 	} else {
 		udpFragment = l.listenOptions.UDPFragmentDefault
 	}
-	if !udpFragment {
+	if udpFragment {
+		listenConfig.Control = control.Append(listenConfig.Control, control.EnableUDPFragment())
+	} else {
 		listenConfig.Control = control.Append(listenConfig.Control, control.DisableUDPFragment())
 	}
 	if l.tproxy {
@@ -78,6 +83,7 @@ func (l *Listener) DialContext(dialer net.Dialer, ctx context.Context, network s
 
 func (l *Listener) ListenPacket(listenConfig net.ListenConfig, ctx context.Context, network string, address string) (net.PacketConn, error) {
 	return ListenNetworkNamespace[net.PacketConn](l.ctx, l.listenOptions.NetNs, func() (net.PacketConn, error) {
+		listenConfig.Control = control.Append(listenConfig.Control, control.UDPSocketBuffer(UDPSocketBufferSize()))
 		if l.listenOptions.BindInterface != "" {
 			listenConfig.Control = control.Append(listenConfig.Control, control.BindToInterface(service.FromContext[adapter.NetworkManager](l.ctx).InterfaceFinder(), l.listenOptions.BindInterface, -1))
 		}

@@ -7,18 +7,18 @@ import (
 	"time"
 
 	"github.com/gofrs/uuid/v5"
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/endpoint"
+	"github.com/sagernet/sing-box/adapter/outbound"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/endpoint"
-	"github.com/spaiter/spaiter-vpn/core/adapter/outbound"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 func RegisterClientEndpoint(registry *endpoint.Registry) {
@@ -61,7 +61,10 @@ func NewClientEndpoint(ctx context.Context, router adapter.Router, logger log.Co
 	return client, nil
 }
 
-func (c *ClientEndpoint) Start(stage adapter.StartStage) error {
+func (c *ClientEndpoint) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage == adapter.StartStateInitialize {
+		scope.Add(c.Close) // H: closed with the box
+	}
 	if stage != adapter.StartStatePostStart {
 		return nil
 	}

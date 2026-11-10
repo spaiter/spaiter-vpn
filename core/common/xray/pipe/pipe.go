@@ -1,8 +1,8 @@
 package pipe
 
 import (
-	"github.com/spaiter/spaiter-vpn/core/common/xray/signal"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/signal/done"
+	"github.com/sagernet/sing-box/common/xray/signal"
+	"github.com/sagernet/sing-box/common/xray/signal/done"
 )
 
 // Option for creating new Pipes.

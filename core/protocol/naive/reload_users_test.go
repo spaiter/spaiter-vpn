@@ -3,9 +3,9 @@ package naive
 import (
 	"testing"
 
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/auth"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 func TestNaiveUsersAreSwappedWholeAndNeverToNone(t *testing.T) {

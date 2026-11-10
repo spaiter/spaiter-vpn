@@ -9,30 +9,36 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/outbound"
+	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/mux"
+	"github.com/sagernet/sing-box/common/tls"
+	"github.com/sagernet/sing-box/common/vision"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/protocol/vless/encryption"
+	"github.com/sagernet/sing-box/transport/v2ray"
+	"github.com/sagernet/sing-vmess/packetaddr"
+	"github.com/sagernet/sing-vmess/vless"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/outbound"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	"github.com/spaiter/spaiter-vpn/core/common/mux"
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	"github.com/spaiter/spaiter-vpn/core/common/vision"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	"github.com/spaiter/spaiter-vpn/core/protocol/vless/encryption"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/sing-vmess/packetaddr"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/sing-vmess/vless"
-	"github.com/spaiter/spaiter-vpn/core/transport/v2ray"
 )
 
 func RegisterOutbound(registry *outbound.Registry) {
 	outbound.Register[option.VLESSOutboundOptions](registry, C.TypeVLESS, NewOutbound)
 }
+
+var (
+	_ adapter.OutboundWithMultiplex   = (*Outbound)(nil)
+	_ adapter.InterfaceUpdateListener = (*Outbound)(nil)
+	_ adapter.IdleConnectionKeeper    = (*Outbound)(nil)
+)
 
 type Outbound struct {
 	outbound.Adapter
@@ -62,7 +68,16 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		vision:     strings.HasPrefix(options.Flow, "xtls-rprx-vision"),
 	}
 	if options.TLS != nil {
-		outbound.tlsConfig, err = tls.NewClient(ctx, logger, options.Server, common.PtrValueOrDefault(options.TLS))
+		outbound.tlsConfig, err = tls.NewClientWithOptions(tls.ClientOptions{
+			Context:       ctx,
+			Logger:        logger,
+			ServerAddress: options.Server,
+			Options:       common.PtrValueOrDefault(options.TLS),
+			KTLSCompatible: common.PtrValueOrDefault(options.Transport).Type == "" &&
+				!common.PtrValueOrDefault(options.Multiplex).Enabled &&
+				(options.Encryption == "" || options.Encryption == "none") && // H: VLESS encryption wraps the TLS stream
+				options.Flow == "",
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -144,7 +159,15 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	}
 }
 
-func (h *Outbound) InterfaceUpdated() {
+func (h *Outbound) MultiplexEnabled() bool {
+	if h.multiplexDialer != nil {
+		return true
+	}
+	multiplexTransport, isMultiplexTransport := h.transport.(adapter.V2RayMultiplexClientTransport)
+	return isMultiplexTransport && multiplexTransport.MultiplexEnabled()
+}
+
+func (h *Outbound) InterfaceUpdated(ctx context.Context) {
 	if h.transport != nil {
 		h.transport.Close()
 	}
@@ -153,8 +176,37 @@ func (h *Outbound) InterfaceUpdated() {
 	}
 }
 
-func (h *Outbound) Close() error {
-	return common.Close(common.PtrOrNil(h.multiplexDialer), h.transport)
+func (h *Outbound) SetKeepIdleConnections(keep bool) {
+	transportKeeper, isTransportKeeper := h.transport.(adapter.IdleConnectionKeeper)
+	if isTransportKeeper {
+		transportKeeper.SetKeepIdleConnections(keep)
+	}
+	if h.multiplexDialer != nil {
+		h.multiplexDialer.SetKeepIdleConnections(keep)
+	}
+}
+
+func (h *Outbound) CloseIdleConnections() {
+	transportKeeper, isTransportKeeper := h.transport.(adapter.IdleConnectionKeeper)
+	if isTransportKeeper {
+		transportKeeper.CloseIdleConnections()
+	}
+	if h.multiplexDialer != nil {
+		h.multiplexDialer.CloseIdleConnections()
+	}
+}
+
+func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage != adapter.StartStateInitialize {
+		return nil
+	}
+	if h.transport != nil {
+		scope.Add(h.transport.Close)
+	}
+	if h.multiplexDialer != nil {
+		scope.Add(h.multiplexDialer.Close)
+	}
+	return nil
 }
 
 type vlessDialer Outbound
@@ -191,8 +243,11 @@ func (h *vlessDialer) DialContext(ctx context.Context, network string, destinati
 	} else {
 		conn, err = h.dialer.DialContext(ctx, N.NetworkTCP, h.serverAddr)
 		if err == nil && h.tlsConfig != nil {
-			conn, err = tls.ClientHandshake(ctx, conn, h.tlsConfig)
-			if err == nil && h.vision && baseConn == nil {
+			rawConn := conn                                            //H
+			conn, err = tls.ClientHandshake(ctx, rawConn, h.tlsConfig) //H
+			if err != nil {                                            //H: the TLS handshake does not close the conn it was given
+				rawConn.Close() //H
+			} else if h.vision && baseConn == nil { //H
 				baseConn = conn
 			}
 		}
@@ -203,10 +258,14 @@ func (h *vlessDialer) DialContext(ctx context.Context, network string, destinati
 
 	// Apply encryption if configured
 	if h.encryption != nil {
-		conn, err = h.encryption.Handshake(conn)
+		// H: a failed handshake returns a nil *CommonConn; keep the conn to close it
+		var encryptedConn net.Conn                                        //H
+		encryptedConn, err = encryptionHandshake(ctx, h.encryption, conn) //H
 		if err != nil {
+			conn.Close() //H
 			return nil, E.Cause(err, "encryption handshake")
 		}
+		conn = encryptedConn //H
 	}
 
 	// For Vision: wrap the connection to expose the TLS/encryption connection for vless client
@@ -284,7 +343,11 @@ func (h *vlessDialer) ListenPacket(ctx context.Context, destination M.Socksaddr)
 	} else {
 		conn, err = h.dialer.DialContext(ctx, N.NetworkTCP, h.serverAddr)
 		if err == nil && h.tlsConfig != nil {
-			conn, err = tls.ClientHandshake(ctx, conn, h.tlsConfig)
+			rawConn := conn                                            //H
+			conn, err = tls.ClientHandshake(ctx, rawConn, h.tlsConfig) //H
+			if err != nil {                                            //H: the TLS handshake does not close the conn it was given
+				rawConn.Close() //H
+			} //H
 		}
 	}
 	if err != nil {
@@ -293,11 +356,14 @@ func (h *vlessDialer) ListenPacket(ctx context.Context, destination M.Socksaddr)
 	}
 	// Apply encryption if configured
 	if h.encryption != nil {
-		conn, err = h.encryption.Handshake(conn)
+		// H: a failed handshake returns a nil *CommonConn; closing that panics
+		var encryptedConn net.Conn                                        //H
+		encryptedConn, err = encryptionHandshake(ctx, h.encryption, conn) //H
 		if err != nil {
-			common.Close(conn)
+			conn.Close() //H
 			return nil, E.Cause(err, "encryption handshake")
 		}
+		conn = encryptedConn //H
 	}
 	if h.xudp {
 		return h.client.DialEarlyXUDPPacketConn(conn, destination)
@@ -344,14 +410,14 @@ func (c *visionConnWrapper) ReaderReplaceable() bool {
 	if replacer, ok := c.Conn.(N.ReaderWithUpstream); ok {
 		return replacer.ReaderReplaceable()
 	}
-	return true
+	return false //H: the conn sits on the upstream (an encryption layer or a transport), so copying from the upstream would skip it
 }
 
 func (c *visionConnWrapper) WriterReplaceable() bool {
 	if replacer, ok := c.Conn.(N.WriterWithUpstream); ok {
 		return replacer.WriterReplaceable()
 	}
-	return true
+	return false //H: the conn sits on the upstream (an encryption layer or a transport), so copying from the upstream would skip it
 }
 
 // isVisionTLSConn returns true when the provided connection exposes TLS semantics Vision expects.
@@ -440,6 +506,10 @@ func parseClientEncryption(raw string) (clientEncryptionConfig, error) {
 		segment = strings.TrimSpace(segment)
 		if segment == "" {
 			return cfg, E.New("invalid empty segment in encryption string")
+		}
+		if paddingPhase && isPaddingSegment(segment) { // digits and dashes such as 100-111-1111 also decode as base64
+			paddingParts = append(paddingParts, segment)
+			continue
 		}
 		if data, err := base64.RawURLEncoding.DecodeString(segment); err == nil {
 			if len(data) == 32 || len(data) == 1184 {

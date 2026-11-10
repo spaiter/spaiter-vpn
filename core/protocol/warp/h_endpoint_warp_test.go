@@ -1,0 +1,585 @@
+package warp
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"github.com/sagernet/sing-box/adapter/htest"
+	"net"
+	"net/netip"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/endpoint"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/hiddify/warpscan"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/sing/common/json/badoption"
+	M "github.com/sagernet/sing/common/metadata"
+	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/service"
+	"github.com/sagernet/wireguard-go/hiddify"
+	"github.com/stretchr/testify/require"
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
+)
+
+type hRecordingDialer struct {
+	access  sync.Mutex
+	targets []M.Socksaddr
+}
+
+func (d *hRecordingDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	d.access.Lock()
+	d.targets = append(d.targets, destination)
+	d.access.Unlock()
+	return nil, errors.New("detour refused")
+}
+
+func (d *hRecordingDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	return nil, errors.New("unsupported")
+}
+
+func (d *hRecordingDialer) count() int {
+	d.access.Lock()
+	defer d.access.Unlock()
+	return len(d.targets)
+}
+
+type hFakeOutbound struct {
+	adapter.Outbound
+	*hRecordingDialer
+	tag string
+}
+
+func (o *hFakeOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
+	return o.hRecordingDialer.DialContext(ctx, network, destination)
+}
+
+func (o *hFakeOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+	return o.hRecordingDialer.ListenPacket(ctx, destination)
+}
+
+type hFakeOutboundManager struct {
+	adapter.OutboundManager
+	outbounds []adapter.Outbound
+}
+
+func (m *hFakeOutboundManager) Outbounds() []adapter.Outbound {
+	return m.outbounds
+}
+
+func (m *hFakeOutboundManager) Outbound(tag string) (adapter.Outbound, bool) {
+	for _, outbound := range m.outbounds {
+		if outbound.(*hFakeOutbound).tag == tag {
+			return outbound, true
+		}
+	}
+	return nil, false
+}
+
+type hFakeCacheFile struct {
+	adapter.CacheFile
+	access sync.Mutex
+	store  map[string]*adapter.SavedBinary
+	loads  []string
+	saves  []string
+}
+
+func (c *hFakeCacheFile) StoreWARPConfig() bool { return true }
+
+func (c *hFakeCacheFile) LoadBinary(tag string) *adapter.SavedBinary {
+	c.access.Lock()
+	defer c.access.Unlock()
+	c.loads = append(c.loads, tag)
+	return c.store[tag]
+}
+
+func (c *hFakeCacheFile) SaveBinary(tag string, binary *adapter.SavedBinary) error {
+	c.access.Lock()
+	defer c.access.Unlock()
+	c.saves = append(c.saves, tag)
+	c.store[tag] = binary
+	return nil
+}
+
+func hTestContext(t *testing.T) context.Context {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+	return ctx
+}
+
+// hShortContext ends the retries of a start that cannot work soon.
+func hShortContext(t *testing.T) context.Context {
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	t.Cleanup(cancel)
+	return ctx
+}
+
+func hLogger() log.ContextLogger {
+	return log.NewNOPFactory().NewLogger("warp-test")
+}
+
+const hWARPConfigJSON = `{
+	"private_key": "GAl2z55U2UzNU5FG+LW3kowK+BA/WGMi1dWYwx20pWk=",
+	"interface": {"addresses": {"v4": "172.16.0.2", "v6": "2606:4700:110:8a36::1"}},
+	"peers": [{"public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=", "endpoint": {"host": "engage.cloudflareclient.com:2408", "ports": [2408]}}]
+}`
+
+func hWARPConfig(t *testing.T, content string) *C.WARPConfig {
+	var config C.WARPConfig
+	require.NoError(t, json.Unmarshal([]byte(content), &config))
+	return &config
+}
+
+func TestH_GetWarpProfileDialerExistingProfileUsesDetour(t *testing.T) {
+	key, err := wgtypes.GeneratePrivateKey()
+	require.NoError(t, err)
+	detour := &hRecordingDialer{}
+	_, err = GetWarpProfileDialer(hTestContext(t), detour, &option.WARPProfile{AuthToken: "tok", ID: "id", PrivateKey: key.String()})
+	require.ErrorContains(t, err, "detour refused")
+	require.NotZero(t, detour.count())
+	require.Equal(t, M.ParseSocksaddr("api.cloudflareclient.com:443"), detour.targets[0])
+}
+
+func TestH_GetWarpProfileDialerRegistersNewProfile(t *testing.T) {
+	key, err := wgtypes.GeneratePrivateKey()
+	require.NoError(t, err)
+	detour := &hRecordingDialer{}
+	_, err = GetWarpProfileDialer(hTestContext(t), detour, &option.WARPProfile{PrivateKey: key.String(), ID: "id-without-token"})
+	require.ErrorContains(t, err, "detour refused")
+	require.NotZero(t, detour.count())
+
+	detour = &hRecordingDialer{}
+	_, err = GetWarpProfileDialer(hTestContext(t), detour, &option.WARPProfile{PrivateKey: "not-a-key"})
+	require.Error(t, err)
+	require.Zero(t, detour.count(), "invalid key must fail before any request")
+}
+
+func TestH_GetWarpProfileDetourNotFound(t *testing.T) {
+	ctx := service.ContextWith[adapter.OutboundManager](hTestContext(t), &hFakeOutboundManager{})
+	_, err := GetWarpProfile(ctx, &option.WARPProfile{Detour: "missing"})
+	require.ErrorContains(t, err, "outbound detour not found: missing")
+}
+
+func TestH_GetWarpProfileFallsBackToAllOutbounds(t *testing.T) {
+	key, err := wgtypes.GeneratePrivateKey()
+	require.NoError(t, err)
+	first := &hFakeOutbound{hRecordingDialer: &hRecordingDialer{}, tag: "first"}
+	second := &hFakeOutbound{hRecordingDialer: &hRecordingDialer{}, tag: "second"}
+	ctx := service.ContextWith[adapter.OutboundManager](hTestContext(t), &hFakeOutboundManager{outbounds: []adapter.Outbound{first, second}})
+	profile, err := GetWarpProfile(ctx, &option.WARPProfile{PrivateKey: key.String(), Detour: "first"})
+	require.Error(t, err)
+	require.Nil(t, profile)
+	require.GreaterOrEqual(t, first.count(), 2, "detour is tried first, then again in the fallback loop")
+	require.NotZero(t, second.count())
+}
+
+func TestH_GetWarpProfileWithoutOutboundManagerReturnsError(t *testing.T) {
+	profile, err := GetWarpProfile(hTestContext(t), &option.WARPProfile{PrivateKey: "not-a-key"})
+	require.Error(t, err)
+	require.Nil(t, profile)
+}
+
+func hNewWARP(t *testing.T, ctx context.Context, options option.WARPEndpointOptions) *WARPEndpoint {
+	ep, err := NewWARPEndpoint(ctx, nil, hLogger(), "warp-tag", options)
+	require.NoError(t, err)
+	return ep.(*WARPEndpoint)
+}
+
+func TestH_NewWARPEndpointMetadata(t *testing.T) {
+	options := option.WARPEndpointOptions{Profile: option.WARPProfile{Detour: "profile-out"}}
+	options.Detour = "wg-out"
+	ep := hNewWARP(t, hTestContext(t), options)
+	require.Equal(t, C.TypeWARP, ep.Type())
+	require.Equal(t, "warp-tag", ep.Tag())
+	require.Equal(t, []string{N.NetworkTCP, N.NetworkUDP}, ep.Network())
+	require.Equal(t, []string{"wg-out", "profile-out"}, ep.Dependencies())
+	require.NoError(t, htest.Start(ep, adapter.StartStateStart))
+	require.True(t, ep.mtx.TryLock(), "mtx must stay free so dials during start do not block")
+	ep.mtx.Unlock()
+	require.False(t, adapter.IsReady(ep), "inner endpoint is not installed before PostStart")
+}
+
+func TestH_WARPStartFailureLeavesEndpointUninitialized(t *testing.T) {
+	options := option.WARPEndpointOptions{WARPConfig: hWARPConfig(t, hWARPConfigJSON)}
+	options.Detour = "missing-detour"
+	ep := hNewWARP(t, hShortContext(t), options)
+	ep.startHandler()
+
+	require.False(t, adapter.IsReady(ep))
+	hRequireDisplay(t, "WARP · WG", adapter.DisplayType(ep))
+	_, err := ep.DialContext(context.Background(), N.NetworkTCP, M.ParseSocksaddr("1.1.1.1:80"))
+	require.ErrorContains(t, err, "endpoint not initialized")
+	_, err = ep.ListenPacket(context.Background(), M.ParseSocksaddr("1.1.1.1:53"))
+	require.ErrorContains(t, err, "endpoint not initialized")
+	require.NoError(t, ep.Close())
+}
+
+func TestH_WARPStartPostStartRunsHandler(t *testing.T) {
+	options := option.WARPEndpointOptions{WARPConfig: hWARPConfig(t, hWARPConfigJSON), AWG: &option.AwgOptions{Jc: 3}}
+	options.Detour = "missing-detour"
+	ep := hNewWARP(t, hTestContext(t), options)
+	require.NoError(t, htest.Start(ep, adapter.StartStatePostStart))
+	done := make(chan bool, 1)
+	go func() { done <- adapter.IsReady(ep) }()
+	select {
+	case ready := <-done:
+		require.False(t, ready)
+	case <-time.After(3 * time.Second):
+		t.Fatal("start handler did not release the endpoint")
+	}
+}
+
+func TestH_WARPUsesCachedConfig(t *testing.T) {
+	cached, err := json.Marshal(hWARPConfig(t, hWARPConfigJSON))
+	require.NoError(t, err)
+	cache := &hFakeCacheFile{store: map[string]*adapter.SavedBinary{"unique": {Content: cached}}}
+	ctx := service.ContextWith[adapter.CacheFile](hShortContext(t), cache)
+	options := option.WARPEndpointOptions{UniqueIdentifier: "unique"}
+	options.Detour = "missing-detour"
+	ep := hNewWARP(t, ctx, options)
+	ep.startHandler()
+	require.Contains(t, cache.loads, "unique", "the device saved before is read")
+	require.Equal(t, []string{"warp-profiles"}, cache.saves, "and kept in the device pool")
+	require.Equal(t, hWARPConfig(t, hWARPConfigJSON).PrivateKey, ep.currentProfile().WireGuard.PrivateKey, "no new registration")
+
+	cache = &hFakeCacheFile{store: map[string]*adapter.SavedBinary{"warp-tag": {Content: cached}}}
+	ctx = service.ContextWith[adapter.CacheFile](hShortContext(t), cache)
+	options = option.WARPEndpointOptions{WARPConfig: hWARPConfig(t, hWARPConfigJSON), Profile: option.WARPProfile{Recreate: true}}
+	options.Detour = "missing-detour"
+	ep = hNewWARP(t, ctx, options)
+	ep.startHandler()
+	require.True(t, ep.currentProfile().inline, "the profile in the config is used")
+	require.NotContains(t, cache.saves, "warp-tag", "and not saved")
+}
+
+func TestH_WARPMalformedCachedConfig(t *testing.T) {
+	cache := &hFakeCacheFile{store: map[string]*adapter.SavedBinary{"warp-tag": {Content: []byte("{not json")}}}
+	ctx := service.ContextWith[adapter.CacheFile](hShortContext(t), cache)
+	ctx = service.ContextWith[adapter.OutboundManager](ctx, &hFakeOutboundManager{})
+	// a broken saved profile is replaced by a new one; the detour keeps the test off the network
+	ep := hNewWARP(t, ctx, option.WARPEndpointOptions{Profile: option.WARPProfile{Detour: "missing"}})
+	ep.startHandler()
+	require.Contains(t, cache.loads, "warp-tag")
+	require.Nil(t, ep.profiles.usable(kindWireGuard), "an unreadable device is not taken")
+	require.Equal(t, adapter.StatusConnecting, ep.Status(), "registering ended with the context, not failed")
+	_, err := ep.DialContext(context.Background(), N.NetworkTCP, M.ParseSocksaddr("1.1.1.1:80"))
+	require.ErrorContains(t, err, "endpoint not initialized")
+}
+
+func TestH_WARPConfigWithoutPortsDoesNotPanic(t *testing.T) {
+	options := option.WARPEndpointOptions{WARPConfig: hWARPConfig(t, `{"private_key":"x","peers":[{"endpoint":{"host":"h:1"}}]}`)}
+	options.Detour = "missing-detour"
+	options.ServerPort = 2408
+	ep := hNewWARP(t, hShortContext(t), options)
+	require.NotPanics(t, ep.startHandler)
+}
+
+func TestH_WARPConfigWithoutPeersDoesNotPanic(t *testing.T) {
+	options := option.WARPEndpointOptions{WARPConfig: hWARPConfig(t, `{"private_key":"x","peers":[]}`)}
+	options.Detour = "missing-detour"
+	ep := hNewWARP(t, hTestContext(t), options)
+	require.NotPanics(t, ep.startHandler)
+	require.False(t, adapter.IsReady(ep))
+}
+
+func TestH_WARPPeerEndpoint(t *testing.T) {
+	config := hWARPConfig(t, `{"private_key":"x","peers":[{"endpoint":{"host":"engage.cloudflareclient.com:2408","ports":[500,4500]}}]}`)
+	address, port, err := warpPeerEndpoint(config, option.ServerOptions{})
+	require.NoError(t, err)
+	require.Equal(t, "engage.cloudflareclient.com", address)
+	require.Contains(t, []uint16{500, 4500}, port)
+	address, port, err = warpPeerEndpoint(config, option.ServerOptions{Server: "162.159.192.1", ServerPort: 854})
+	require.NoError(t, err)
+	require.Equal(t, "162.159.192.1", address)
+	require.Equal(t, uint16(854), port)
+	// no ports listed: the port in the host is used
+	address, port, err = warpPeerEndpoint(hWARPConfig(t, `{"private_key":"x","peers":[{"endpoint":{"host":"h:1701"}}]}`), option.ServerOptions{})
+	require.NoError(t, err)
+	require.Equal(t, "h", address)
+	require.Equal(t, uint16(1701), port)
+	_, _, err = warpPeerEndpoint(hWARPConfig(t, `{"private_key":"x","peers":[{"endpoint":{"host":"h"}}]}`), option.ServerOptions{})
+	require.Error(t, err)
+	_, _, err = warpPeerEndpoint(hWARPConfig(t, `{"private_key":"x","peers":[]}`), option.ServerOptions{})
+	require.Error(t, err)
+}
+
+func TestH_RegisterWARPEndpoint(t *testing.T) {
+	registry := endpoint.NewRegistry()
+	RegisterWARPEndpoint(registry)
+	options, loaded := registry.CreateOptions(C.TypeWARP)
+	require.True(t, loaded)
+	require.IsType(t, &option.WARPEndpointOptions{}, options)
+}
+
+// a profile whose host is a domain uses its own IPv4 address, so WireGuard does not send to
+// both families over one detour association
+func TestH_WarpPeerEndpointProfileAddress(t *testing.T) {
+	config := hWARPConfig(t, `{"private_key":"x","peers":[{"endpoint":{"host":"engage.cloudflareclient.com:2408","v4":"162.159.192.1:0","v6":"[2606:4700:d0::a29f:c001]:0"}}]}`)
+	address, port, err := warpPeerEndpoint(config, option.ServerOptions{})
+	require.NoError(t, err)
+	require.Equal(t, "162.159.192.1", address)
+	require.EqualValues(t, 2408, port)
+
+	config = hWARPConfig(t, `{"private_key":"x","peers":[{"endpoint":{"host":"engage.cloudflareclient.com:2408","v6":"[2606:4700:d0::a29f:c001]:0"}}]}`)
+	address, _, err = warpPeerEndpoint(config, option.ServerOptions{})
+	require.NoError(t, err)
+	require.Equal(t, "2606:4700:d0::a29f:c001", address)
+
+	address, _, err = warpPeerEndpoint(config, option.ServerOptions{Server: "engage.cloudflareclient.com"})
+	require.NoError(t, err)
+	require.Equal(t, "engage.cloudflareclient.com", address, "a server set in the config is kept")
+}
+
+func TestH_WARPMASQUEAndAWGConflict(t *testing.T) {
+	_, err := NewWARPEndpoint(hTestContext(t), nil, hLogger(), "warp-tag", option.WARPEndpointOptions{
+		MASQUE: &option.WARPMASQUEOptions{Enabled: true},
+		AWG:    &option.AwgOptions{Jc: 4},
+	})
+	require.ErrorContains(t, err, "masque and awg")
+}
+
+func TestH_WARPDisplayTypeByTunnel(t *testing.T) {
+	hRequireDisplay(t, "WARP · WG", adapter.DisplayType(hNewWARP(t, hTestContext(t), option.WARPEndpointOptions{})))
+	hRequireDisplay(t, "WARP · AWG", adapter.DisplayType(hNewWARP(t, hTestContext(t), option.WARPEndpointOptions{AWG: &option.AwgOptions{Jc: 4}})))
+	hRequireDisplay(t, "WARP · MASQUE", adapter.DisplayType(hNewWARP(t, hTestContext(t), option.WARPEndpointOptions{MASQUE: &option.WARPMASQUEOptions{Enabled: true}})))
+	hRequireDisplay(t, "WARP · MASQUE", adapter.DisplayType(hNewWARP(t, hTestContext(t), option.WARPEndpointOptions{MASQUE: &option.WARPMASQUEOptions{VHTTP: "h2"}})), "any setting turns it on")
+	hRequireDisplay(t, "WARP · WG", adapter.DisplayType(hNewWARP(t, hTestContext(t), option.WARPEndpointOptions{MASQUE: &option.WARPMASQUEOptions{}})), "an empty block is not MASQUE")
+}
+
+// The box closes the endpoint's scope, not the endpoint: its background work (port rotation,
+// failover, following the detour) must stop with the scope, or it outlives the box.
+func TestH_WARPStopsWithItsScope(t *testing.T) {
+	ep := hNewWARP(t, hTestContext(t), option.WARPEndpointOptions{})
+	scope := adapter.NewScope(context.Background(), hLogger())
+	require.NoError(t, ep.Start(adapter.StartStateInitialize, scope))
+	select {
+	case <-ep.done:
+		t.Fatal("stopped before the scope closed")
+	default:
+	}
+	require.NoError(t, scope.Close())
+	select {
+	case <-ep.done:
+	case <-time.After(time.Second):
+		t.Fatal("background work outlives the closed scope")
+	}
+}
+
+// hRequireDisplay checks a display type: only the type and its details, the status is shown on its own.
+func hRequireDisplay(t *testing.T, base string, display string, message ...any) {
+	t.Helper()
+	require.Equal(t, base, display, message...)
+}
+
+// While the device is registered, WARP shows as registering; a config it cannot use is failed.
+func TestH_WARPStatusRegisteringAndFailed(t *testing.T) {
+	ctx := service.ContextWith[adapter.OutboundManager](hTestContext(t), &hFakeOutboundManager{})
+	ep := hNewWARP(t, ctx, option.WARPEndpointOptions{Profile: option.WARPProfile{Detour: "missing"}})
+	require.Equal(t, adapter.StatusConnecting, ep.Status(), "not started")
+	go ep.startHandler()
+	require.Eventually(t, func() bool { return ep.Status() == adapter.StatusRegistering }, 2*time.Second, 10*time.Millisecond)
+	ep.Close()
+
+	broken := hNewWARP(t, hShortContext(t), option.WARPEndpointOptions{WARPConfig: &C.WARPConfig{PrivateKey: "key"}})
+	broken.startHandler()
+	require.Equal(t, adapter.StatusFailed, broken.Status(), "a config without peers cannot work")
+	// the display type says why
+	require.Error(t, adapter.StatusError(broken))
+	require.Equal(t, "WARP · WG: "+adapter.StatusError(broken).Error(), adapter.DisplayType(broken))
+}
+
+// With search_noise, a network where the configured noise gets no answer tries the presets: the
+// first that gets an answer is used by the next inner endpoint and remembered for the network.
+func TestH_WARPSearchNoise(t *testing.T) {
+	ep := hNewWARP(t, hTestContext(t), option.WARPEndpointOptions{
+		WARPConfig: hWARPConfig(t, hWARPConfigJSON),
+		Scanner:    &option.WARPScannerOptions{Enabled: true, SearchNoise: true, Count: 4, Timeout: badoption.Duration(time.Second)},
+	})
+	answers := func(ctx context.Context, addrPort netip.AddrPort) (time.Duration, error) {
+		return time.Millisecond, nil
+	}
+	blocked := func(ctx context.Context, addrPort netip.AddrPort) (time.Duration, error) {
+		return 0, E.New("no answer")
+	}
+	ep.failover = &warpFailover{
+		config: ep.options.WARPConfig,
+		book:   warpscan.NewBook(),
+		logger: hLogger(),
+		probes: map[string]warpscan.Probe{"": blocked, "xray-random": blocked, "quic": blocked},
+	}
+	for _, preset := range warpscan.NoisePresets {
+		if _, set := ep.failover.probes[preset.Name]; !set {
+			ep.failover.probes[preset.Name] = blocked
+		}
+	}
+	ep.failover.probes["dns-google"] = answers
+	ep.failover.network = warpscan.NetworkInfo{Name: "wifi/IR", IPv4: true}
+
+	results, err := ep.scan(nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, results)
+	require.Equal(t, "dns-google", ep.failover.currentNoise())
+	require.Equal(t, "dns-google", ep.failover.book.Noise("wifi/IR"), "remembered for the network")
+	dns, _ := warpscan.NoisePresetByName("dns-google")
+	require.Equal(t, dns.WireGuard(), ep.innerOptions().Noise, "the next inner endpoint sends it")
+	require.Equal(t, []string{"dns-google", "", "xray-random"}, ep.noiseCandidates(ep.failover, "wifi/IR")[:3], "tried first next time")
+
+	ep.options.Scanner.SearchNoise = false
+	require.Equal(t, []string{""}, ep.noiseCandidates(ep.failover, "wifi/IR"), "only the configured noise without search_noise")
+}
+
+func TestH_WARPNoisePresetOption(t *testing.T) {
+	_, err := NewWARPEndpoint(hTestContext(t), nil, hLogger(), "warp-tag", option.WARPEndpointOptions{
+		Scanner: &option.WARPScannerOptions{Enabled: true, SearchNoise: true, NoisePresets: []string{"dns-google", "nope"}},
+	})
+	require.ErrorContains(t, err, "unknown noise preset: nope")
+	options := option.WARPEndpointOptions{}
+	options.Noise.FakePacket = hiddify.FakePacketOptions{Enabled: true, Packets: []string{"<x>"}}
+	_, err = NewWARPEndpoint(hTestContext(t), nil, hLogger(), "warp-tag", options)
+	require.ErrorContains(t, err, "unknown tag")
+}
+
+func TestH_WARPMode(t *testing.T) {
+	for _, test := range []struct {
+		options option.WARPEndpointOptions
+		mode    string
+		err     string
+	}{
+		{option.WARPEndpointOptions{}, modeWireGuard, ""},
+		{option.WARPEndpointOptions{Mode: "wg"}, modeWireGuard, ""},
+		{option.WARPEndpointOptions{AWG: &option.AwgOptions{Jc: 4}}, modeAWG, ""},
+		{option.WARPEndpointOptions{MASQUE: &option.WARPMASQUEOptions{Enabled: true}}, modeMASQUE, ""},
+		{option.WARPEndpointOptions{MASQUE: &option.WARPMASQUEOptions{Enabled: true}, AWG: &option.AwgOptions{Jc: 4}}, "", "mode auto"},
+		{option.WARPEndpointOptions{Mode: "auto", MASQUE: &option.WARPMASQUEOptions{Enabled: true}, AWG: &option.AwgOptions{Jc: 4}}, modeAuto, ""},
+		{option.WARPEndpointOptions{Mode: "AWG"}, modeAWG, ""},
+		{option.WARPEndpointOptions{Mode: "masque"}, modeMASQUE, ""},
+		{option.WARPEndpointOptions{Mode: "openvpn"}, "", "unknown mode"},
+	} {
+		options := test.options
+		mode, err := warpMode(&options)
+		if test.err != "" {
+			require.ErrorContains(t, err, test.err, "%+v", test.options)
+			continue
+		}
+		require.NoError(t, err)
+		require.Equal(t, test.mode, mode, "%+v", test.options)
+		if mode == modeAWG || mode == modeAuto {
+			require.True(t, options.AWG.IsAvailble(), "awg and auto without awg settings get the default preset")
+		}
+	}
+}
+
+func TestH_WARPAutoDisplay(t *testing.T) {
+	ep := hNewWARP(t, hTestContext(t), option.WARPEndpointOptions{Mode: "auto"})
+	require.Equal(t, C.DisplayWARPAuto, ep.DisplayType(), "before it chose")
+	ep.selecting.Store(true)
+	require.Equal(t, adapter.StatusSearching, ep.Status(), "while the tunnels race")
+	ep.selecting.Store(false)
+	ep.active.Store(modeMASQUE)
+	require.Equal(t, C.DisplayWARPMASQUE, ep.DisplayType())
+	ep.active.Store(modeAWG)
+	require.Equal(t, C.DisplayWARPAWG, ep.DisplayType())
+	auto := hNewWARP(t, hTestContext(t), option.WARPEndpointOptions{Mode: "auto"})
+	auto.active.Store(modeWireGuard)
+	require.Nil(t, auto.innerOptions().AWG, "a WireGuard inner endpoint gets no awg block")
+	auto.active.Store(modeAWG)
+	require.True(t, auto.innerOptions().AWG.IsAvailble())
+}
+
+// Saved devices are used again; a retired one is skipped, and a retired device given by id and
+// auth_token is not registered again.
+func TestH_WARPProfiles(t *testing.T) {
+	wireGuard, err := json.Marshal(hWARPConfig(t, hWARPConfigJSON))
+	require.NoError(t, err)
+	cache := &hFakeCacheFile{store: map[string]*adapter.SavedBinary{
+		"unique":        {Content: wireGuard},
+		"unique/masque": {Content: []byte(`{"id": "masque-id", "access_token": "masque-token", "private_key": "k"}`)},
+	}}
+	ctx := service.ContextWith[adapter.CacheFile](hShortContext(t), cache)
+	store := loadWARPProfiles(ctx, hLogger(), "unique")
+	require.NotNil(t, store.usable(kindWireGuard), "migrated from the key of before")
+	masqueDevice := store.usable(kindMASQUE)
+	require.NotNil(t, masqueDevice)
+	require.Equal(t, "masque-id", masqueDevice.ID)
+	require.True(t, masqueDevice.checkable())
+
+	store.retire(masqueDevice, "the device is no longer registered")
+	require.Nil(t, store.usable(kindMASQUE))
+	require.True(t, store.isRetired("masque-id"))
+	second := &warpProfile{Kind: kindMASQUE, ID: "second"}
+	store.add(second)
+	require.Same(t, second, store.usable(kindMASQUE), "the next usable one")
+
+	reloaded := loadWARPProfiles(ctx, hLogger(), "unique")
+	require.True(t, reloaded.isRetired("masque-id"), "kept in the cache file")
+	require.Equal(t, "second", reloaded.usable(kindMASQUE).ID)
+
+	inline := &warpProfile{Kind: kindWireGuard, inline: true, ID: "x", Token: "y"}
+	require.False(t, inline.checkable(), "the config's own profile is never retired")
+	store.retire(inline, "no")
+	require.Empty(t, inline.Retired)
+}
+
+// Each tunnel has a device of its own in auto mode; awg mode alone may run on the WireGuard
+// device saved before.
+func TestH_WARPDevicePerTunnel(t *testing.T) {
+	require.Equal(t, kindWireGuard, modeKind(modeWireGuard))
+	require.Equal(t, kindAWG, modeKind(modeAWG))
+	require.Equal(t, kindMASQUE, modeKind(modeMASQUE))
+
+	wireGuard, err := json.Marshal(hWARPConfig(t, hWARPConfigJSON))
+	require.NoError(t, err)
+	newEndpoint := func(mode string) *WARPEndpoint {
+		cache := &hFakeCacheFile{store: map[string]*adapter.SavedBinary{"warp-tag": {Content: wireGuard}}}
+		ctx := service.ContextWith[adapter.CacheFile](hShortContext(t), cache)
+		ctx = service.ContextWith[adapter.OutboundManager](ctx, &hFakeOutboundManager{})
+		return hNewWARP(t, ctx, option.WARPEndpointOptions{Mode: mode, Profile: option.WARPProfile{Detour: "missing"}})
+	}
+	awg := newEndpoint("awg")
+	profile := awg.obtainProfile(awg.session(), kindAWG)
+	require.NotNil(t, profile, "awg mode takes the saved WireGuard device")
+	require.Equal(t, kindWireGuard, profile.Kind)
+
+	auto := newEndpoint("auto")
+	require.Nil(t, auto.obtainProfile(auto.session(), kindAWG), "auto mode registers an AmneziaWG device of its own")
+	require.NotNil(t, auto.obtainProfile(auto.session(), kindWireGuard))
+}
+
+// Endpoints share one pool of devices but never one device: each takes the one it used before,
+// else a free one; a closed endpoint gives its devices back.
+func TestH_WARPDevicePool(t *testing.T) {
+	cache := &hFakeCacheFile{store: map[string]*adapter.SavedBinary{}}
+	ctx := service.ContextWith[adapter.CacheFile](hTestContext(t), cache)
+	first := loadWARPProfiles(ctx, hLogger(), "warp-a")
+	second := loadWARPProfiles(ctx, hLogger(), "warp-b")
+	deviceA := &warpProfile{Kind: kindWireGuard, ID: "a", WireGuard: &C.WARPConfig{PrivateKey: "ka"}}
+	first.add(deviceA)
+	require.Nil(t, second.usable(kindWireGuard), "warp-a has the only device: warp-b must register its own")
+	deviceB := &warpProfile{Kind: kindWireGuard, ID: "b", WireGuard: &C.WARPConfig{PrivateKey: "kb"}}
+	second.add(deviceB)
+	require.Same(t, deviceA, first.usable(kindWireGuard))
+	require.Same(t, deviceB, second.usable(kindWireGuard))
+
+	// a new box: the pool is read again, and each endpoint takes the device it had
+	pools = map[adapter.CacheFile]*warpPool{}
+	ctx = service.ContextWith[adapter.CacheFile](hTestContext(t), cache)
+	second = loadWARPProfiles(ctx, hLogger(), "warp-b")
+	first = loadWARPProfiles(ctx, hLogger(), "warp-a")
+	require.Equal(t, "b", second.usable(kindWireGuard).ID, "warp-b takes its own device first")
+	require.Equal(t, "a", first.usable(kindWireGuard).ID)
+
+	third := loadWARPProfiles(ctx, hLogger(), "warp-c")
+	require.Nil(t, third.usable(kindWireGuard), "both devices are leased")
+	first.release()
+	require.Equal(t, "a", third.usable(kindWireGuard).ID, "a released device is free")
+	require.Nil(t, third.usable(kindMASQUE), "kinds are apart")
+
+	second.retire(second.usable(kindWireGuard), "gone")
+	fourth := loadWARPProfiles(ctx, hLogger(), "warp-d")
+	require.Nil(t, fourth.usable(kindWireGuard), "a retired device is not taken")
+}

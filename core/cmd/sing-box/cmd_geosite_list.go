@@ -4,8 +4,8 @@ import (
 	"os"
 	"sort"
 
+	"github.com/sagernet/sing-box/log"
 	F "github.com/sagernet/sing/common/format"
-	"github.com/spaiter/spaiter-vpn/core/log"
 
 	"github.com/spf13/cobra"
 )

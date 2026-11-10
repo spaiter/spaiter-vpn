@@ -1,7 +1,7 @@
 package buf
 
 import (
-	"github.com/spaiter/spaiter-vpn/core/common/xray/net"
+	"github.com/sagernet/sing-box/common/xray/net"
 )
 
 type EndpointOverrideReader struct {

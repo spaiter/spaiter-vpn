@@ -6,11 +6,11 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/sing/common/bufio"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"golang.org/x/time/rate"
 )

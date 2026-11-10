@@ -5,9 +5,9 @@ import (
 	"net/netip"
 	"syscall"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/process"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/process"
 )
 
 type platformSearcher struct {
@@ -42,6 +42,9 @@ func (s *platformSearcher) FindProcessInfo(ctx context.Context, network string, 
 	}
 
 	return s.platform.FindConnectionOwner(request)
+}
+
+func (s *platformSearcher) ResetCache() {
 }
 
 func (s *platformSearcher) Close() error {

@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spaiter/spaiter-vpn/core/common/xray"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/signal/done"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/task"
+	"github.com/sagernet/sing-box/common/xray"
+	"github.com/sagernet/sing-box/common/xray/signal/done"
+	"github.com/sagernet/sing-box/common/xray/task"
 )
 
 type Subscriber struct {

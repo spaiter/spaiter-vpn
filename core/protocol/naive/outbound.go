@@ -6,11 +6,17 @@ import (
 	"context"
 	"encoding/pem"
 	"net"
-	"os"
 	"strings"
 
 	"github.com/sagernet/cronet-go"
 	_ "github.com/sagernet/cronet-go/all"
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/outbound"
+	"github.com/sagernet/sing-box/common/dialer"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/dns"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
@@ -18,13 +24,7 @@ import (
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/uot"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/outbound"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/dns"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
+	"github.com/sagernet/sing/service/filemanager"
 
 	mDNS "github.com/miekg/dns"
 )
@@ -32,6 +32,8 @@ import (
 func RegisterOutbound(registry *outbound.Registry) {
 	outbound.Register[option.NaiveOutboundOptions](registry, C.TypeNaive, NewOutbound)
 }
+
+var _ adapter.OutboundWithMultiplex = (*Outbound)(nil)
 
 type Outbound struct {
 	outbound.Adapter
@@ -78,7 +80,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if options.TLS.KernelTx || options.TLS.KernelRx {
 		return nil, E.New("kernel TLS is not supported on naive outbound")
 	}
-	if options.TLS.UTLS != nil && options.TLS.UTLS.Enabled {
+	if options.TLS.UTLS.UsesUTLS() {
 		return nil, E.New("uTLS is not supported on naive outbound")
 	}
 	if options.TLS.Reality != nil && options.TLS.Reality.Enabled {
@@ -109,7 +111,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	if len(options.TLS.Certificate) > 0 {
 		trustedRootCertificates = strings.Join(options.TLS.Certificate, "\n")
 	} else if options.TLS.CertificatePath != "" {
-		content, err := os.ReadFile(options.TLS.CertificatePath)
+		content, err := filemanager.ReadFile(ctx, options.TLS.CertificatePath)
 		if err != nil {
 			return nil, E.Cause(err, "read certificate")
 		}
@@ -146,7 +148,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		if len(options.TLS.ECH.Config) > 0 {
 			echConfig = []byte(strings.Join(options.TLS.ECH.Config, "\n"))
 		} else if options.TLS.ECH.ConfigPath != "" {
-			content, err := os.ReadFile(options.TLS.ECH.ConfigPath)
+			content, err := filemanager.ReadFile(ctx, options.TLS.ECH.ConfigPath)
 			if err != nil {
 				return nil, E.Cause(err, "read ECH config")
 			}
@@ -176,22 +178,24 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		return nil, E.New("unknown quic congestion control: ", options.QUICCongestionControl)
 	}
 	client, err := cronet.NewNaiveClient(cronet.NaiveClientOptions{
-		Context:                 ctx,
-		Logger:                  logger,
-		ServerAddress:           serverAddress,
-		ServerName:              serverName,
-		Username:                options.Username,
-		Password:                options.Password,
-		InsecureConcurrency:     options.InsecureConcurrency,
-		ExtraHeaders:            extraHeaders,
-		TrustedRootCertificates: trustedRootCertificates,
-		Dialer:                  outboundDialer,
-		DNSResolver:             dnsResolver,
-		ECHEnabled:              echEnabled,
-		ECHConfigList:           echConfigList,
-		ECHQueryServerName:      echQueryServerName,
-		QUIC:                    options.QUIC,
-		QUICCongestionControl:   quicCongestionControl,
+		Context:                  ctx,
+		Logger:                   logger,
+		ServerAddress:            serverAddress,
+		ServerName:               serverName,
+		Username:                 options.Username,
+		Password:                 options.Password,
+		InsecureConcurrency:      options.InsecureConcurrency,
+		ExtraHeaders:             extraHeaders,
+		ReceiveWindow:            options.ReceiveWindow.Value(),
+		TrustedRootCertificates:  trustedRootCertificates,
+		Dialer:                   outboundDialer,
+		DNSResolver:              dnsResolver,
+		ECHEnabled:               echEnabled,
+		ECHConfigList:            echConfigList,
+		ECHQueryServerName:       echQueryServerName,
+		QUIC:                     options.QUIC,
+		QUICCongestionControl:    quicCongestionControl,
+		QUICSessionReceiveWindow: options.QUICSessionReceiveWindow.Value(),
 	})
 	if err != nil {
 		return nil, err
@@ -219,7 +223,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	}, nil
 }
 
-func (h *Outbound) Start(stage adapter.StartStage) error {
+func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateStart {
 		return nil
 	}
@@ -227,6 +231,7 @@ func (h *Outbound) Start(stage adapter.StartStage) error {
 	if err != nil {
 		return err
 	}
+	scope.Add(h.client.Close)
 	h.logger.Info("NaiveProxy started, version: ", h.client.Engine().Version())
 	return nil
 }
@@ -254,12 +259,12 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	return h.uotClient.ListenPacket(ctx, destination)
 }
 
-func (h *Outbound) InterfaceUpdated() {
-	h.client.Engine().CloseAllConnections()
+func (h *Outbound) MultiplexEnabled() bool {
+	return true
 }
 
-func (h *Outbound) Close() error {
-	return h.client.Close()
+func (h *Outbound) InterfaceUpdated(ctx context.Context) {
+	h.client.CloseAllConnections()
 }
 
 func (h *Outbound) Client() *cronet.NaiveClient {

@@ -2,12 +2,14 @@ package inbound
 
 import (
 	"context"
+	"maps"
+	"slices"
 	"sync"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/log"
 )
 
 type ConstructorFunc[T any] func(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options T) (adapter.Inbound, error)
@@ -44,6 +46,12 @@ func NewRegistry() *Registry {
 	}
 }
 
+func (m *Registry) OptionTypes() []string {
+	m.access.Lock()
+	defer m.access.Unlock()
+	return slices.Sorted(maps.Keys(m.optionsType))
+}
+
 func (m *Registry) CreateOptions(outboundType string) (any, bool) {
 	m.access.Lock()
 	defer m.access.Unlock()
@@ -55,9 +63,9 @@ func (m *Registry) CreateOptions(outboundType string) (any, bool) {
 }
 
 func (m *Registry) Create(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, outboundType string, options any) (adapter.Inbound, error) {
-	m.access.Lock()
-	defer m.access.Unlock()
+	m.access.Lock() //H: not held while the constructor runs, so a constructor can create nested inbounds or outbounds (bond)
 	constructor, loaded := m.constructor[outboundType]
+	m.access.Unlock() //H
 	if !loaded {
 		return nil, E.New("outbound type not found: " + outboundType)
 	}

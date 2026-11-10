@@ -3,7 +3,7 @@ package awg
 import (
 	"testing"
 
-	"github.com/spaiter/spaiter-vpn/core/adapter"
+	"github.com/sagernet/sing-box/adapter"
 )
 
 // The router reaches the peer-endpoint lookup through a type assertion on the

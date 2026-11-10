@@ -5,11 +5,11 @@ package include
 import (
 	"context"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/experimental"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/experimental"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 func init() {

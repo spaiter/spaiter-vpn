@@ -7,11 +7,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/grpcname" //H
+	"github.com/sagernet/sing-box/common/tls"
+	"github.com/sagernet/sing-box/option"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"golang.org/x/net/http2"
 	"google.golang.org/grpc"
@@ -28,6 +29,7 @@ type Client struct {
 	dialer      N.Dialer
 	serverAddr  string
 	serviceName string
+	streamName  string //H
 	dialOptions []grpc.DialOption
 	conn        atomic.Pointer[grpc.ClientConn]
 	connAccess  sync.Mutex
@@ -40,6 +42,9 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 			tlsConfig.SetNextProtos([]string{http2.NextProtoTLS})
 		}
 		dialOptions = append(dialOptions, grpc.WithTransportCredentials(NewTLSTransportCredentials(tlsConfig)))
+		if tlsConfig.ServerName() != "" {
+			dialOptions = append(dialOptions, grpc.WithAuthority(tlsConfig.ServerName()))
+		}
 	} else {
 		dialOptions = append(dialOptions, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	}
@@ -64,11 +69,13 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 	}))
 	//nolint:staticcheck
 	dialOptions = append(dialOptions, grpc.WithReturnConnectionError())
+	serviceName, streamName := grpcname.Names(options.ServiceName) //H
 	return &Client{
 		ctx:         ctx,
 		dialer:      dialer,
 		serverAddr:  serverAddr.String(),
-		serviceName: options.ServiceName,
+		serviceName: serviceName, //H: Xray's custom paths
+		streamName:  streamName,  //H
 		dialOptions: dialOptions,
 	}, nil
 }
@@ -99,11 +106,18 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 		return nil, err
 	}
 	client := NewGunServiceClient(clientConn).(GunServiceCustomNameClient)
-	ctx, cancel := context.WithCancelCause(ctx)
-	stream, err := client.TunCustomName(ctx, c.serviceName)
+	streamCtx, cancel := context.WithCancelCause(context.WithoutCancel(ctx))
+	stopPropagation := context.AfterFunc(ctx, func() {
+		cancel(context.Cause(ctx))
+	})
+	stream, err := client.TunCustomName(streamCtx, c.serviceName, c.streamName) //H
 	if err != nil {
+		stopPropagation()
 		cancel(err)
 		return nil, err
+	}
+	if !stopPropagation() {
+		return nil, context.Cause(ctx)
 	}
 	return NewGRPCConn(stream, cancel), nil
 }

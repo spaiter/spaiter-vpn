@@ -35,12 +35,14 @@
 | `mieru`        | [Mieru](./mieru/)               |
 | `anytls`       | [AnyTLS](./anytls/)             |
 | `snell`        | [Snell](./snell/)               |
+| `tailcat`      | [Tailcat](./tailcat/)           |
 | `tor`          | [Tor](./tor/)                   |
 | `ssh`          | [SSH](./ssh/)                   |
 | `dns`          | [DNS](./dns/)                   |
 | `selector`     | [Selector](./selector/)         |
 | `urltest`      | [URLTest](./urltest/)           |
 | `naive`        | [NaiveProxy](./naive/)          |
+| `trusttunnel`  | [TrustTunnel](./trusttunnel/)   |
 
 #### tag
 

@@ -416,7 +416,7 @@ run; without a hand, the cloud-init path above.
 | Path | What |
 |---|---|
 | `cmd/`, `internal/`, `scripts/` | the installer and bot; this is the Go module root |
-| `core/` | the VPN core and its patched dependencies (`core/thirdparty/`) |
+| `core/` | the VPN core, a nested Go module under its upstream path (`github.com/sagernet/sing-box`), and its forked dependencies (`core/replace/`) |
 | `relay/` | the WG-over-VK relay shim; a nested Go module, built separately |
 | `test/acceptance/` | the end-to-end journey in a disposable VM |
 
@@ -427,10 +427,10 @@ run; without a hand, the cloud-init path above.
     scripts/hooks/install.sh      run the gates on every commit
     scripts/check.sh contract     bot <-> core contract; builds both cores into .cache/
 
-`fmt` runs `gofmt` on every tracked and new `.go` file except `core/thirdparty/`
+`fmt` runs `gofmt` on every tracked and new `.go` file except `core/replace/`
 and `relay/server.go`, which are kept close to upstream (drift there is
 reported, not failed). `vet` and `test` cover the first-party packages and the
-`relay/` module against `scripts/vet-baseline.txt`; `thirdparty/` is excluded
+`relay/` module against `scripts/vet-baseline.txt`; `core/replace/` is excluded
 because its upstream tests target other module paths. `test` passes
 `-checklinkname=0` for `experimental/libbox` and skips `common/netns`, which
 needs privileges. `leaks` runs where a denylist of deployment values exists and
@@ -466,9 +466,10 @@ not this one, are the governing terms for their directories:
 |---|---|
 | this repository | GPL-3.0-or-later |
 | `core/` | GPL-3.0 + naming clause; see `core/LICENSE`, `core/NOTICE.md`, `core/PROVENANCE.md` |
-| `core/thirdparty/tailscale/` | BSD-3-Clause |
-| `core/thirdparty/{wireguard-go,gooserelay,sing-anytls,sing-shadowtls,sing-vmess,sing-snell,connect-ip-go,dnscrypt/v2}/` | MIT / permissive, each with its own `LICENSE` |
-| `core/thirdparty/vaydns/` | see its `COPYING` |
+| `core/replace/tailscale/` | BSD-3-Clause |
+| `core/replace/{gvisor,psiphon-quic-go,psiphon-tls,soar}/` | Apache-2.0 / BSD / MIT, each with its own `LICENSE` |
+| `core/replace/{wireguard-go,amneziawg-go,MasterDnsVPN}/` | MIT, each with its own `LICENSE` |
+| `core/replace/{sing,sing-tun,sing-mux,sing-vmess,sing-shadowtls}/` | GPL-3.0-or-later, each with its own `LICENSE` |
 | `core/common/ja3/` | see its `LICENSE` |
 | `core/common/sniff/testdata/pcap/` | LGPL-3.0 + BSD-3 + MIT (nDPI, zeek and suricata-verify captures) |
 | `relay/` | GPL-3.0-or-later; fork of qWDTT's `server.go`, see `relay/NOTICE.md` |

@@ -4,10 +4,10 @@ import (
 	"net/netip"
 	"strings"
 
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/json/badoption"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 )
 
 var _ RuleItem = (*DefaultInterfaceAddressItem)(nil)
@@ -29,6 +29,9 @@ func NewDefaultInterfaceAddressItem(networkManager adapter.NetworkManager, inter
 }
 
 func (r *DefaultInterfaceAddressItem) Match(metadata *adapter.InboundContext) bool {
+	if r.interfaceMonitor == nil {
+		return false
+	}
 	defaultInterface := r.interfaceMonitor.DefaultInterface()
 	if defaultInterface == nil {
 		return false

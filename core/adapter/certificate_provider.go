@@ -4,8 +4,8 @@ import (
 	"context"
 	"crypto/tls"
 
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 )
 
 type CertificateProvider interface {
@@ -33,6 +33,5 @@ type CertificateProviderManager interface {
 	Lifecycle
 	CertificateProviders() []CertificateProviderService
 	Get(tag string) (CertificateProviderService, bool)
-	Remove(tag string) error
 	Create(ctx context.Context, logger log.ContextLogger, tag string, providerType string, options any) error
 }

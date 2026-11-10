@@ -4,9 +4,9 @@ import (
 	"io"
 	"time"
 
+	"github.com/sagernet/sing-box/common/xray/errors"
+	"github.com/sagernet/sing-box/common/xray/signal"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/errors"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/signal"
 )
 
 type dataHandler func(MultiBuffer)

@@ -3,8 +3,12 @@ package option
 import (
 	"context"
 	"net/netip"
+	"strconv"
 
+	"github.com/sagernet/sing-box/schema"
+	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json"
+
 	"github.com/sagernet/sing/common/json/badoption"
 )
 
@@ -17,6 +21,10 @@ type _AwgEndpointOptions struct {
 	Awg              AwgOptions                       `json:"awg,omitempty"`
 	Peers            []AwgPeerOptions                 `json:"peers,omitempty"`
 	DialerOptions
+
+	// MTUDiscovery and FallbackAddress are those of the wireguard endpoint. //H
+	MTUDiscovery    *bool                          `json:"mtu_discovery,omitempty"`    //H: on unless false
+	FallbackAddress badoption.Listable[netip.Addr] `json:"fallback_address,omitempty"` //H
 }
 
 type AwgEndpointOptions _AwgEndpointOptions
@@ -57,17 +65,40 @@ type AwgOptions struct {
 	I4   string `json:"i4,omitempty"`
 	I5   string `json:"i5,omitempty"`
 
-	// AWG 3.x. Ranges are "a-b" or a single "a"; HeaderProtectionKey is base64
-	// (like private_key) and gets hex-encoded on the way into the UAPI. //H awg3
-	HeaderProtectionKey    string `json:"header_protection_key,omitempty"`
-	ContentPaddingAddition string `json:"content_padding_addition,omitempty"`
-	RekeyAfterTime         string `json:"rekey_after_time,omitempty"`
-	RekeyTimeout           string `json:"rekey_timeout,omitempty"`
-	RejectAfterTime        string `json:"reject_after_time,omitempty"`
-	KeepaliveTimeout       string `json:"keepalive_timeout,omitempty"`
-	MaxHandshakeAttempts   string `json:"max_handshake_attempts,omitempty"`
-	RandomTrailers         bool   `json:"random_trailers,omitempty"`
-	DisableCookies         bool   `json:"disable_cookies,omitempty"`
+	// AmneziaWG 3.x. The range values are seconds (counts for max_handshake_attempts, bytes for
+	// content_padding_addition), a number or "min-max".
+	HeaderProtectionKey    string   `json:"header_protection_key,omitempty"` // 64 hex digits
+	ContentPaddingAddition AwgRange `json:"content_padding_addition,omitempty"`
+	RekeyAfterTime         AwgRange `json:"rekey_after_time,omitempty"`
+	RekeyTimeout           AwgRange `json:"rekey_timeout,omitempty"`
+	RejectAfterTime        AwgRange `json:"reject_after_time,omitempty"`
+	KeepaliveTimeout       AwgRange `json:"keepalive_timeout,omitempty"`
+	MaxHandshakeAttempts   AwgRange `json:"max_handshake_attempts,omitempty"`
+	RandomTrailers         bool     `json:"random_trailers,omitempty"`
+	DisableCookies         bool     `json:"disable_cookies,omitempty"`
+
+	// Masquerade, as in sing-box-lx: i1 becomes a decoy of protocol ip ("quic") for domain id,
+	// built afresh before every handshake. ib names the client profile. Not with i1.
+	IP string `json:"ip,omitempty"`
+	ID string `json:"id,omitempty"`
+	IB string `json:"ib,omitempty"`
+}
+
+// AwgRange is an AmneziaWG range, written as a number or as "min-max".
+type AwgRange string
+
+func (r *AwgRange) UnmarshalJSON(content []byte) error {
+	var number uint32
+	if err := json.Unmarshal(content, &number); err == nil {
+		*r = AwgRange(strconv.FormatUint(uint64(number), 10))
+		return nil
+	}
+	var value string
+	if err := json.Unmarshal(content, &value); err != nil {
+		return E.New("an AmneziaWG range is a number or \"min-max\"")
+	}
+	*r = AwgRange(value)
+	return nil
 }
 
 func (o *AwgOptions) IsAvailble() bool {
@@ -75,19 +106,24 @@ func (o *AwgOptions) IsAvailble() bool {
 		return false
 	}
 	return o.Jc != 0 || o.Jmin != 0 || o.Jmax != 0 || o.S1 != 0 || o.S2 != 0 || o.S3 != 0 || o.S4 != 0 || o.H1 != "" || o.H2 != "" || o.H3 != "" || o.H4 != "" || o.I1 != "" || o.I2 != "" || o.I3 != "" || o.I4 != "" || o.I5 != "" ||
-		o.HeaderProtectionKey != "" || o.ContentPaddingAddition != "" || o.RekeyAfterTime != "" || o.RekeyTimeout != "" || o.RejectAfterTime != "" || o.KeepaliveTimeout != "" || o.MaxHandshakeAttempts != "" || o.RandomTrailers || o.DisableCookies
+		o.HeaderProtectionKey != "" || o.ContentPaddingAddition != "" || o.RekeyAfterTime != "" || o.RekeyTimeout != "" || o.RejectAfterTime != "" ||
+		o.KeepaliveTimeout != "" || o.MaxHandshakeAttempts != "" || o.RandomTrailers || o.DisableCookies || o.IP != "" || o.ID != "" || o.IB != ""
 }
 
 type AwgPeerOptions struct {
-	Address string `json:"address,omitempty"`
-	Port    uint16 `json:"port,omitempty"`
-	// Name attributes the peer's traffic to a user, the way the `users` list
-	// does for proxy inbounds: it populates metadata.User, which drives the
-	// per-user SQLite stats and the XDP blocker's per-user IP tracking.
-	// Optional — an unnamed peer simply stays unattributed, as before. //H
-	Name                        string                           `json:"name,omitempty"`
+	// H: connections from this peer are accounted to this user (metadata.User)
+	Username                    string                           `json:"name,omitempty"`
+	Address                     string                           `json:"address,omitempty"`
+	Port                        uint16                           `json:"port,omitempty"`
 	PublicKey                   string                           `json:"public_key,omitempty"`
 	PresharedKey                string                           `json:"preshared_key,omitempty"`
 	AllowedIPs                  badoption.Listable[netip.Prefix] `json:"allowed_ips,omitempty"`
 	PersistentKeepaliveInterval uint16                           `json:"persistent_keepalive_interval,omitempty"`
+	// Reserved are the 3 bytes written into bytes 1–3 of each message, as WARP needs (see
+	// AwgOptions.ReservedMessageTypes).
+	Reserved []uint8 `json:"reserved,omitempty"`
+}
+
+func (r AwgRange) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
+	return schema.AnyOf(schema.UnsignedNode(32), schema.StringNode()), nil
 }

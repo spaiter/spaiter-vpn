@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	"github.com/spaiter/spaiter-vpn/core/protocol/hiddify/gooserelay"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/protocol/hiddify/gooserelay"
 )
 
 const validHexKey = "0000000000000000000000000000000000000000000000000000000000000000"

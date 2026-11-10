@@ -6,10 +6,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/spaiter/spaiter-vpn/core/common/xray"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/buf"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/signal"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/signal/done"
+	"github.com/sagernet/sing-box/common/xray"
+	"github.com/sagernet/sing-box/common/xray/buf"
+	"github.com/sagernet/sing-box/common/xray/signal"
+	"github.com/sagernet/sing-box/common/xray/signal/done"
 )
 
 type state byte

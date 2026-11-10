@@ -1,14 +1,16 @@
 package adapter
 
 import (
+	"context"
 	"encoding/hex"
 	"net"
+	"net/netip"
 	"strings"
 	"time"
 
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/control"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
 )
 
 type NetworkManager interface {
@@ -18,6 +20,7 @@ type NetworkManager interface {
 	UpdateInterfaces() error
 	DefaultNetworkInterface() *NetworkInterface
 	NetworkInterfaces() []NetworkInterface
+	NetworkEnvironment() uint64
 	AutoDetectInterface() bool
 	AutoDetectInterfaceFunc() control.Func
 	ProtectFunc() control.Func
@@ -25,13 +28,17 @@ type NetworkManager interface {
 	RegisterAutoRedirectOutputMark(mark uint32) error
 	AutoRedirectOutputMark() uint32
 	AutoRedirectOutputMarkFunc() control.Func
+	RegisterBridgeInterface(interfaceName string)
+	BridgeInterfaces() []string
 	NetworkMonitor() tun.NetworkUpdateMonitor
 	InterfaceMonitor() tun.DefaultInterfaceMonitor
 	PackageManager() tun.PackageManager
 	NeedWIFIState() bool
 	WIFIState() WIFIState
-	UpdateWIFIState()
-	ResetNetwork()
+	UpdateWIFIState(ctx context.Context)
+	ResetNetwork(ctx context.Context)
+	FlushSystemDNSCache()
+	ReleaseMemory(ctx context.Context)
 }
 
 type NetworkOptions struct {
@@ -46,7 +53,11 @@ type NetworkOptions struct {
 }
 
 type InterfaceUpdateListener interface {
-	InterfaceUpdated()
+	InterfaceUpdated(ctx context.Context)
+}
+
+type SystemDNSCacheFlusher interface {
+	FlushSystemDNSCache()
 }
 
 type WIFIState struct {
@@ -74,8 +85,10 @@ func NormalizeWIFIBSSID(bssid string) string {
 
 type NetworkInterface struct {
 	control.Interface
-	Type        C.InterfaceType
-	DNSServers  []string
-	Expensive   bool
-	Constrained bool
+	Type             C.InterfaceType
+	DNSServers       []string
+	DNSSearchDomains []string
+	Gateways         []netip.Addr
+	Expensive        bool
+	Constrained      bool
 }

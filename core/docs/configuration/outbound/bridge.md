@@ -11,7 +11,7 @@ icon: material/new-box
     Requires privileges. Supported on Linux, macOS, Windows, rooted Android, and jailbroken iOS.
 
     For graphical clients: on macOS, only available in the standalone version and requires the
-    Root Helper; on Android, requires root permission; on iOS, requires jailbreak.
+    Helper Service; on Android, requires root permission; on iOS, requires jailbreak.
 
 `bridge` is the L3 counterpart of the `direct` outbound: it forwards L3 connections
 (TCP, UDP and ICMP) directly out of a network interface. Route L3 traffic to it from a TUN
@@ -48,8 +48,6 @@ Interface name for forwarded traffic to egress.
 
 The default interface will be used by default.
 
-Forwarded traffic will be dropped while the interface is unavailable.
-
 #### bridge_name
 
 Custom bridge TUN interface name prefix, `bridge` is used by default.
@@ -60,9 +58,9 @@ Not effective on Apple platforms.
 
 !!! quote ""
 
-    Only supported on Linux, and only takes effect when `interface` is set.
+    Only supported on Linux.
 
-Linux iproute2 table index for pinned egress routes.
+Linux iproute2 table index.
 
 `2200` + instance index is used by default.
 

@@ -4,9 +4,17 @@ import (
 	"context"
 	"net"
 	"os"
-	"sync/atomic"
+	"sync"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/inbound"
+	"github.com/sagernet/sing-box/common/listener"
+	"github.com/sagernet/sing-box/common/mux"
+	"github.com/sagernet/sing-box/common/uot"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-shadowsocks"
 	"github.com/sagernet/sing-shadowsocks/shadowaead"
 	"github.com/sagernet/sing-shadowsocks/shadowaead_2022"
@@ -19,15 +27,6 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/ntp"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/inbound"
-	"github.com/spaiter/spaiter-vpn/core/common/listener"
-	"github.com/spaiter/spaiter-vpn/core/common/mux"
-	"github.com/spaiter/spaiter-vpn/core/common/uot"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	obfs "github.com/spaiter/spaiter-vpn/core/transport/simple-obfs"
 )
 
 var (
@@ -37,30 +36,29 @@ var (
 
 type MultiInbound struct {
 	inbound.Adapter
-	ctx      context.Context
-	router   adapter.ConnectionRouterEx
-	logger   logger.ContextLogger
-	listener *listener.Listener
-	service  shadowsocks.MultiService[int]
-	users    atomic.Pointer[[]option.ShadowsocksUser] //H swapped by ReloadUsers
-	tracker  adapter.SSMTracker
-	obfsMode string
+	ctx         context.Context
+	router      adapter.ConnectionRouterEx
+	logger      logger.ContextLogger
+	listener    *listener.Listener
+	service     shadowsocks.MultiService[int]
+	usersAccess sync.RWMutex
+	users       []option.ShadowsocksUser
+	tracker     adapter.SSMTracker
+	obfs        obfsServer
 }
 
 func newMultiInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.ShadowsocksInboundOptions) (*MultiInbound, error) {
-	switch options.ObfsMode {
-	case "", "http", "tls":
-	default:
-		return nil, E.New("shadowsocks: unsupported obfs mode: ", options.ObfsMode)
+	obfsServer, err := newObfsServer(options)
+	if err != nil {
+		return nil, err
 	}
 	inbound := &MultiInbound{
-		Adapter:  inbound.NewAdapter(C.TypeShadowsocks, tag),
-		ctx:      ctx,
-		router:   uot.NewRouter(router, logger),
-		logger:   logger,
-		obfsMode: options.ObfsMode,
+		Adapter: inbound.NewAdapter(C.TypeShadowsocks, tag),
+		ctx:     ctx,
+		router:  uot.NewRouter(router, logger),
+		logger:  logger,
+		obfs:    obfsServer,
 	}
-	var err error
 	inbound.router, err = mux.NewRouterWithOptions(inbound.router, logger, common.PtrValueOrDefault(options.Multiplex))
 	if err != nil {
 		return nil, err
@@ -103,7 +101,7 @@ func newMultiInbound(ctx context.Context, router adapter.Router, logger log.Cont
 		}
 	}
 	inbound.service = service
-	inbound.users.Store(&options.Users)
+	inbound.users = options.Users
 	inbound.listener = listener.New(listener.Options{
 		Context:                  ctx,
 		Logger:                   logger,
@@ -116,15 +114,16 @@ func newMultiInbound(ctx context.Context, router adapter.Router, logger log.Cont
 	return inbound, err
 }
 
-func (h *MultiInbound) Start(stage adapter.StartStage) error {
+func (h *MultiInbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateStart {
 		return nil
 	}
-	return h.listener.Start()
-}
-
-func (h *MultiInbound) Close() error {
-	return h.listener.Close()
+	err := h.listener.Start()
+	if err != nil {
+		return err
+	}
+	scope.Add(h.listener.Close)
+	return nil
 }
 
 func (h *MultiInbound) SetTracker(tracker adapter.SSMTracker) {
@@ -132,38 +131,36 @@ func (h *MultiInbound) SetTracker(tracker adapter.SSMTracker) {
 }
 
 func (h *MultiInbound) UpdateUsers(users []string, uPSKs []string) error {
+	h.usersAccess.Lock()
+	defer h.usersAccess.Unlock()
 	err := h.service.UpdateUsersWithPasswords(common.MapIndexed(users, func(index int, user string) int {
 		return index
 	}), uPSKs)
 	if err != nil {
 		return err
 	}
-	renamed := common.Map(users, func(user string) option.ShadowsocksUser {
+	h.users = common.Map(users, func(user string) option.ShadowsocksUser {
 		return option.ShadowsocksUser{
 			Name: user,
 		}
 	})
-	h.users.Store(&renamed)
 	return nil
+}
+
+func (h *MultiInbound) userName(userIndex int) string {
+	h.usersAccess.RLock()
+	defer h.usersAccess.RUnlock()
+	if userIndex >= len(h.users) {
+		return ""
+	}
+	return h.users[userIndex].Name
 }
 
 //nolint:staticcheck
 func (h *MultiInbound) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
-	switch h.obfsMode {
-	case "http":
-		conn = obfs.NewHTTPObfsServer(conn)
-	case "tls":
-		conn = obfs.NewTLSObfsServer(conn)
-	}
-	err := h.service.NewConnection(ctx, conn, adapter.UpstreamMetadata(metadata))
-	N.CloseOnHandshakeFailure(conn, onClose, err)
-	if err != nil {
-		if E.IsClosedOrCanceled(err) {
-			h.logger.DebugContext(ctx, "connection closed: ", err)
-		} else {
-			h.logger.ErrorContext(ctx, E.Cause(err, "process connection from ", metadata.Source))
-		}
-	}
+	h.obfs.serve(ctx, conn, metadata, onClose, h, h.router, h.logger, func(ctx context.Context, conn net.Conn) error {
+		return h.service.NewConnection(ctx, conn, adapter.UpstreamMetadata(metadata))
+	})
 }
 
 //nolint:staticcheck
@@ -175,6 +172,7 @@ func (h *MultiInbound) NewPacket(buffer *buf.Buffer, source M.Socksaddr) {
 }
 
 func (h *MultiInbound) newConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext) error {
+	markAuthenticated(ctx)
 	userIndex, loaded := auth.UserFromContext[int](ctx)
 	if !loaded {
 		return os.ErrInvalid

@@ -4,7 +4,7 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/spaiter/spaiter-vpn/core/common/tlsfragment"
+	"github.com/sagernet/sing-box/common/tlsfragment"
 
 	"github.com/stretchr/testify/require"
 )

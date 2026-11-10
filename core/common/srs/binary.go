@@ -6,15 +6,17 @@ import (
 	"encoding/binary"
 	"io"
 	"net/netip"
+	"slices"
 
+	"github.com/sagernet/sing-box/common/ipset"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/domain"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json/badjson"
 	"github.com/sagernet/sing/common/json/badoption"
 	"github.com/sagernet/sing/common/varbin"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"go4.org/netipx"
 )
@@ -77,13 +79,14 @@ func Read(reader io.Reader, recover bool) (ruleSetCompat option.PlainRuleSetComp
 		return
 	}
 	ruleSetCompat.Version = version
-	ruleSetCompat.Options.Rules = make([]option.HeadlessRule, length)
 	for i := range length {
-		ruleSetCompat.Options.Rules[i], err = readRule(bReader, recover)
+		var rule option.HeadlessRule
+		rule, err = readRule(bReader, recover, 0, nil)
 		if err != nil {
 			err = E.Cause(err, "read rule[", i, "]")
 			return
 		}
+		ruleSetCompat.Options.Rules = append(ruleSetCompat.Options.Rules, rule)
 	}
 	return
 }
@@ -107,7 +110,7 @@ func Write(writer io.Writer, ruleSet option.PlainRuleSet, generateVersion uint8)
 		return err
 	}
 	for _, rule := range ruleSet.Rules {
-		err = writeRule(bWriter, rule, generateVersion)
+		err = writeRule(bWriter, rule, generateVersion, nil)
 		if err != nil {
 			return err
 		}
@@ -119,7 +122,26 @@ func Write(writer io.Writer, ruleSet option.PlainRuleSet, generateVersion uint8)
 	return compressWriter.Close()
 }
 
-func readRule(reader varbin.Reader, recover bool) (rule option.HeadlessRule, err error) {
+const maxLogicalRuleDepth = 100
+
+// maxRuleItemCount bounds the number of elements in a single rule item list
+// (domain/process-path strings, ports, query types, ...). Legitimate rule
+// items realistically contain at most a few thousand entries; 1<<20 (~1M)
+// comfortably covers any real-world rule-set while rejecting a
+// deliberately-absurd claimed count (e.g. a crafted uvarint(1<<40)) before
+// it drives a huge allocation.
+const maxRuleItemCount = 1 << 20
+
+// maxRuleItemStringLength bounds the length of a single string value
+// (domain, regex, process path, ...) within a rule item. 1<<24 (16MiB) is
+// far beyond any realistic domain/path/regex string.
+const maxRuleItemStringLength = 1 << 24
+
+func readRule(reader varbin.Reader, recover bool, depth int, mmap *mmapReader) (rule option.HeadlessRule, err error) {
+	if depth > maxLogicalRuleDepth {
+		err = E.New("logical rule nested too deep")
+		return
+	}
 	var ruleType uint8
 	err = binary.Read(reader, binary.BigEndian, &ruleType)
 	if err != nil {
@@ -128,28 +150,28 @@ func readRule(reader varbin.Reader, recover bool) (rule option.HeadlessRule, err
 	switch ruleType {
 	case 0:
 		rule.Type = C.RuleTypeDefault
-		rule.DefaultOptions, err = readDefaultRule(reader, recover)
+		rule.DefaultOptions, err = readDefaultRule(reader, recover, mmap)
 	case 1:
 		rule.Type = C.RuleTypeLogical
-		rule.LogicalOptions, err = readLogicalRule(reader, recover)
+		rule.LogicalOptions, err = readLogicalRule(reader, recover, depth, mmap)
 	default:
 		err = E.New("unknown rule type: ", ruleType)
 	}
 	return
 }
 
-func writeRule(writer varbin.Writer, rule option.HeadlessRule, generateVersion uint8) error {
+func writeRule(writer varbin.Writer, rule option.HeadlessRule, generateVersion uint8, mmap *mmapWriter) error {
 	switch rule.Type {
 	case C.RuleTypeDefault:
-		return writeDefaultRule(writer, rule.DefaultOptions, generateVersion)
+		return writeDefaultRule(writer, rule.DefaultOptions, generateVersion, mmap)
 	case C.RuleTypeLogical:
-		return writeLogicalRule(writer, rule.LogicalOptions, generateVersion)
+		return writeLogicalRule(writer, rule.LogicalOptions, generateVersion, mmap)
 	default:
-		panic("unknown rule type: " + rule.Type)
+		return E.New("unknown rule type: ", rule.Type)
 	}
 }
 
-func readDefaultRule(reader varbin.Reader, recover bool) (rule option.DefaultHeadlessRule, err error) {
+func readDefaultRule(reader varbin.Reader, recover bool, mmap *mmapReader) (rule option.DefaultHeadlessRule, err error) {
 	var lastItemType uint8
 	for {
 		var itemType uint8
@@ -160,7 +182,7 @@ func readDefaultRule(reader varbin.Reader, recover bool) (rule option.DefaultHea
 		switch itemType {
 		case ruleItemQueryType:
 			var rawQueryType []uint16
-			rawQueryType, err = readRuleItemUint16(reader)
+			rawQueryType, err = varbin.ReadSlice[uint16](reader, binary.BigEndian)
 			if err != nil {
 				return
 			}
@@ -171,7 +193,11 @@ func readDefaultRule(reader varbin.Reader, recover bool) (rule option.DefaultHea
 			rule.Network, err = readRuleItemString(reader)
 		case ruleItemDomain:
 			var matcher *domain.Matcher
-			matcher, err = domain.ReadMatcher(reader)
+			if mmap != nil {
+				matcher, err = mmap.readMatcher(reader)
+			} else {
+				matcher, err = domain.ReadMatcher(reader)
+			}
 			if err != nil {
 				return
 			}
@@ -184,27 +210,39 @@ func readDefaultRule(reader varbin.Reader, recover bool) (rule option.DefaultHea
 		case ruleItemDomainRegex:
 			rule.DomainRegex, err = readRuleItemString(reader)
 		case ruleItemSourceIPCIDR:
-			rule.SourceIPSet, err = readIPSet(reader)
+			if mmap != nil {
+				rule.SourceIPSet, err = mmap.readIPSet(reader)
+			} else {
+				rule.SourceIPSet, err = readIPSet(reader)
+			}
 			if err != nil {
 				return
 			}
 			if recover {
-				rule.SourceIPCIDR = common.Map(rule.SourceIPSet.Prefixes(), netip.Prefix.String)
+				rule.SourceIPCIDR = common.Map(rule.SourceIPSet.Prefixes(), func(it netip.Prefix) *badoption.Prefixable {
+					return common.Ptr(badoption.Prefixable(it))
+				})
 			}
 		case ruleItemIPCIDR:
-			rule.IPSet, err = readIPSet(reader)
+			if mmap != nil {
+				rule.IPSet, err = mmap.readIPSet(reader)
+			} else {
+				rule.IPSet, err = readIPSet(reader)
+			}
 			if err != nil {
 				return
 			}
 			if recover {
-				rule.IPCIDR = common.Map(rule.IPSet.Prefixes(), netip.Prefix.String)
+				rule.IPCIDR = common.Map(rule.IPSet.Prefixes(), func(it netip.Prefix) *badoption.Prefixable {
+					return common.Ptr(badoption.Prefixable(it))
+				})
 			}
 		case ruleItemSourcePort:
-			rule.SourcePort, err = readRuleItemUint16(reader)
+			rule.SourcePort, err = varbin.ReadSlice[uint16](reader, binary.BigEndian)
 		case ruleItemSourcePortRange:
 			rule.SourcePortRange, err = readRuleItemString(reader)
 		case ruleItemPort:
-			rule.Port, err = readRuleItemUint16(reader)
+			rule.Port, err = varbin.ReadSlice[uint16](reader, binary.BigEndian)
 		case ruleItemPortRange:
 			rule.PortRange, err = readRuleItemString(reader)
 		case ruleItemProcessName:
@@ -223,7 +261,11 @@ func readDefaultRule(reader varbin.Reader, recover bool) (rule option.DefaultHea
 			rule.WIFIBSSID, err = readRuleItemString(reader)
 		case ruleItemAdGuardDomain:
 			var matcher *domain.AdGuardMatcher
-			matcher, err = domain.ReadAdGuardMatcher(reader)
+			if mmap != nil {
+				matcher, err = mmap.readAdGuardMatcher(reader)
+			} else {
+				matcher, err = domain.ReadAdGuardMatcher(reader)
+			}
 			if err != nil {
 				return
 			}
@@ -232,7 +274,7 @@ func readDefaultRule(reader varbin.Reader, recover bool) (rule option.DefaultHea
 				rule.AdGuardDomain = matcher.Dump()
 			}
 		case ruleItemNetworkType:
-			rule.NetworkType, err = readRuleItemUint8[option.InterfaceType](reader)
+			rule.NetworkType, err = varbin.ReadSlice[option.InterfaceType](reader, binary.BigEndian)
 		case ruleItemNetworkIsExpensive:
 			rule.NetworkIsExpensive = true
 		case ruleItemNetworkIsConstrained:
@@ -244,7 +286,7 @@ func readDefaultRule(reader varbin.Reader, recover bool) (rule option.DefaultHea
 			if err != nil {
 				return
 			}
-			for i := uint64(0); i < size; i++ {
+			for range size {
 				var key uint8
 				err = binary.Read(reader, binary.BigEndian, &key)
 				if err != nil {
@@ -258,7 +300,7 @@ func readDefaultRule(reader varbin.Reader, recover bool) (rule option.DefaultHea
 				}
 				for j := uint64(0); j < prefixCount; j++ {
 					var prefix netip.Prefix
-					prefix, err = readPrefix(reader)
+					prefix, err = ReadPrefix(reader)
 					if err != nil {
 						return
 					}
@@ -275,7 +317,7 @@ func readDefaultRule(reader varbin.Reader, recover bool) (rule option.DefaultHea
 			}
 			for j := uint64(0); j < prefixCount; j++ {
 				var prefix netip.Prefix
-				prefix, err = readPrefix(reader)
+				prefix, err = ReadPrefix(reader)
 				if err != nil {
 					return
 				}
@@ -295,7 +337,7 @@ func readDefaultRule(reader varbin.Reader, recover bool) (rule option.DefaultHea
 	}
 }
 
-func writeDefaultRule(writer varbin.Writer, rule option.DefaultHeadlessRule, generateVersion uint8) error {
+func writeDefaultRule(writer varbin.Writer, rule option.DefaultHeadlessRule, generateVersion uint8, mmap *mmapWriter) error {
 	err := binary.Write(writer, binary.BigEndian, uint8(0))
 	if err != nil {
 		return err
@@ -314,12 +356,26 @@ func writeDefaultRule(writer varbin.Writer, rule option.DefaultHeadlessRule, gen
 			return err
 		}
 	}
-	if len(rule.Domain) > 0 || len(rule.DomainSuffix) > 0 {
+	if len(rule.Domain) > 0 || len(rule.DomainSuffix) > 0 || mmap != nil && rule.DomainMatcher != nil {
+		if slices.Contains(rule.Domain, "") {
+			return E.New("domain: empty item is not allowed")
+		}
+		if slices.Contains(rule.DomainSuffix, "") {
+			return E.New("domain_suffix: empty item is not allowed")
+		}
 		err = binary.Write(writer, binary.BigEndian, ruleItemDomain)
 		if err != nil {
 			return err
 		}
-		err = domain.NewMatcher(rule.Domain, rule.DomainSuffix, generateVersion == C.RuleSetVersion1).Write(writer)
+		matcher := rule.DomainMatcher
+		if len(rule.Domain) > 0 || len(rule.DomainSuffix) > 0 {
+			matcher = domain.NewMatcher(rule.Domain, rule.DomainSuffix, generateVersion == C.RuleSetVersion1)
+		}
+		if mmap != nil {
+			err = mmap.writeMatcher(writer, matcher)
+		} else {
+			err = matcher.Write(writer)
+		}
 		if err != nil {
 			return err
 		}
@@ -336,14 +392,14 @@ func writeDefaultRule(writer varbin.Writer, rule option.DefaultHeadlessRule, gen
 			return err
 		}
 	}
-	if len(rule.SourceIPCIDR) > 0 {
-		err = writeRuleItemCIDR(writer, ruleItemSourceIPCIDR, rule.SourceIPCIDR)
+	if len(rule.SourceIPCIDR) > 0 || mmap != nil && rule.SourceIPSet != nil {
+		err = writeRuleItemCIDR(writer, ruleItemSourceIPCIDR, rule.SourceIPCIDR, rule.SourceIPSet, mmap)
 		if err != nil {
 			return E.Cause(err, "source_ip_cidr")
 		}
 	}
-	if len(rule.IPCIDR) > 0 {
-		err = writeRuleItemCIDR(writer, ruleItemIPCIDR, rule.IPCIDR)
+	if len(rule.IPCIDR) > 0 || mmap != nil && rule.IPSet != nil {
+		err = writeRuleItemCIDR(writer, ruleItemIPCIDR, rule.IPCIDR, rule.IPSet, mmap)
 		if err != nil {
 			return E.Cause(err, "ipcidr")
 		}
@@ -454,7 +510,7 @@ func writeDefaultRule(writer varbin.Writer, rule option.DefaultHeadlessRule, gen
 				return err
 			}
 			for _, rawPrefix := range entry.Value {
-				err = writePrefix(writer, rawPrefix.Build(netip.Prefix{}))
+				err = WritePrefix(writer, rawPrefix.Build(netip.Prefix{}))
 				if err != nil {
 					return err
 				}
@@ -474,7 +530,7 @@ func writeDefaultRule(writer varbin.Writer, rule option.DefaultHeadlessRule, gen
 			return err
 		}
 		for _, rawPrefix := range rule.DefaultInterfaceAddress {
-			err = writePrefix(writer, rawPrefix.Build(netip.Prefix{}))
+			err = WritePrefix(writer, rawPrefix.Build(netip.Prefix{}))
 			if err != nil {
 				return err
 			}
@@ -492,7 +548,7 @@ func writeDefaultRule(writer varbin.Writer, rule option.DefaultHeadlessRule, gen
 			return err
 		}
 	}
-	if len(rule.AdGuardDomain) > 0 {
+	if len(rule.AdGuardDomain) > 0 || mmap != nil && rule.AdGuardDomainMatcher != nil {
 		if generateVersion < C.RuleSetVersion2 {
 			return E.New("AdGuard rule items is only supported in version 2 or later")
 		}
@@ -500,7 +556,15 @@ func writeDefaultRule(writer varbin.Writer, rule option.DefaultHeadlessRule, gen
 		if err != nil {
 			return err
 		}
-		err = domain.NewAdGuardMatcher(rule.AdGuardDomain).Write(writer)
+		matcher := rule.AdGuardDomainMatcher
+		if len(rule.AdGuardDomain) > 0 {
+			matcher = domain.NewAdGuardMatcher(rule.AdGuardDomain)
+		}
+		if mmap != nil {
+			err = mmap.writeAdGuardMatcher(writer, matcher)
+		} else {
+			err = matcher.Write(writer)
+		}
 		if err != nil {
 			return err
 		}
@@ -517,7 +581,36 @@ func writeDefaultRule(writer varbin.Writer, rule option.DefaultHeadlessRule, gen
 }
 
 func readRuleItemString(reader varbin.Reader) ([]string, error) {
-	return varbin.ReadValue[[]string](reader, binary.BigEndian)
+	length, err := binary.ReadUvarint(reader)
+	if err != nil {
+		return nil, E.Cause(err, "slice length")
+	}
+	if length > maxRuleItemCount {
+		return nil, E.New("too many rule item strings: ", length)
+	}
+	if length == 0 {
+		return nil, nil
+	}
+	result := make([]string, length)
+	for i := range result {
+		strLength, strErr := binary.ReadUvarint(reader)
+		if strErr != nil {
+			return nil, E.Cause(strErr, "string length")
+		}
+		if strLength > maxRuleItemStringLength {
+			return nil, E.New("rule item string too long: ", strLength)
+		}
+		if strLength == 0 {
+			continue
+		}
+		stringData := make([]byte, strLength)
+		_, strErr = io.ReadFull(reader, stringData)
+		if strErr != nil {
+			return nil, E.Cause(strErr, "string value")
+		}
+		result[i] = string(stringData)
+	}
+	return result, nil
 }
 
 func writeRuleItemString(writer varbin.Writer, itemType uint8, value []string) error {
@@ -528,8 +621,27 @@ func writeRuleItemString(writer varbin.Writer, itemType uint8, value []string) e
 	return varbin.Write(writer, binary.BigEndian, value)
 }
 
-func readRuleItemUint8[E ~uint8](reader varbin.Reader) ([]E, error) {
-	return varbin.ReadValue[[]E](reader, binary.BigEndian)
+func readRuleItemUint8[T ~uint8](reader varbin.Reader) ([]T, error) {
+	length, err := binary.ReadUvarint(reader)
+	if err != nil {
+		return nil, E.Cause(err, "slice length")
+	}
+	if length > maxRuleItemCount {
+		return nil, E.New("too many rule item values: ", length)
+	}
+	if length == 0 {
+		return nil, nil
+	}
+	buf := make([]byte, length)
+	_, err = io.ReadFull(reader, buf)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]T, length)
+	for i, b := range buf {
+		result[i] = T(b)
+	}
+	return result, nil
 }
 
 func writeRuleItemUint8[E ~uint8](writer varbin.Writer, itemType uint8, value []E) error {
@@ -541,7 +653,22 @@ func writeRuleItemUint8[E ~uint8](writer varbin.Writer, itemType uint8, value []
 }
 
 func readRuleItemUint16(reader varbin.Reader) ([]uint16, error) {
-	return varbin.ReadValue[[]uint16](reader, binary.BigEndian)
+	length, err := binary.ReadUvarint(reader)
+	if err != nil {
+		return nil, E.Cause(err, "slice length")
+	}
+	if length > maxRuleItemCount {
+		return nil, E.New("too many rule item values: ", length)
+	}
+	if length == 0 {
+		return nil, nil
+	}
+	result := make([]uint16, length)
+	err = binary.Read(reader, binary.BigEndian, result)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func writeRuleItemUint16(writer varbin.Writer, itemType uint8, value []uint16) error {
@@ -552,33 +679,30 @@ func writeRuleItemUint16(writer varbin.Writer, itemType uint8, value []uint16) e
 	return varbin.Write(writer, binary.BigEndian, value)
 }
 
-func writeRuleItemCIDR(writer varbin.Writer, itemType uint8, value []string) error {
-	var builder netipx.IPSetBuilder
-	for i, prefixString := range value {
-		prefix, err := netip.ParsePrefix(prefixString)
-		if err == nil {
-			builder.AddPrefix(prefix)
-			continue
+func writeRuleItemCIDR(writer varbin.Writer, itemType uint8, value []*badoption.Prefixable, rawSet *ipset.Set, mmap *mmapWriter) error {
+	set := rawSet
+	if len(value) > 0 {
+		var builder netipx.IPSetBuilder
+		for _, prefixable := range value {
+			builder.AddPrefix(prefixable.Build(netip.Prefix{}))
 		}
-		addr, addrErr := netip.ParseAddr(prefixString)
-		if addrErr == nil {
-			builder.Add(addr)
-			continue
+		ipSet, err := builder.IPSet()
+		if err != nil {
+			return err
 		}
-		return E.Cause(err, "parse [", i, "]")
+		set = ipset.FromIPSet(ipSet)
 	}
-	ipSet, err := builder.IPSet()
+	err := binary.Write(writer, binary.BigEndian, itemType)
 	if err != nil {
 		return err
 	}
-	err = binary.Write(writer, binary.BigEndian, itemType)
-	if err != nil {
-		return err
+	if mmap != nil {
+		return mmap.writeIPSet(writer, set)
 	}
-	return writeIPSet(writer, ipSet)
+	return writeIPSet(writer, set)
 }
 
-func readLogicalRule(reader varbin.Reader, recovery bool) (logicalRule option.LogicalHeadlessRule, err error) {
+func readLogicalRule(reader varbin.Reader, recovery bool, depth int, mmap *mmapReader) (logicalRule option.LogicalHeadlessRule, err error) {
 	mode, err := reader.ReadByte()
 	if err != nil {
 		return
@@ -596,13 +720,14 @@ func readLogicalRule(reader varbin.Reader, recovery bool) (logicalRule option.Lo
 	if err != nil {
 		return
 	}
-	logicalRule.Rules = make([]option.HeadlessRule, length)
 	for i := range length {
-		logicalRule.Rules[i], err = readRule(reader, recovery)
+		var rule option.HeadlessRule
+		rule, err = readRule(reader, recovery, depth+1, mmap)
 		if err != nil {
 			err = E.Cause(err, "read logical rule [", i, "]")
 			return
 		}
+		logicalRule.Rules = append(logicalRule.Rules, rule)
 	}
 	err = binary.Read(reader, binary.BigEndian, &logicalRule.Invert)
 	if err != nil {
@@ -611,7 +736,7 @@ func readLogicalRule(reader varbin.Reader, recovery bool) (logicalRule option.Lo
 	return
 }
 
-func writeLogicalRule(writer varbin.Writer, logicalRule option.LogicalHeadlessRule, generateVersion uint8) error {
+func writeLogicalRule(writer varbin.Writer, logicalRule option.LogicalHeadlessRule, generateVersion uint8, mmap *mmapWriter) error {
 	err := binary.Write(writer, binary.BigEndian, uint8(1))
 	if err != nil {
 		return err
@@ -622,7 +747,7 @@ func writeLogicalRule(writer varbin.Writer, logicalRule option.LogicalHeadlessRu
 	case C.LogicalTypeOr:
 		err = binary.Write(writer, binary.BigEndian, uint8(1))
 	default:
-		panic("unknown logical mode: " + logicalRule.Mode)
+		return E.New("unknown logical mode: ", logicalRule.Mode)
 	}
 	if err != nil {
 		return err
@@ -632,7 +757,7 @@ func writeLogicalRule(writer varbin.Writer, logicalRule option.LogicalHeadlessRu
 		return err
 	}
 	for _, rule := range logicalRule.Rules {
-		err = writeRule(writer, rule, generateVersion)
+		err = writeRule(writer, rule, generateVersion, mmap)
 		if err != nil {
 			return err
 		}

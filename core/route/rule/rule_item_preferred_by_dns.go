@@ -4,10 +4,10 @@ import (
 	"context"
 	"strings"
 
+	"github.com/sagernet/sing-box/adapter"
 	E "github.com/sagernet/sing/common/exceptions"
 	F "github.com/sagernet/sing/common/format"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 
 	mDNS "github.com/miekg/dns"
 )

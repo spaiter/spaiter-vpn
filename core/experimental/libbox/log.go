@@ -46,19 +46,23 @@ func archiveCrashReport(path string, crashReportsDir string) {
 		reportMetadata: baseReportMetadata(),
 		CrashedAt:      crashTime.Format(time.RFC3339),
 	}
+	platformSnapshot := readPlatformSnapshot()
+	if platformSnapshot != nil {
+		metadata.Platform = platformSnapshot
+	}
 	writeReportMetadata(destPath, metadata)
 	os.Remove(path)
-	copyConfigSnapshot(destPath)
+	pruneReports(crashReportsDir) //H
 }
 
 func configSnapshotPath() string {
 	return filepath.Join(sBasePath, "configuration.json")
 }
 
+// H: the configuration holds the servers' addresses, keys and passwords, and reports are made to
+// be shared, so it is neither kept for them nor copied into them; an old copy is removed
 func saveConfigSnapshot(configContent string) {
-	snapshotPath := configSnapshotPath()
-	os.WriteFile(snapshotPath, []byte(configContent), 0o666)
-	chownReport(snapshotPath)
+	os.Remove(configSnapshotPath()) //H
 }
 
 func RedirectStderr(path string) error {
@@ -66,9 +70,10 @@ func RedirectStderr(path string) error {
 }
 
 func redirectStderr(path string) error {
-	crashReportsDir := filepath.Join(sWorkingPath, "crash_reports")
+	crashReportsDir := filepath.Join(sWorkingPath, crashReportsDirectoryName) //H
 	archiveCrashReport(path, crashReportsDir)
 	archiveCrashReport(path+".old", crashReportsDir)
+	pruneAllReports() //H
 
 	outputFile, err := os.Create(path)
 	if err != nil {
@@ -93,7 +98,10 @@ func redirectStderr(path string) error {
 	return nil
 }
 
-func CreateZipArchive(sourcePath string, destinationPath string) error {
+// CreateZipArchive zips sourcePath into destinationPath. The archive is not encrypted: encrypt is
+// kept for callers and ignored. The configuration and open connections are left out, and text
+// files are scrubbed of addresses, links, user IDs and secrets (h_report_sanitize.go). //H
+func CreateZipArchive(sourcePath string, destinationPath string, encrypt bool) error {
 	sourceInfo, err := os.Stat(sourcePath)
 	if err != nil {
 		return err
@@ -132,6 +140,9 @@ func CreateZipArchive(sourcePath string, destinationPath string) error {
 			return err
 		}
 
+		if sensitiveReportFile(d.Name()) { //H
+			return nil //H
+		} //H
 		fileInfo, err := d.Info()
 		if err != nil {
 			return err
@@ -148,6 +159,14 @@ func CreateZipArchive(sourcePath string, destinationPath string) error {
 			return err
 		}
 
+		if textReportFile(d.Name()) { //H
+			content, err := os.ReadFile(path) //H
+			if err != nil {                   //H
+				return err //H
+			} //H
+			_, err = writer.Write(sanitizeReportText(content)) //H
+			return err                                         //H
+		} //H
 		sourceFile, err := os.Open(path)
 		if err != nil {
 			return err

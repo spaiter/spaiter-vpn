@@ -25,7 +25,7 @@
 #           unsorted; before that a tree-wide gate would have failed on every
 #           run and taught everyone to ignore it.
 #
-#   vet     First-party packages only. thirdparty/ holds vendored upstream
+#   vet     First-party packages only. core/replace/ holds forked upstream
 #           whose tests were written against other module paths and do not
 #           compile -- and a vet failure there aborts the whole run, hiding
 #           every finding after it. That is exactly how the broken tlsspoof
@@ -62,21 +62,39 @@ say() { printf '\n== %s\n' "$*"; }
 # first run after adding them found a test that hardcoded a port inside
 # ip_local_port_range.
 first_party_packages() {
-	go list ./core/... ./internal/... ./cmd/... 2>/dev/null |
-		grep -v '/thirdparty/'
+	go list ./internal/... ./cmd/... 2>/dev/null
+}
+
+# core/ is its own module (github.com/sagernet/sing-box, reached from the root by
+# replace), so its packages are listed, vetted and tested from inside it, with the
+# build tags its own Makefile uses -- upstream's tests are written for them, and
+# several do not compile without. core/replace/ holds the forks, whose tests
+# target other module paths.
+# core_go <go-subcommand> [flags...]: run it on every core package, with the tags.
+core_go() {
+	local sub=$1
+	shift
+	(cd core && go list ./... 2>/dev/null | grep -v '/replace/' |
+		xargs -r go "$sub" -tags "$(sed -n 's/^TAGS ?= //p' Makefile)" "$@")
 }
 
 # Zones held unformatted on purpose, each for a reason recorded in the repo:
 #
-#   core/thirdparty/   vendored upstream, kept textually close to its origins
-#                      so upstream changes can still be ported by hand --
-#                      rebasing is gone, see core/PROVENANCE.md. 40 files.
+#   core/replace/      forks of upstream libraries (hiddify's and ours), kept textually
+#                      close to their origins so they rebase cleanly, see
+#                      core/PROVENANCE.md.
+#   core/ files that hiddify writes unformatted and we do not touch (new ones
+#                      appear on every rebase; list them when the gate names them)
 #   relay/server.go    the WDTT codec, reused verbatim from kostfuciy/qWDTT so
 #                      stock clients stay wire-compatible, see relay/NOTICE.md.
 #
 # Drift inside them is reported but does not fail the gate.
 readonly FMT_EXCLUDE=(
-	'^core/thirdparty/'
+	'^core/replace/'
+	'^core/hiddify/warpscan/'
+	'^core/transport/v2raykcp/kcp/connection_test\.go$'
+	'^core/experimental/cachefile/h_dns_cache_flush_test\.go$'
+	'^core/h_warp_detour_live_test\.go$'
 	'^relay/server\.go$'
 )
 
@@ -154,7 +172,7 @@ gate_contract() {
 	local server=${SING_BOX_BIN:-}
 	if [[ -z $server ]]; then
 		server=$CACHE/sing-box-server
-		build_core "$server" "$SERVER_TAGS" . ./core/cmd/sing-box || {
+		build_core "$server" "$SERVER_TAGS" . github.com/sagernet/sing-box/cmd/sing-box || {
 			echo "server core failed to build"
 			return 1
 		}
@@ -197,6 +215,8 @@ gate_vet() {
 	local found
 	found=$({
 		first_party_packages | xargs -r go vet 2>&1
+		# paths printed inside core/ are made relative to the repository root
+		core_go vet 2>&1 | sed -E 's#^(vet: )?([A-Za-z0-9_./-]+\.go:)#\1core/\2#'
 		(cd relay && go vet ./... 2>&1)
 	} | grep -vE '^#' | sort -u)
 	if [[ ! -f $BASELINE ]]; then
@@ -254,10 +274,13 @@ gate_deps() {
 gate_test() {
 	say "go test (first-party, short)"
 	local output status
-	output=$(first_party_packages |
-		grep -v 'core/common/netns$' |
-		xargs -r go test -short -count=1 -ldflags '-checklinkname=0' 2>&1)
-	status=$?
+	output=$({
+		first_party_packages | xargs -r go test -short -count=1 -ldflags '-checklinkname=0' 2>&1
+		# netns needs privileges to fork a holder process
+		(cd core && go list ./... 2>/dev/null | grep -vE '/replace/|/common/netns$' |
+			xargs -r go test -short -count=1 -tags "$(sed -n 's/^TAGS ?= //p' Makefile)" -ldflags '-checklinkname=0' 2>&1)
+	})
+	status=$(printf '%s\n' "$output" | grep -qE '^(FAIL|--- FAIL|panic:)' && echo 1 || echo 0)
 	if [[ $status -ne 0 ]]; then
 		echo "$output" | grep -vE '^(ok|---)|no test files'
 		return 1

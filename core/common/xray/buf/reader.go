@@ -3,9 +3,9 @@ package buf
 import (
 	"io"
 
+	"github.com/sagernet/sing-box/common/xray"
+	"github.com/sagernet/sing-box/common/xray/errors"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/common/xray"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/errors"
 )
 
 func readOneUDP(r io.Reader) (*Buffer, error) {

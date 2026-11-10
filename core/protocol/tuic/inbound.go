@@ -6,6 +6,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/inbound"
+	"github.com/sagernet/sing-box/common/listener"
+	"github.com/sagernet/sing-box/common/tls"
+	"github.com/sagernet/sing-box/common/uot"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	qtls "github.com/sagernet/sing-quic"
 	"github.com/sagernet/sing-quic/tuic"
 	"github.com/sagernet/sing/common"
@@ -13,14 +21,6 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/inbound"
-	"github.com/spaiter/spaiter-vpn/core/common/listener"
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	"github.com/spaiter/spaiter-vpn/core/common/uot"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"github.com/gofrs/uuid/v5"
 )
@@ -40,7 +40,6 @@ type Inbound struct {
 }
 
 func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.TUICInboundOptions) (adapter.Inbound, error) {
-	options.UDPFragmentDefault = true
 	if options.TLS == nil || !options.TLS.Enabled {
 		return nil, C.ErrTLSRequired
 	}
@@ -155,7 +154,7 @@ func (h *Inbound) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn, 
 	h.router.RoutePacketConnectionEx(ctx, conn, metadata, onClose)
 }
 
-func (h *Inbound) Start(stage adapter.StartStage) error {
+func (h *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateStart {
 		return nil
 	}
@@ -164,18 +163,17 @@ func (h *Inbound) Start(stage adapter.StartStage) error {
 		if err != nil {
 			return err
 		}
+		scope.Add(h.tlsConfig.Close)
 	}
 	packetConn, err := h.listener.ListenUDP()
 	if err != nil {
 		return err
 	}
-	return h.server.Start(packetConn)
-}
-
-func (h *Inbound) Close() error {
-	return common.Close(
-		h.listener,
-		h.tlsConfig,
-		common.PtrOrNil(h.server),
-	)
+	scope.Add(h.listener.Close)
+	err = h.server.Start(packetConn)
+	if err != nil {
+		return err
+	}
+	scope.Add(h.server.Close)
+	return nil
 }

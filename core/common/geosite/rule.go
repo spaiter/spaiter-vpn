@@ -1,6 +1,6 @@
 package geosite
 
-import "github.com/spaiter/spaiter-vpn/core/option"
+import "github.com/sagernet/sing-box/option"
 
 type ItemType = uint8
 

@@ -2,16 +2,19 @@ package rule
 
 import (
 	"context"
+	"os"
 	"sync/atomic"
 	"testing"
 
+	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json/badoption"
+	"github.com/sagernet/sing/common/logger"
 	"github.com/sagernet/sing/common/x/list"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
+	"github.com/sagernet/sing/service/filemanager"
 
 	"github.com/stretchr/testify/require"
 )
@@ -85,10 +88,12 @@ func TestRemoteRuleSetLoadBytesRejectsInvalidUpdateBeforeCommit(t *testing.T) {
 			return nil
 		},
 	})
+	ctx = filemanager.WithDefault(ctx, "", t.TempDir(), os.Getuid(), os.Getgid())
 	ruleSet := &RemoteRuleSet{
-		ctx: ctx,
+		ctx:    ctx,
+		logger: logger.NOP(),
+		tag:    "dynamic-set",
 		options: option.RuleSet{
-			Tag:    "dynamic-set",
 			Format: C.RuleSetFormatSource,
 		},
 		callbacks: list.List[adapter.RuleSetUpdateCallback]{},

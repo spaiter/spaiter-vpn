@@ -2,25 +2,26 @@ package dnstt
 
 import (
 	"context"
+	"github.com/sagernet/sing-box/option"
 	"math/rand"
 	"net"
 
 	"fmt"
 
-	"github.com/spaiter/spaiter-vpn/core/common/monitoring"
-	dnstt "github.com/spaiter/spaiter-vpn/core/thirdparty/vaydns/client"
+	dnstt "github.com/net2share/vaydns/client"
+	"github.com/sagernet/sing-box/common/monitoring"
 )
 
 func (c *Outbound) addResolver(resolver dnstt.Resolver) {
 	c.mu.Lock()
-	if c.mdMgr != nil {
-		// Smart pool mode: register the resolver as a multidns upstream.
+	if c.pool != nil {
+		// Smart pool mode: register the resolver as a pool upstream.
 		// c.resolvers stays at the single virtual resolver set up in
 		// NewOutbound, so the existing tunnel keeps running — the pool
 		// rotates upstreams behind it. No need to invalidate
 		// c.mutlitunnel here (unlike the legacy path, which has to
 		// rebuild the tunnel when its resolver list changes).
-		_, _ = c.mdMgr.AddResolverURL(resolverURL(resolver))
+		_ = c.pool.Add(resolverURL(resolver))
 	} else {
 		// for i := 0; i < c.options.TunnelPerResolver; i++ {
 		c.resolvers = append(c.resolvers, resolver)
@@ -29,14 +30,14 @@ func (c *Outbound) addResolver(resolver dnstt.Resolver) {
 		c.mutlitunnel = nil
 	}
 	c.mu.Unlock()
-	if !c.IsReady() {
+	if !c.isReady() {
 		c.started = 1
 		c.logger.InfoContext(c.ctx, "initial resolver ", resolver.ResolverAddr)
 		monitoring.Get(c.ctx).TestNow(c.Tag())
 	}
 }
 
-// resolverURL renders a dnstt.Resolver as the URL form multidns parses.
+// resolverURL renders a dnstt.Resolver as the URL form the pool parses.
 // UDP resolvers are bare host:port (multidns defaults to UDP/53); DoT gets
 // the "dot://" prefix; DoH is already a full https:// URL.
 func resolverURL(r dnstt.Resolver) string {
@@ -108,29 +109,9 @@ func (c *Outbound) OpenStreamSingleResolver(ctx context.Context) (net.Conn, erro
 	return nil, lasterr
 }
 func (c *Outbound) createDnsttTunnel(ctx context.Context, resolver []dnstt.Resolver) (*dnstt.Tunnel, error) {
-	tServer, err := dnstt.NewTunnelServer(c.options.Domain, c.options.PublicKey)
+	tServer, err := newTunnelServer(c.options)
 	if err != nil {
-		return nil, fmt.Errorf("invalid tunnel server: %w", err)
-	}
-
-	if c.options.MTU != nil {
-		tServer.MTU = *c.options.MTU
-	}
-
-	tServer.DnsttCompat = c.options.DnsttCompat
-
-	if c.options.ClientIDSize != nil {
-		tServer.ClientIDSize = *c.options.ClientIDSize
-	}
-
-	if c.options.MaxNumLabels != nil {
-		tServer.MaxNumLabels = *c.options.MaxNumLabels
-	}
-	if c.options.RPS != nil {
-		tServer.RPS = *c.options.RPS
-	}
-	if c.options.MaxQnameLen != nil {
-		tServer.MaxQnameLen = *c.options.MaxQnameLen
+		return nil, err
 	}
 
 	tunnel, err := dnstt.NewTunnel(resolver, tServer)
@@ -189,4 +170,30 @@ func (c *Outbound) createDnsttTunnel(ctx context.Context, resolver []dnstt.Resol
 	}
 	// c.logger.DebugContext(c.ctx, "established smux session")
 	return tunnel, nil
+}
+
+// newTunnelServer builds the tunnel server settings from the options.
+func newTunnelServer(options option.DnsttOptions) (dnstt.TunnelServer, error) {
+	tServer, err := dnstt.NewTunnelServer(options.Domain, options.PublicKey)
+	if err != nil {
+		return tServer, fmt.Errorf("invalid tunnel server: %w", err)
+	}
+	if options.MTU != nil {
+		tServer.MTU = *options.MTU
+	}
+	tServer.DnsttCompat = options.DnsttCompat
+	if options.ClientIDSize != nil {
+		tServer.ClientIDSize = *options.ClientIDSize
+	}
+	if options.MaxNumLabels != nil {
+		tServer.MaxNumLabels = *options.MaxNumLabels
+	}
+	if options.RPS != nil {
+		tServer.RPS = *options.RPS
+	}
+	if options.MaxQnameLen != nil {
+		tServer.MaxQnameLen = *options.MaxQnameLen
+	}
+	tServer.RecordType = options.RecordType // was only used to name the saved resolver list
+	return tServer, nil
 }

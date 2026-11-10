@@ -2,22 +2,23 @@ package wireguard
 
 import (
 	"context"
+	"github.com/sagernet/sing-box/service/oomkiller"
 	"net"
 	"net/netip"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/outbound"
+	"github.com/sagernet/sing-box/common/dialer"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/transport/wireguard"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/outbound"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	"github.com/spaiter/spaiter-vpn/core/transport/wireguard"
 )
 
 var _ adapter.OutboundWithPreferredRoutes = (*Outbound)(nil)
@@ -37,7 +38,7 @@ type Outbound struct {
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.LegacyWireGuardOutboundOptions) (adapter.Outbound, error) {
 	outbound := &Outbound{
-		Adapter:        outbound.NewAdapterWithDialerOptions(C.TypeWireGuard, tag, []string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, options.DialerOptions),
+		Adapter:        outbound.NewAdapterWithDialerOptions(C.TypeWireGuard, tag, append(options.Network.Build(), N.NetworkICMP), options.DialerOptions), //H: network was ignored
 		ctx:            ctx,
 		dnsRouter:      service.FromContext[adapter.DNSRouter](ctx),
 		logger:         logger,
@@ -84,19 +85,17 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		Dialer:  outboundDialer,
 		CreateDialer: func(interfaceName string) N.Dialer {
 			return common.Must1(dialer.NewDefault(ctx, option.DialerOptions{
-				BindInterface: interfaceName,
+				AbstractDialerOptions: option.AbstractDialerOptions{
+					BindInterface: interfaceName,
+				},
 			}))
 		},
 		Name:       options.InterfaceName,
 		MTU:        options.MTU,
 		Address:    options.LocalAddress,
 		PrivateKey: options.PrivateKey,
-		ResolvePeer: func(domain string) (netip.Addr, error) {
-			endpointAddresses, lookupErr := outbound.dnsRouter.Lookup(ctx, domain, outboundDialer.(dialer.ResolveDialer).QueryOptions())
-			if lookupErr != nil {
-				return netip.Addr{}, lookupErr
-			}
-			return endpointAddresses[0], nil
+		ResolvePeer: func(domain string) ([]netip.Addr, error) {
+			return outbound.dnsRouter.Lookup(ctx, domain, outboundDialer.(dialer.ResolveDialer).QueryOptions())
 		},
 		Peers:   peers,
 		Workers: options.Workers,
@@ -108,8 +107,14 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	return outbound, nil
 }
 
-func (o *Outbound) Start(stage adapter.StartStage) error {
+func (o *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage == adapter.StartStateInitialize {
+		scope.Add(o.Close) // H: closed with the box
+	}
 	switch stage {
+	case adapter.StartStateInitialize:
+		// H: creates the WireGuard device; without it Start dereferences a nil device
+		return o.endpoint.Initialize(oomkiller.MemoryPressure(o.ctx))
 	case adapter.StartStateStart:
 		return o.endpoint.Start(false)
 	case adapter.StartStatePostStart:

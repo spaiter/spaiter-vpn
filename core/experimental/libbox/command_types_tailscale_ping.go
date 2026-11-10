@@ -1,11 +1,12 @@
 package libbox
 
-import "github.com/spaiter/spaiter-vpn/core/daemon"
+import "github.com/sagernet/sing-box/daemon"
 
 type TailscalePingResult struct {
 	LatencyMs      float64
 	IsDirect       bool
 	Endpoint       string
+	PeerRelay      string
 	DERPRegionID   int32
 	DERPRegionCode string
 	Error          string
@@ -25,6 +26,7 @@ func tailscalePingResultFromGRPC(response *daemon.TailscalePingResponse) *Tailsc
 		LatencyMs:      response.LatencyMs,
 		IsDirect:       response.IsDirect,
 		Endpoint:       response.Endpoint,
+		PeerRelay:      response.PeerRelay,
 		DERPRegionID:   response.DerpRegionID,
 		DERPRegionCode: response.DerpRegionCode,
 		Error:          response.Error,

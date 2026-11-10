@@ -3,12 +3,12 @@ package clashapi
 import (
 	"net/http"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	F "github.com/sagernet/sing/common/format"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"github.com/go-chi/render"
 )
@@ -104,7 +104,7 @@ func (s *Server) applyInbounds(logFactory log.Factory, applied, desired []option
 		recreate := func() error {
 			existed := false
 			if _, loaded := manager.Get(want.Tag); loaded {
-				if err := manager.Remove(want.Tag); err != nil {
+				if err := removeByTag(manager, want.Tag); err != nil {
 					return E.Cause(err, "remove inbound ", want.Tag)
 				}
 				existed = true
@@ -175,7 +175,7 @@ func (s *Server) applyInbounds(logFactory log.Factory, applied, desired []option
 		if _, loaded := manager.Get(tag); !loaded {
 			continue
 		}
-		if err := manager.Remove(tag); err != nil {
+		if err := removeByTag(manager, tag); err != nil {
 			return nil, E.Cause(err, "remove inbound ", tag)
 		}
 		outcome.Removed = append(outcome.Removed, tag)
@@ -211,7 +211,7 @@ func (s *Server) applyEndpoints(logFactory log.Factory, applied, desired []optio
 		recreate := func() error {
 			existed := false
 			if _, loaded := manager.Get(want.Tag); loaded {
-				if err := manager.Remove(want.Tag); err != nil {
+				if err := removeByTag(manager, want.Tag); err != nil {
 					return E.Cause(err, "remove endpoint ", want.Tag)
 				}
 				existed = true
@@ -277,10 +277,20 @@ func (s *Server) applyEndpoints(logFactory log.Factory, applied, desired []optio
 		if _, loaded := manager.Get(tag); !loaded {
 			continue
 		}
-		if err := manager.Remove(tag); err != nil {
+		if err := removeByTag(manager, tag); err != nil {
 			return nil, E.Cause(err, "remove endpoint ", tag)
 		}
 		outcome.Removed = append(outcome.Removed, tag)
 	}
 	return outcome, nil
+}
+
+// removeByTag reaches Remove on the inbound and endpoint managers (adapter/inbound,
+// adapter/endpoint): hot reload added it to the implementations, not to the interfaces. //H
+func removeByTag(manager any, tag string) error {
+	remover, ok := manager.(interface{ Remove(tag string) error })
+	if !ok {
+		return E.New("manager cannot remove ", tag)
+	}
+	return remover.Remove(tag)
 }

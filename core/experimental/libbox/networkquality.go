@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/spaiter/spaiter-vpn/core/common/networkquality"
+	"github.com/sagernet/sing-box/common/networkquality"
 )
 
 type NetworkQualityTest struct {

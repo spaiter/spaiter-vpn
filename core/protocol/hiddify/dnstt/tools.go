@@ -1,64 +1,31 @@
 package dnstt
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
-	_ "embed"
-
-	"github.com/spaiter/spaiter-vpn/core/option"
-	dnstt "github.com/spaiter/spaiter-vpn/core/thirdparty/vaydns/client"
+	dnstt "github.com/net2share/vaydns/client"
+	"github.com/sagernet/sing-box/common/dnspool"
+	"github.com/sagernet/sing-box/option"
 )
-
-var (
-	//go:embed resolvers_by_country.json
-	resolvers_bytes  []byte
-	countryResolvers map[string][]string
-	resolverCountry  map[string]string
-)
-
-func loadResolvers() {
-	json.Unmarshal(resolvers_bytes, &countryResolvers)
-	resolverCountry = make(map[string]string)
-	for country, resolvers := range countryResolvers {
-		for _, resolver := range resolvers {
-			resolverCountry[resolver] = country
-		}
-	}
-}
 
 type ResolverS struct {
 	Resolver dnstt.Resolver
 	Auto     bool
+	Tier     int
 }
 
+// getConfigResolvers turns the resolver entries into VayDNS resolvers; "auto" is the built-in
+// list shared by the DNS tunnels (common/dnspool), Soar's discovery candidates for
+// smart_pool.discovery first.
 func getConfigResolvers(options option.DnsttOptions) ([]ResolverS, error) {
 	resolvers := []ResolverS{}
-	for _, resolverAddr := range options.Resolvers {
-		if resolverAddr == "" || resolverAddr == "auto" {
-			for ip, _ := range resolverCountry {
-				resolver, err := getResolver(options, fmt.Sprint(ip, ":53"))
-
-				if err != nil {
-					return nil, fmt.Errorf("invalid resolver address %s: %w", ip, err)
-				}
-				resolvers = append(resolvers, ResolverS{
-					Resolver: resolver,
-					Auto:     true,
-				})
-			}
-			continue
-		}
-		resolver, err := getResolver(options, resolverAddr)
+	for _, candidate := range dnspool.ExpandWith(options.Resolvers, options.SmartPool.DiscoveryOptions()) {
+		resolver, err := getResolver(options, candidate.Address)
 		if err != nil {
-			return nil, fmt.Errorf("invalid resolver address %s: %w", resolverAddr, err)
+			return nil, fmt.Errorf("invalid resolver address %s: %w", candidate.Address, err)
 		}
-		resolvers = append(resolvers, ResolverS{
-			Resolver: resolver,
-			Auto:     false,
-		})
-
+		resolvers = append(resolvers, ResolverS{Resolver: resolver, Auto: candidate.Auto, Tier: candidate.Tier})
 	}
 	return resolvers, nil
 }

@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/spaiter/spaiter-vpn/core/log"
+	"github.com/sagernet/sing-box/log"
 
 	_ "modernc.org/sqlite"
 )
@@ -101,27 +101,19 @@ func newUserStatsManager(logger log.Logger, dbPath string) (*UserStatsManager, e
 }
 
 func (m *UserStatsManager) Start() {
-	if m == nil {
-		return
-	}
+	if m == nil { //H: not built when config_output_path is unwritable (sing-box check)
+		return //H
+	} //H
 	go m.flushLoop()
 }
 
 func (m *UserStatsManager) Close() error {
-	// A nil manager is a normal state rather than a caller's mistake: the
-	// stats database lives beside config.json, so when that directory is not
-	// writable the manager is never built. `sing-box check` run by a user who
-	// cannot write config_output_path is the ordinary case for a local binary.
-	// The typed nil still sits in the clash API server's closer list, so
-	// common.Close reaches this method and the process dies on shutdown —
-	// AFTER the check has already succeeded, which makes a valid config look
-	// rejected.
-	//
-	// Reproduced on the published image's own binary before this was changed,
-	// so this is a fix rather than an accommodation of something local. //H
-	if m == nil {
-		return nil
-	}
+	// A nil manager is a normal state, not a caller's mistake: the stats database lives beside
+	// config.json, so when that directory is not writable the manager is never built, yet the
+	// typed nil still sits in the clash server's closer list and common.Close reaches here. //H
+	if m == nil { //H
+		return nil //H
+	} //H
 	m.cancel()
 	<-m.done
 	m.flush()

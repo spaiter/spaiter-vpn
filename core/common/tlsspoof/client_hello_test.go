@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	tf "github.com/spaiter/spaiter-vpn/core/common/tlsfragment"
+	tf "github.com/sagernet/sing-box/common/tlsfragment"
 
 	"github.com/stretchr/testify/require"
 )

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/json"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

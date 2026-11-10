@@ -14,24 +14,26 @@ import (
 	"time"
 
 	"github.com/sagernet/cors"
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/urltest"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/experimental"
+	"github.com/sagernet/sing-box/experimental/clashapi/trafficontrol"
+	"github.com/sagernet/sing-box/experimental/clashmode"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	tun "github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/cleanup"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json"
+	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/observable"
 	"github.com/sagernet/sing/service"
 	"github.com/sagernet/sing/service/filemanager"
 	"github.com/sagernet/ws"
 	"github.com/sagernet/ws/wsutil"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/urltest"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/experimental"
-	"github.com/spaiter/spaiter-vpn/core/experimental/clashapi/trafficontrol"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/render"
@@ -41,28 +43,26 @@ func init() {
 	experimental.RegisterClashServerConstructor(NewServer)
 }
 
-var _ adapter.ClashServer = (*Server)(nil)
+var _ adapter.LifecycleService = (*Server)(nil)
 
 type Server struct {
-	ctx              context.Context
-	network          adapter.NetworkManager
-	router           adapter.Router
-	dnsRouter        adapter.DNSRouter
-	outbound         adapter.OutboundManager
-	endpoint         adapter.EndpointManager
-	logger           log.Logger
-	httpServer       *http.Server
-	trafficManager   *trafficontrol.Manager
-	urlTestHistory   adapter.URLTestHistoryStorage
-	logDebug         bool
-	cleaner          *cleanup.Cleaner
+	ctx            context.Context
+	network        adapter.NetworkManager
+	router         adapter.Router
+	dnsRouter      adapter.DNSRouter
+	outbound       adapter.OutboundManager
+	endpoint       adapter.EndpointManager
+	logger         log.Logger
+	httpServer     *http.Server
+	trafficManager *trafficontrol.Manager
+	urlTestHistory *urltest.HistoryStorage
+	clashMode      *clashmode.Manager
+	logDebug       bool
+	cleaner        *cleanup.Cleaner
+
 	configManager    *ConfigManager
 	userStatsManager *UserStatsManager
 	userLimits       *userLimitRegistry
-
-	mode           string
-	modeList       []string
-	modeUpdateHook *observable.Subscriber[struct{}]
 
 	externalController       bool
 	externalUI               string
@@ -71,7 +71,14 @@ type Server struct {
 }
 
 func NewServer(ctx context.Context, logFactory log.ObservableFactory, options option.ClashAPIOptions) (adapter.ClashServer, error) {
-	trafficManager := trafficontrol.NewManager()
+	trafficManager := service.PtrFromContext[trafficontrol.Manager](ctx)
+	if trafficManager == nil {
+		return nil, E.New("missing traffic manager")
+	}
+	clashMode := service.PtrFromContext[clashmode.Manager](ctx)
+	if clashMode == nil {
+		return nil, E.New("missing clash mode manager")
+	}
 	chiRouter := chi.NewRouter()
 	s := &Server{
 		ctx:       ctx,
@@ -86,15 +93,15 @@ func NewServer(ctx context.Context, logFactory log.ObservableFactory, options op
 			Handler: chiRouter,
 		},
 		trafficManager:           trafficManager,
+		clashMode:                clashMode,
 		logDebug:                 logFactory.Level() >= log.LevelDebug,
-		modeList:                 options.ModeList,
 		externalController:       options.ExternalController != "",
 		externalUIDownloadURL:    options.ExternalUIDownloadURL,
 		externalUIDownloadDetour: options.ExternalUIDownloadDetour,
 		cleaner:                  cleanup.Add(trafficManager.Clear),
 		userLimits:               newUserLimitRegistry(options.UserLimits),
 	}
-	s.urlTestHistory = service.FromContext[adapter.URLTestHistoryStorage](ctx)
+	s.urlTestHistory = service.PtrFromContext[urltest.HistoryStorage](ctx)
 	if s.urlTestHistory == nil {
 		s.urlTestHistory = urltest.NewHistoryStorage()
 	}
@@ -110,14 +117,6 @@ func NewServer(ctx context.Context, logFactory log.ObservableFactory, options op
 			trafficManager.SetUserStatsHook(statsManager)
 		}
 	}
-	defaultMode := "Rule"
-	if options.DefaultMode != "" {
-		defaultMode = options.DefaultMode
-	}
-	if !common.Contains(s.modeList, defaultMode) {
-		s.modeList = append([]string{defaultMode}, s.modeList...)
-	}
-	s.mode = defaultMode
 	//goland:noinspection GoDeprecation
 	//nolint:staticcheck
 	if options.StoreMode || options.StoreSelected || options.StoreFakeIP || options.CacheFile != "" || options.CacheID != "" {
@@ -162,6 +161,10 @@ func NewServer(ctx context.Context, logFactory log.ObservableFactory, options op
 	})
 	if options.ExternalUI != "" {
 		s.externalUI = filemanager.BasePath(ctx, os.ExpandEnv(options.ExternalUI))
+		_, err := filemanager.ReadDir(ctx, s.externalUI)
+		if err != nil && !os.IsNotExist(err) {
+			return nil, E.Cause(err, "read external UI directory")
+		}
 		chiRouter.Group(func(r chi.Router) {
 			r.Get("/ui", http.RedirectHandler("/ui/", http.StatusMovedPermanently).ServeHTTP)
 			r.Handle("/ui/*", http.StripPrefix("/ui/", http.FileServer(Dir(s.externalUI))))
@@ -178,99 +181,62 @@ func (s *Server) Name() string {
 	return "clash server"
 }
 
-func (s *Server) Start(stage adapter.StartStage) error {
-	switch stage {
-	case adapter.StartStateStart:
-		if s.userStatsManager != nil {
-			s.userStatsManager.Start()
-		}
-		cacheFile := service.FromContext[adapter.CacheFile](s.ctx)
-		if cacheFile != nil {
-			mode := cacheFile.LoadMode()
-			if common.Any(s.modeList, func(it string) bool {
-				return strings.EqualFold(it, mode)
-			}) {
-				s.mode = mode
-			}
-		}
-	case adapter.StartStateStarted:
-		if s.externalController {
-			s.checkAndDownloadExternalUI()
-			var (
-				listener net.Listener
-				err      error
-			)
-			for range 3 {
-				listener, err = net.Listen("tcp", s.httpServer.Addr)
-				if runtime.GOOS == "android" && errors.Is(err, syscall.EADDRINUSE) {
-					time.Sleep(100 * time.Millisecond)
-					continue
-				}
-				break
-			}
-			if err != nil {
-				return E.Cause(err, "external controller listen error")
-			}
-			s.logger.Info("restful api listening at ", listener.Addr())
-			go func() {
-				err = s.httpServer.Serve(listener)
-				if err != nil && !errors.Is(err, http.ErrServerClosed) {
-					s.logger.Error("external controller serve error: ", err)
-				}
-			}()
-		}
+func (s *Server) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage == adapter.StartStateInitialize {
+		// H: the hiddify clash server owns its traffic manager and URL test history
+		scope.Add(func() error {
+			return common.Close(s.trafficManager, s.urlTestHistory, common.PtrOrNil(s.cleaner), s.userStatsManager)
+		})
 	}
-
+	if stage == adapter.StartStateStart && s.userStatsManager != nil {
+		s.userStatsManager.Start()
+	}
+	if stage != adapter.StartStateStarted {
+		return nil
+	}
+	if s.externalController {
+		s.checkAndDownloadExternalUI()
+		var (
+			listener net.Listener
+			err      error
+		)
+		for range 3 {
+			listener, err = net.Listen(M.NetworkFromNetAddr(N.NetworkTCP, M.ParseSocksaddr(s.httpServer.Addr).Addr), s.httpServer.Addr)
+			if runtime.GOOS == "android" && errors.Is(err, syscall.EADDRINUSE) {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+			break
+		}
+		if err != nil {
+			return E.Cause(err, "external controller listen error")
+		}
+		scope.Add(s.httpServer.Close)
+		s.logger.Info("restful api listening at ", listener.Addr())
+		go func() {
+			err = s.httpServer.Serve(listener)
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				s.logger.Error("external controller serve error: ", err)
+			}
+		}()
+	}
 	return nil
 }
 
-func (s *Server) Close() error {
-	return common.Close(
-		common.PtrOrNil(s.httpServer),
-		s.trafficManager,
-		s.urlTestHistory,
-		common.PtrOrNil(s.cleaner),
-		s.userStatsManager,
-	)
-}
-
 func (s *Server) Mode() string {
-	return s.mode
+	return s.clashMode.Mode()
 }
 
 func (s *Server) ModeList() []string {
-	return s.modeList
-}
-
-func (s *Server) SetModeUpdateHook(hook *observable.Subscriber[struct{}]) {
-	s.modeUpdateHook = hook
+	return s.clashMode.ModeList()
 }
 
 func (s *Server) SetMode(newMode string) {
-	if !common.Contains(s.modeList, newMode) {
-		newMode = common.Find(s.modeList, func(it string) bool {
-			return strings.EqualFold(it, newMode)
-		})
-	}
-	if !common.Contains(s.modeList, newMode) {
-		return
-	}
-	if newMode == s.mode {
-		return
-	}
-	s.mode = newMode
-	if s.modeUpdateHook != nil {
-		s.modeUpdateHook.Emit(struct{}{})
-	}
-	s.dnsRouter.ClearCache()
-	cacheFile := service.FromContext[adapter.CacheFile](s.ctx)
-	if cacheFile != nil {
-		err := cacheFile.StoreMode(newMode)
-		if err != nil {
-			s.logger.Error(E.Cause(err, "save mode"))
-		}
-	}
-	s.logger.Info("updated mode: ", newMode)
+	s.clashMode.SetMode(newMode)
+}
+
+func (s *Server) SetModeUpdateHook(hook *observable.Subscriber[struct{}]) {
+	s.clashMode.AddUpdateHook(hook)
 }
 
 func (s *Server) HistoryStorage() adapter.URLTestHistoryStorage {
@@ -305,7 +271,6 @@ func (noopFlowTracker) CloseFlow(tun.FlowCloseReason) {}
 func (s *Server) RoutedFlow(ctx context.Context, metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound) tun.FlowTracker {
 	return noopFlowTracker{}
 }
-
 func authentication(serverSecret string) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		fn := func(w http.ResponseWriter, r *http.Request) {

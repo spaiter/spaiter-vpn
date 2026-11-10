@@ -4,30 +4,27 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
-	"strconv"
 	"sync"
 
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/badhttp"
+	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/tls"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/dns"
+	"github.com/sagernet/sing-box/dns/transport"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/buf"
-	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	sHTTP "github.com/sagernet/sing/protocol/http"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/dns"
-	"github.com/spaiter/spaiter-vpn/core/dns/transport"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	mDNS "github.com/miekg/dns"
 )
@@ -61,6 +58,7 @@ func NewHTTP3(ctx context.Context, logger log.ContextLogger, tag string, options
 	if err != nil {
 		return nil, err
 	}
+	tlsConfig.SetNextProtos([]string{http3.NextProtoH3})
 	stdConfig, err := tlsConfig.STDConfig()
 	if err != nil {
 		return nil, err
@@ -76,21 +74,20 @@ func NewHTTP3(ctx context.Context, logger log.ContextLogger, tag string, options
 			host = options.Server
 		}
 	}
-	destinationURL := url.URL{
-		Scheme: "https",
-		Host:   host,
-	}
-	if destinationURL.Host == "" {
-		destinationURL.Host = options.Server
-	}
+	destinationAddress := M.ParseSocksaddrHostPort(host, options.ServerPort)
+	destinationURL := url.URL{Scheme: "https"}
 	if options.ServerPort != 0 && options.ServerPort != 443 {
-		destinationURL.Host = net.JoinHostPort(destinationURL.Host, strconv.Itoa(int(options.ServerPort)))
+		destinationURL.Host = destinationAddress.String()
+	} else if destinationAddress.IsIPv6() {
+		destinationURL.Host = "[" + destinationAddress.AddrString() + "]"
+	} else {
+		destinationURL.Host = destinationAddress.AddrString()
 	}
 	path := options.Path
 	if path == "" {
 		path = "/dns-query"
 	}
-	err = sHTTP.URLSetPath(&destinationURL, path)
+	err = badhttp.URLSetPath(&destinationURL, path)
 	if err != nil {
 		return nil, err
 	}
@@ -116,12 +113,12 @@ func NewHTTP3(ctx context.Context, logger log.ContextLogger, tag string, options
 
 func (t *HTTP3Transport) newTransport() *http3.Transport {
 	return &http3.Transport{
-		Dial: func(ctx context.Context, addr string, tlsCfg *tls.STDConfig, cfg *quic.Config) (*quic.Conn, error) {
+		Dial: func(ctx context.Context, _ string, _ *tls.STDConfig, cfg *quic.Config) (*quic.Conn, error) {
 			conn, dialErr := t.dialer.DialContext(ctx, N.NetworkUDP, t.serverAddr)
 			if dialErr != nil {
 				return nil, dialErr
 			}
-			quicConn, dialErr := quic.DialEarly(ctx, bufio.NewUnbindPacketConn(conn), conn.RemoteAddr(), tlsCfg, cfg)
+			quicConn, dialErr := quic.DialEarlyConn(ctx, conn, t.tlsConfig, cfg)
 			if dialErr != nil {
 				conn.Close()
 				return nil, dialErr
@@ -134,21 +131,19 @@ func (t *HTTP3Transport) newTransport() *http3.Transport {
 			}()
 			return quicConn, nil
 		},
-		TLSClientConfig: t.tlsConfig,
 	}
 }
 
-func (t *HTTP3Transport) Start(stage adapter.StartStage) error {
+func (t *HTTP3Transport) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateStart {
 		return nil
 	}
+	scope.Add(func() error {
+		t.transportAccess.Lock()
+		defer t.transportAccess.Unlock()
+		return t.transport.Close()
+	})
 	return dialer.InitializeDetour(t.dialer)
-}
-
-func (t *HTTP3Transport) Close() error {
-	t.transportAccess.Lock()
-	defer t.transportAccess.Unlock()
-	return t.transport.Close()
 }
 
 func (t *HTTP3Transport) Reset() {
@@ -208,4 +203,10 @@ func (t *HTTP3Transport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS
 		return nil, err
 	}
 	return &responseMessage, nil
+}
+
+func (t *HTTP3Transport) ExchangeAsync(ctx context.Context, message *mDNS.Msg, callback func(response *mDNS.Msg, err error)) {
+	go func() {
+		callback(t.Exchange(ctx, message))
+	}()
 }

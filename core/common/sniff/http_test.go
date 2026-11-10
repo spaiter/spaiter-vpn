@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/sniff"
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/sniff"
 
 	"github.com/stretchr/testify/require"
 )

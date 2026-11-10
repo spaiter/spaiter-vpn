@@ -8,15 +8,15 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/settings"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/settings"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"github.com/vishvananda/netns"
 )
@@ -89,7 +89,7 @@ func (l *Listener) Start() error {
 	if common.Contains(l.network, N.NetworkUDP) {
 		_, err := l.ListenUDP()
 		if err != nil {
-			return err
+			return E.Errors(err, l.Close())
 		}
 		l.packetOutboundClosed = make(chan struct{})
 		l.packetOutbound = make(chan *N.PacketBuffer, 64)
@@ -107,13 +107,13 @@ func (l *Listener) Start() error {
 		} else {
 			listenAddrString = listenAddr.String()
 		}
-		systemProxy, err := settings.NewSystemProxy(l.ctx, M.ParseSocksaddrHostPort(listenAddrString, listenPort), l.systemProxySOCKS)
+		systemProxy, err := settings.NewSystemProxy(l.ctx, M.ParseSocksaddrHostPort(listenAddrString, listenPort), l.systemProxySOCKS, nil)
 		if err != nil {
-			return E.Cause(err, "initialize system proxy")
+			return E.Errors(E.Cause(err, "initialize system proxy"), l.Close())
 		}
 		err = systemProxy.Enable()
 		if err != nil {
-			return E.Cause(err, "set system proxy")
+			return E.Errors(E.Cause(err, "set system proxy"), systemProxy.Close(), l.Close())
 		}
 		l.systemProxy = systemProxy
 	}
@@ -123,8 +123,11 @@ func (l *Listener) Start() error {
 func (l *Listener) Close() error {
 	l.shutdown.Store(true)
 	var err error
-	if l.systemProxy != nil && l.systemProxy.IsEnabled() {
-		err = l.systemProxy.Disable()
+	if l.systemProxy != nil {
+		if l.systemProxy.IsEnabled() {
+			err = l.systemProxy.Disable()
+		}
+		err = E.Errors(err, l.systemProxy.Close())
 	}
 	return E.Errors(err, common.Close(
 		l.tcpListener,

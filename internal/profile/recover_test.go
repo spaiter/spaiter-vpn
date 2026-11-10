@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/spaiter/spaiter-vpn/core/option"
+	"github.com/sagernet/sing-box/option"
 	"github.com/spaiter/spaiter-vpn/internal/config"
 )
 

@@ -6,6 +6,13 @@ import (
 	"os"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/outbound"
+	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/tls"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	qtls "github.com/sagernet/sing-quic"
 	"github.com/sagernet/sing-quic/tuic"
 	"github.com/sagernet/sing/common"
@@ -15,13 +22,6 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/uot"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/outbound"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"github.com/gofrs/uuid/v5"
 )
@@ -30,7 +30,11 @@ func RegisterOutbound(registry *outbound.Registry) {
 	outbound.Register[option.TUICOutboundOptions](registry, C.TypeTUIC, NewOutbound)
 }
 
-var _ adapter.InterfaceUpdateListener = (*Outbound)(nil)
+var (
+	_ adapter.InterfaceUpdateListener = (*Outbound)(nil)
+	_ adapter.IdleConnectionKeeper    = (*Outbound)(nil)
+	_ adapter.OutboundWithMultiplex   = (*Outbound)(nil)
+)
 
 type Outbound struct {
 	outbound.Adapter
@@ -40,7 +44,6 @@ type Outbound struct {
 }
 
 func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.TUICOutboundOptions) (adapter.Outbound, error) {
-	options.UDPFragmentDefault = true
 	if options.TLS == nil || !options.TLS.Enabled {
 		return nil, C.ErrTLSRequired
 	}
@@ -57,9 +60,11 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		return nil, E.New("udp_over_stream is conflict with udp_relay_mode")
 	}
 	switch options.UDPRelayMode {
-	case "native":
+	case "", "native": //H
 	case "quic":
 		tuicUDPStream = true
+	default: //H: a misspelt mode used to mean native silently
+		return nil, E.New("unknown udp_relay_mode: ", options.UDPRelayMode, " (expected native or quic)") //H
 	}
 	outboundDialer, err := dialer.New(ctx, options.DialerOptions, options.ServerIsDomain())
 	if err != nil {
@@ -142,10 +147,28 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	}
 }
 
-func (h *Outbound) InterfaceUpdated() {
+func (h *Outbound) InterfaceUpdated(ctx context.Context) {
 	_ = h.client.CloseWithError(E.New("network changed"))
 }
 
-func (h *Outbound) Close() error {
-	return h.client.CloseWithError(os.ErrClosed)
+func (h *Outbound) MultiplexEnabled() bool {
+	return true
+}
+
+func (h *Outbound) SetKeepIdleConnections(keep bool) {
+	h.client.SetKeepIdleConnections(keep)
+}
+
+func (h *Outbound) CloseIdleConnections() {
+	h.client.CloseIdleConnections()
+}
+
+func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage != adapter.StartStateInitialize {
+		return nil
+	}
+	scope.Add(func() error {
+		return h.client.CloseWithError(os.ErrClosed)
+	})
+	return nil
 }

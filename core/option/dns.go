@@ -3,20 +3,22 @@ package option
 import (
 	"context"
 	"net/netip"
+	"reflect"
 
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/schema"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/common/json/badjson"
 	"github.com/sagernet/sing/common/json/badoption"
 	M "github.com/sagernet/sing/common/metadata"
 	"github.com/sagernet/sing/service"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
 )
 
 type RawDNSOptions struct {
 	Servers        []DNSServerOptions `json:"servers,omitempty"`
 	Rules          []DNSRule          `json:"rules,omitempty"`
-	Final          string             `json:"final,omitempty"`
+	Final          string             `json:"final,omitempty" reference:"dns_server"`
 	ReverseMapping bool               `json:"reverse_mapping,omitempty"`
 	DNSClientOptions
 }
@@ -46,12 +48,23 @@ func (o *DNSOptions) UnmarshalJSONContext(ctx context.Context, content []byte) e
 	return badjson.UnmarshallExcludedContext(ctx, content, legacyOptions, &o.RawDNSOptions)
 }
 
+func (o DNSOptions) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
+	return builder.Define("DNS", func() (*schema.Node, error) {
+		node := schema.StrictObject()
+		err := builder.FlattenStruct(node, reflect.TypeFor[RawDNSOptions]())
+		if err != nil {
+			return nil, err
+		}
+		return node, nil
+	})
+}
+
 type DNSClientOptions struct {
 	Strategy         DomainStrategy        `json:"strategy,omitempty"`
 	Timeout          badoption.Duration    `json:"timeout,omitempty"`
 	DisableCache     bool                  `json:"disable_cache,omitempty"`
 	DisableExpire    bool                  `json:"disable_expire,omitempty"`
-	IndependentCache bool                  `json:"independent_cache,omitempty"`
+	IndependentCache bool                  `json:"independent_cache,omitempty" schema:"omit"`
 	CacheCapacity    uint32                `json:"cache_capacity,omitempty"`
 	Optimistic       *OptimisticDNSOptions `json:"optimistic,omitempty"`
 	ClientSubnet     *badoption.Prefixable `json:"client_subnet,omitempty"`
@@ -68,7 +81,7 @@ func (o OptimisticDNSOptions) MarshalJSON() ([]byte, error) {
 	if o.Timeout == 0 {
 		return json.Marshal(o.Enabled)
 	}
-	return json.Marshal((_OptimisticDNSOptions)(o))
+	return json.Marshal(_OptimisticDNSOptions(o))
 }
 
 func (o *OptimisticDNSOptions) UnmarshalJSON(bytes []byte) error {
@@ -79,7 +92,17 @@ func (o *OptimisticDNSOptions) UnmarshalJSON(bytes []byte) error {
 	return json.UnmarshalDisallowUnknownFields(bytes, (*_OptimisticDNSOptions)(o))
 }
 
+func (o OptimisticDNSOptions) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
+	objectForm := schema.StrictObject()
+	err := builder.FlattenStruct(objectForm, reflect.TypeFor[OptimisticDNSOptions]())
+	if err != nil {
+		return nil, err
+	}
+	return schema.AnyOf(schema.BooleanNode(), objectForm), nil
+}
+
 type DNSTransportOptionsRegistry interface {
+	OptionTypes() []string
 	CreateOptions(transportType string) (any, bool)
 }
 type _DNSServerOptions struct {
@@ -120,6 +143,16 @@ func (o *DNSServerOptions) UnmarshalJSONContext(ctx context.Context, content []b
 	}
 	o.Options = options
 	return nil
+}
+
+func (o DNSServerOptions) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
+	return builder.Define("DNSServer", func() (*schema.Node, error) {
+		registry := service.FromContext[DNSTransportOptionsRegistry](builder.Context())
+		if registry == nil {
+			return nil, E.New("missing DNS transport options registry in context")
+		}
+		return registryUnion(builder, registry, nil, true)
+	})
 }
 
 type DNSServerAddressOptions struct {
@@ -175,9 +208,20 @@ type RemoteHTTPSDNSServerOptions struct {
 	Headers badoption.HTTPHeader `json:"headers,omitempty"`
 }
 
+type GroupDNSServerOptions struct {
+	Servers      []string           `json:"servers" reference:"dns_server"`
+	Mode         string             `json:"mode,omitempty" enum:"parallel,sequential,stable,fastest"` //H
+	IgnoreRanges []badoption.Prefix `json:"ignore_ranges,omitempty"`                                  //H
+	ErrorTTL     badoption.Duration `json:"error_ttl,omitempty"`                                      //H
+	WinTTL       badoption.Duration `json:"win_ttl,omitempty"`                                        //H
+	// MemberTimeout is, in sequential mode, the longest one server is waited for; 0 shares the
+	// query's remaining time among the servers still to ask, at least 2 s each. //H
+	MemberTimeout badoption.Duration `json:"member_timeout,omitempty"` //H
+}
+
 type FakeIPDNSServerOptions struct {
-	Inet4Range *badoption.Prefix `json:"inet4_range,omitempty"`
-	Inet6Range *badoption.Prefix `json:"inet6_range,omitempty"`
+	Inet4Range *badoption.Prefix `json:"inet4_range,omitempty" examples:"198.18.0.0/15"`
+	Inet6Range *badoption.Prefix `json:"inet6_range,omitempty" examples:"2001:2::/48"`
 }
 
 type DHCPDNSServerOptions struct {
@@ -195,6 +239,7 @@ type SDNSDNSServerOptions struct { //H
 	Stamp string `json:"stamp"`
 }
 
+// Deprecated: use GroupDNSServerOptions.
 type MultiDNSServerOptions struct { //H
 	RawLocalDNSServerOptions
 	Servers      []string           `json:"servers,omitempty"`

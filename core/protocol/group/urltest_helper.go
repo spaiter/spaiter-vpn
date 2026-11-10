@@ -5,12 +5,12 @@ package group
 // 	"sync"
 // 	"time"
 
-// 	"github.com/spaiter/spaiter-vpn/core/log"
+// 	"github.com/sagernet/sing-box/log"
 
-// 	"github.com/spaiter/spaiter-vpn/core/adapter"
-// 	"github.com/spaiter/spaiter-vpn/core/common/urltest"
-// 	C "github.com/spaiter/spaiter-vpn/core/constant"
-// 	"github.com/spaiter/spaiter-vpn/core/hiddify/ipinfo"
+// 	"github.com/sagernet/sing-box/adapter"
+// 	"github.com/sagernet/sing-box/common/urltest"
+// 	C "github.com/sagernet/sing-box/constant"
+// 	"github.com/sagernet/sing-box/hiddify/ipinfo"
 // 	"github.com/sagernet/sing/common"
 // 	"github.com/sagernet/sing/common/batch"
 // 	N "github.com/sagernet/sing/common/network"

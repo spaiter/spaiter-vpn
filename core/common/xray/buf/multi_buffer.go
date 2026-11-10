@@ -3,9 +3,9 @@ package buf
 import (
 	"io"
 
-	"github.com/spaiter/spaiter-vpn/core/common/xray"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/errors"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/serial"
+	"github.com/sagernet/sing-box/common/xray"
+	"github.com/sagernet/sing-box/common/xray/errors"
+	"github.com/sagernet/sing-box/common/xray/serial"
 )
 
 // ReadAllToBytes reads all content from the reader into a byte array, until EOF.

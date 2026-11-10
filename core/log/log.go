@@ -6,8 +6,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 type Options struct {

@@ -4,10 +4,10 @@ import (
 	"io"
 	"net/http"
 
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/auth"
 	"github.com/sagernet/sing/common/json"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"github.com/go-chi/render"
 )

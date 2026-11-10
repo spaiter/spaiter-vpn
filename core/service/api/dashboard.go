@@ -10,12 +10,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/service"
 	"github.com/sagernet/sing/service/filemanager"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 const (
@@ -34,7 +35,6 @@ const (
 
 type dashboard struct {
 	ctx            context.Context
-	cancel         context.CancelFunc
 	logger         log.ContextLogger
 	options        option.APIDashboardOptions
 	path           string
@@ -47,7 +47,6 @@ type dashboard struct {
 }
 
 func newDashboard(ctx context.Context, logger log.ContextLogger, options option.APIDashboardOptions) *dashboard {
-	ctx, cancel := context.WithCancel(ctx)
 	path := options.Path
 	if path == "" {
 		path = "dashboard"
@@ -63,7 +62,6 @@ func newDashboard(ctx context.Context, logger log.ContextLogger, options option.
 	}
 	return &dashboard{
 		ctx:            ctx,
-		cancel:         cancel,
 		logger:         logger,
 		options:        options,
 		path:           path,
@@ -73,37 +71,31 @@ func newDashboard(ctx context.Context, logger log.ContextLogger, options option.
 	}
 }
 
-func (d *dashboard) start() error {
-	transport, err := d.resolveTransport()
+func (d *dashboard) start(ctx context.Context) error {
+	_, err := filemanager.ReadDir(d.ctx, d.path)
+	if err != nil && !os.IsNotExist(err) {
+		return E.Cause(err, "read dashboard directory")
+	}
+	status := d.loadState()
+	if status == dashboardUserProvided {
+		d.logger.Info("dashboard: serving user-provided files at ", d.path, ", auto-update disabled")
+		return nil
+	}
+	httpClientManager := service.FromContext[adapter.HTTPClientManager](d.ctx)
+	transport, err := httpClientManager.ResolveTransport(d.ctx, d.logger, common.PtrValueOrDefault(d.options.HTTPClient))
 	if err != nil {
 		return E.Cause(err, "create dashboard http client")
 	}
 	d.httpClient = &http.Client{Transport: transport}
-	go d.loopUpdate()
+	go d.loopUpdate(ctx, status)
 	return nil
 }
 
 func (d *dashboard) close() error {
-	d.cancel()
 	if d.httpClient != nil {
 		d.httpClient.CloseIdleConnections()
 	}
 	return nil
-}
-
-func (d *dashboard) resolveTransport() (adapter.HTTPTransport, error) {
-	httpClientManager := service.FromContext[adapter.HTTPClientManager](d.ctx)
-	if httpClientManager == nil {
-		return nil, E.New("missing http client manager in context")
-	}
-	if d.options.HTTPClient != nil && !d.options.HTTPClient.IsEmpty() {
-		return httpClientManager.ResolveTransport(d.ctx, d.logger, *d.options.HTTPClient)
-	}
-	defaultTransport := httpClientManager.DefaultTransport()
-	if defaultTransport == nil {
-		return nil, E.New("default http client transport is not initialized")
-	}
-	return defaultTransport, nil
 }
 
 func (d *dashboard) serveHTTP(writer http.ResponseWriter, request *http.Request) {
@@ -114,12 +106,7 @@ func (d *dashboard) serveHTTP(writer http.ResponseWriter, request *http.Request)
 	http.Redirect(writer, request, dashboardRoutePrefix, http.StatusFound)
 }
 
-func (d *dashboard) loopUpdate() {
-	status := d.loadState()
-	if status == dashboardUserProvided {
-		d.logger.Info("dashboard: serving user-provided files at ", d.path, ", auto-update disabled")
-		return
-	}
+func (d *dashboard) loopUpdate(ctx context.Context, status dashboardStatus) {
 	var nextUpdate time.Time
 	if status == dashboardManaged {
 		nextUpdate = d.lastUpdated.Add(d.updateInterval)
@@ -128,13 +115,13 @@ func (d *dashboard) loopUpdate() {
 	defer timer.Stop()
 	for {
 		select {
-		case <-d.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-timer.C:
 		}
 		now := time.Now()
 		if !now.Before(nextUpdate) {
-			err := d.fetch(d.ctx)
+			err := d.fetch(ctx)
 			if err != nil {
 				d.logger.Error(E.Cause(err, "update dashboard"))
 				nextUpdate = now.Add(d.updateInterval)
@@ -147,7 +134,7 @@ func (d *dashboard) loopUpdate() {
 }
 
 func (d *dashboard) loadState() dashboardStatus {
-	entries, err := os.ReadDir(d.path)
+	entries, err := filemanager.ReadDir(d.ctx, d.path)
 	if err != nil {
 		return dashboardEmpty
 	}
@@ -155,12 +142,12 @@ func (d *dashboard) loadState() dashboardStatus {
 		return dashboardEmpty
 	}
 	etagPath := filepath.Join(d.path, dashboardEtagFileName)
-	etagBytes, err := os.ReadFile(etagPath)
+	etagBytes, err := filemanager.ReadFile(d.ctx, etagPath)
 	if err != nil {
 		return dashboardUserProvided
 	}
 	d.lastEtag = strings.TrimSpace(string(etagBytes))
-	info, err := os.Stat(etagPath)
+	info, err := filemanager.Stat(d.ctx, etagPath)
 	if err == nil {
 		d.lastUpdated = info.ModTime()
 	}
@@ -212,7 +199,7 @@ func (d *dashboard) extract(body io.Reader, etag string) error {
 		return err
 	}
 	tempZipPath := tempFile.Name()
-	defer os.Remove(tempZipPath)
+	defer filemanager.Remove(d.ctx, tempZipPath)
 	_, err = io.Copy(tempFile, body)
 	tempFile.Close()
 	if err != nil {
@@ -271,7 +258,7 @@ func (d *dashboard) extract(body io.Reader, etag string) error {
 	if err != nil {
 		return err
 	}
-	return os.Rename(tempDir, d.path)
+	return filemanager.Rename(d.ctx, tempDir, d.path)
 }
 
 func extractZipEntry(ctx context.Context, file *zip.File, savePath string) error {

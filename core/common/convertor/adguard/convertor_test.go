@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/route/rule"
 	"github.com/sagernet/sing/common/logger"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/route/rule"
 
 	"github.com/stretchr/testify/require"
 )

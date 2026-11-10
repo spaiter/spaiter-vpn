@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/spaiter/spaiter-vpn/core/common/netns"
+	"github.com/sagernet/sing-box/common/netns"
 
 	"github.com/spf13/cobra"
 )

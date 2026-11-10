@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/sing/common/bufio"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 // discardConn is a net.Conn that accepts writes instantly, so a throughput

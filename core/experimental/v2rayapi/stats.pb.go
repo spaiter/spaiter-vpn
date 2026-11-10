@@ -470,7 +470,7 @@ const file_experimental_v2rayapi_stats_proto_rawDesc = "" +
 	"\bGetStats\x12&.experimental.v2rayapi.GetStatsRequest\x1a'.experimental.v2rayapi.GetStatsResponse\"\x00\x12c\n" +
 	"\n" +
 	"QueryStats\x12(.experimental.v2rayapi.QueryStatsRequest\x1a).experimental.v2rayapi.QueryStatsResponse\"\x00\x12`\n" +
-	"\vGetSysStats\x12&.experimental.v2rayapi.SysStatsRequest\x1a'.experimental.v2rayapi.SysStatsResponse\"\x00B;Z9github.com/spaiter/spaiter-vpn/core/experimental/v2rayapib\x06proto3"
+	"\vGetSysStats\x12&.experimental.v2rayapi.SysStatsRequest\x1a'.experimental.v2rayapi.SysStatsResponse\"\x00B4Z2github.com/sagernet/sing-box/experimental/v2rayapib\x06proto3"
 
 var (
 	file_experimental_v2rayapi_stats_proto_rawDescOnce sync.Once

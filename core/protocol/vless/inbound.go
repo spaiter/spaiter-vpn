@@ -9,6 +9,19 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/inbound"
+	"github.com/sagernet/sing-box/common/listener"
+	"github.com/sagernet/sing-box/common/mux"
+	"github.com/sagernet/sing-box/common/tls"
+	"github.com/sagernet/sing-box/common/uot"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/protocol/vless/encryption"
+	"github.com/sagernet/sing-box/transport/v2ray"
+	"github.com/sagernet/sing-vmess/packetaddr"
+	"github.com/sagernet/sing-vmess/vless"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/auth"
 	"github.com/sagernet/sing/common/bufio"
@@ -17,19 +30,6 @@ import (
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/inbound"
-	"github.com/spaiter/spaiter-vpn/core/common/listener"
-	"github.com/spaiter/spaiter-vpn/core/common/mux"
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	"github.com/spaiter/spaiter-vpn/core/common/uot"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	"github.com/spaiter/spaiter-vpn/core/protocol/vless/encryption"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/sing-vmess/packetaddr"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/sing-vmess/vless"
-	"github.com/spaiter/spaiter-vpn/core/transport/v2ray"
 )
 
 func RegisterInbound(registry *inbound.Registry) {
@@ -48,6 +48,7 @@ type Inbound struct {
 	service    *vless.Service[int]
 	tlsConfig  tls.ServerConfig
 	transport  adapter.V2RayServerTransport
+	references []string
 	decryption *encryption.ServerInstance
 }
 
@@ -68,9 +69,22 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	pushUsers(service, options.Users)
 	inbound.service = service
 	if options.TLS != nil {
-		inbound.tlsConfig, err = tls.NewServer(ctx, logger, common.PtrValueOrDefault(options.TLS))
+		inbound.tlsConfig, err = tls.NewServerWithOptions(tls.ServerOptions{
+			Context: ctx,
+			Logger:  logger,
+			Options: common.PtrValueOrDefault(options.TLS),
+			KTLSCompatible: common.PtrValueOrDefault(options.Transport).Type == "" &&
+				!common.PtrValueOrDefault(options.Multiplex).Enabled &&
+				(options.Decryption == "" || options.Decryption == "none") && // H: VLESS encryption wraps the TLS stream
+				common.All(options.Users, func(it option.VLESSUser) bool {
+					return it.Flow == ""
+				}),
+		})
 		if err != nil {
 			return nil, err
+		}
+		if options.TLS.Reality != nil && options.TLS.Reality.Enabled && options.TLS.Reality.Handshake.Detour != "" {
+			inbound.references = []string{options.TLS.Reality.Handshake.Detour}
 		}
 	}
 	if options.Transport != nil {
@@ -101,19 +115,33 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	return inbound, nil
 }
 
-func (h *Inbound) Start(stage adapter.StartStage) error {
+func (h *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateStart {
 		return nil
+	}
+	if h.decryption != nil {
+		scope.Add(func() error {
+			h.decryption.Close()
+			return nil
+		})
 	}
 	if h.tlsConfig != nil {
 		err := h.tlsConfig.Start()
 		if err != nil {
 			return err
 		}
+		scope.Add(h.tlsConfig.Close)
 	}
 	if h.transport == nil {
-		return h.listener.Start()
+		err := h.listener.Start()
+		if err != nil {
+			return err
+		}
+		scope.Add(h.listener.Close)
+		return nil
 	}
+	scope.Add(h.transport.Close)
+	scope.Add(h.listener.Close)
 	if common.Contains(h.transport.Network(), N.NetworkTCP) {
 		tcpListener, err := h.listener.ListenTCP()
 		if err != nil {
@@ -141,27 +169,7 @@ func (h *Inbound) Start(stage adapter.StartStage) error {
 	return nil
 }
 
-func (h *Inbound) Close() error {
-	if h.decryption != nil {
-		h.decryption.Close()
-	}
-	return common.Close(
-		h.service,
-		h.listener,
-		h.tlsConfig,
-		h.transport,
-	)
-}
-
 func (h *Inbound) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
-	canSplice := h.transport == nil
-	if canSplice && h.decryption != nil && h.decryption.IsFullRandomXorMode() {
-		canSplice = false
-	}
-	h.newConnectionExInternal(ctx, conn, metadata, onClose, canSplice)
-}
-
-func (h *Inbound) newConnectionExInternal(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc, canSplice bool) {
 	if h.tlsConfig != nil && h.transport == nil {
 		tlsConn, err := tls.ServerHandshake(ctx, conn, h.tlsConfig)
 		if err != nil {
@@ -181,7 +189,7 @@ func (h *Inbound) newConnectionExInternal(ctx context.Context, conn net.Conn, me
 		}
 		conn = encConn
 	}
-	err := h.service.NewConnectionWithOptions(adapter.WithContext(ctx, &metadata), conn, metadata.Source, onClose, canSplice)
+	err := h.service.NewConnection(adapter.WithContext(ctx, &metadata), conn, metadata.Source, onClose)
 	if err != nil {
 		N.CloseOnHandshakeFailure(conn, onClose, err)
 		h.logger.ErrorContext(ctx, E.Cause(err, "process connection from ", metadata.Source))
@@ -291,6 +299,10 @@ func parseServerDecryption(raw string) (serverDecryptionConfig, error) {
 		if segment == "" {
 			return cfg, E.New("invalid empty segment in decryption string")
 		}
+		if paddingPhase && isPaddingSegment(segment) { // digits and dashes such as 100-111-1111 also decode as base64
+			paddingParts = append(paddingParts, segment)
+			continue
+		}
 		if data, err := base64.RawURLEncoding.DecodeString(segment); err == nil {
 			if len(data) == 32 || len(data) == 64 {
 				cfg.keys = append(cfg.keys, data)
@@ -327,5 +339,9 @@ func (h *inboundTransportHandler) NewConnectionEx(ctx context.Context, conn net.
 	//nolint:staticcheck
 	metadata.InboundOptions = h.listener.ListenOptions().InboundOptions
 	h.logger.InfoContext(ctx, "inbound connection from ", metadata.Source)
-	(*Inbound)(h).newConnectionExInternal(ctx, conn, metadata, onClose, false)
+	(*Inbound)(h).NewConnection(ctx, conn, metadata, onClose)
+}
+
+func (h *Inbound) References() []string {
+	return h.references
 }

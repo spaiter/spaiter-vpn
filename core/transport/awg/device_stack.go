@@ -38,6 +38,7 @@ type stackTun struct {
 	dispatcher   stack.NetworkDispatcher
 	inet4Address netip.Addr
 	inet6Address netip.Addr
+	udpForwarder *singTun.UDPForwarder
 }
 
 func newStackTun(ctx context.Context, address []netip.Prefix, mtu uint32, handler singTun.Handler, udpTimeout time.Duration) (tunAdapter, error) {
@@ -79,7 +80,8 @@ func newStackTun(ctx context.Context, address []netip.Prefix, mtu uint32, handle
 
 	// Use sing-tun's TCP/UDP forwarders (with lazy connection pattern)
 	ipStack.SetTransportProtocolHandler(tcp.ProtocolNumber, singTun.NewTCPForwarder(ctx, ipStack, handler).HandlePacket)
-	ipStack.SetTransportProtocolHandler(udp.ProtocolNumber, singTun.NewUDPForwarder(ctx, ipStack, handler, udpTimeout).HandlePacket)
+	dev.udpForwarder = singTun.NewUDPForwarder(ctx, ipStack, handler, nil, singTun.UDPNatOptions{Timeout: udpTimeout})
+	ipStack.SetTransportProtocolHandler(udp.ProtocolNumber, dev.udpForwarder.HandlePacket)
 
 	return dev, nil
 }
@@ -91,6 +93,9 @@ func addrFromGvisor(addr tcpip.Address) netip.Addr {
 
 // tunAdapter: Start
 func (t *stackTun) Start() error {
+	if err := t.udpForwarder.Start(); err != nil {
+		return err
+	}
 	t.events <- awgTun.EventUp
 	return nil
 }
@@ -215,6 +220,7 @@ func (t *stackTun) Events() <-chan awgTun.Event {
 func (t *stackTun) Close() error {
 	close(t.done)
 	close(t.events)
+	_ = t.udpForwarder.Close()
 	t.stack.Close()
 	for _, endpoint := range t.stack.CleanupEndpoints() {
 		endpoint.Abort()

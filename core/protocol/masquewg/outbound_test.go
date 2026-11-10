@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/tls"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/json/badoption"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 	"github.com/stretchr/testify/require"
 )
 
@@ -79,7 +79,9 @@ func startInbound(t *testing.T, port uint16, target string) *Inbound {
 	})
 	require.NoError(t, err)
 	inbound := in.(*Inbound)
-	require.NoError(t, inbound.Start(adapter.StartStateStart))
+	scope := adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())
+	t.Cleanup(func() { scope.Close() })
+	require.NoError(t, inbound.Start(adapter.StartStateStart, scope))
 	return inbound
 }
 

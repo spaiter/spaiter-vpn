@@ -10,6 +10,7 @@ import (
 
 	"github.com/amnezia-vpn/amneziawg-go/v3/conn"
 	E "github.com/sagernet/sing/common/exceptions"
+	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 )
 
@@ -21,32 +22,28 @@ type bind_adapter struct {
 	dialer N.Dialer
 	ctx    context.Context
 	mutex  sync.Mutex
+	// peer, when valid, is the only peer: the bind opens one packet connection to it instead of
+	// two to any address. A proxy whose UDP needs a destination (an HTTP proxy's UDP, for one)
+	// refused the connections to 0.0.0.0, and the endpoint never started.
+	peer     netip.AddrPort
+	reserved *Reserved
+	opens    int           //H: see h_path.go
+	onReopen func()        //H
+	later    chan struct{} //H: see h_bind_later.go
+	pending  bool          //H: the only peer, given by a domain, is not resolved yet
 }
 
-func newBind(ctx context.Context, dial N.Dialer) conn.Bind {
+func newBind(ctx context.Context, dial N.Dialer, peer netip.AddrPort, reserved *Reserved) conn.Bind {
 	return &bind_adapter{
-		ctx:    ctx,
-		dialer: dial,
+		ctx:      ctx,
+		dialer:   dial,
+		peer:     peer,
+		reserved: reserved,
 	}
 }
 
 func (b *bind_adapter) connect(addr netip.Addr, port uint16) (net.PacketConn, error) {
-	// Bind a real listening UDP socket on the WireGuard listen_port so the AWG
-	// endpoint works as a server (accepts incoming clients). sing-box's
-	// dialer.ListenPacket treats the socksaddr as a destination, not a local
-	// bind, leaving the port unbound — hence the server never listened. //H fix
-	network := "udp4"
-	if addr.Is6() {
-		network = "udp6"
-	}
-	udpConn, err := net.ListenUDP(network, &net.UDPAddr{IP: addr.AsSlice(), Port: int(port)})
-	if err != nil {
-		// Return an untyped nil: a nil *net.UDPConn boxed into the interface is
-		// non-nil, and Open's `conn != nil` checks would then register a receive
-		// loop on a dead socket (e.g. on a host without IPv6).
-		return nil, err
-	}
-	return udpConn, nil
+	return b.dialer.ListenPacket(b.ctx, M.Socksaddr{Addr: addr, Port: port})
 }
 
 func (b *bind_adapter) receive(c net.PacketConn) conn.ReceiveFunc {
@@ -61,6 +58,7 @@ func (b *bind_adapter) receive(c net.PacketConn) conn.ReceiveFunc {
 			return 0, E.Cause(err, "parse endpoint")
 		}
 
+		b.reserved.clear(packets[0][:n])
 		sizes[0] = n
 		eps[0] = bindEp
 		return 1, nil
@@ -74,6 +72,24 @@ func (b *bind_adapter) Open(port uint16) (fns []conn.ReceiveFunc, actualPort uin
 	if b.conn4 != nil || b.conn6 != nil {
 		return nil, 0, conn.ErrBindAlreadyOpen
 	}
+	b.noteOpen() //H: a path change, after the first
+
+	if b.peer.IsValid() {
+		peerConn, err := b.connect(b.peer.Addr(), b.peer.Port())
+		if err != nil {
+			return b.openLater(port) //H: dial again once the detour is ready
+		}
+		if b.peer.Addr().Is4() || b.peer.Addr().Is4In6() {
+			b.conn4 = peerConn
+		} else {
+			b.conn6 = peerConn
+		}
+		return []conn.ReceiveFunc{b.receive(peerConn)}, port, nil
+	}
+
+	if b.pending { //H
+		return b.openPending(port) //H
+	} //H
 
 	conn4, err := b.connect(netip.IPv4Unspecified(), port)
 	if err != nil && !errors.Is(err, syscall.EAFNOSUPPORT) {
@@ -102,18 +118,31 @@ func (b *bind_adapter) Close() error {
 	defer b.mutex.Unlock()
 
 	var err4, err6 error
+	b.closeLater() //H
 
 	if b.conn4 != nil {
-		err4 = b.conn4.Close()
+		err4 = closeConn(b.conn4) //H: closed already by a network change
 		b.conn4 = nil
 	}
 
 	if b.conn6 != nil {
-		err6 = b.conn6.Close()
+		err6 = closeConn(b.conn6) //H
 		b.conn6 = nil
 	}
 
 	return errors.Join(err4, err6)
+}
+
+// abort closes the connections without forgetting them, so a send stuck on a stalled detour
+// returns; Close, under the device's network lock, forgets them.
+func (b *bind_adapter) abort() {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	for _, c := range []net.PacketConn{b.conn4, b.conn6} {
+		if c != nil {
+			c.Close()
+		}
+	}
 }
 
 func (b *bind_adapter) SetMark(mark uint32) error {
@@ -121,12 +150,7 @@ func (b *bind_adapter) SetMark(mark uint32) error {
 }
 
 func (b *bind_adapter) Send(bufs [][]byte, ep conn.Endpoint) error {
-	var conn net.PacketConn
-	if ep.DstIP().Is6() {
-		conn = b.conn6
-	} else {
-		conn = b.conn4
-	}
+	conn := b.sendConn(ep) //H: set late by openLater
 
 	if conn == nil {
 		return errors.ErrUnsupported
@@ -143,6 +167,7 @@ func (b *bind_adapter) Send(bufs [][]byte, ep conn.Endpoint) error {
 	}
 
 	for _, buf := range bufs {
+		b.reserved.write(buf)
 		if _, err := conn.WriteTo(buf, udpAddr); err != nil {
 			return err
 		}

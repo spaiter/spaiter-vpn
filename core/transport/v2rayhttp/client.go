@@ -7,37 +7,48 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/badhttp"
+	"github.com/sagernet/sing-box/common/tls"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	sHTTP "github.com/sagernet/sing/protocol/http"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
 	"golang.org/x/net/http2"
 )
 
-var _ adapter.V2RayClientTransport = (*Client)(nil)
+var _ adapter.V2RayMultiplexClientTransport = (*Client)(nil)
 
 type Client struct {
 	ctx        context.Context
 	dialer     N.Dialer
 	serverAddr M.Socksaddr
-	transport  http.RoundTripper
+	transport  common.TypedValue[http.RoundTripper]
 	http2      bool
 	requestURL url.URL
 	host       []string
 	method     string
 	headers    http.Header
+	closeIdle  atomic.Bool
 }
 
 func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, options option.V2RayHTTPOptions, tlsConfig tls.Config) (adapter.V2RayClientTransport, error) {
+	useHTTP2 := tlsConfig != nil && options.Version != 1 //H
 	var transport http.RoundTripper
-	if tlsConfig == nil {
+	if !useHTTP2 {
+		if tlsConfig != nil { //H
+			if len(tlsConfig.NextProtos()) == 0 { //H
+				tlsConfig.SetNextProtos([]string{"http/1.1"}) //H
+			} //H
+			dialer = tls.NewDialer(dialer, tlsConfig) //H
+		} //H
 		transport = &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				return dialer.DialContext(ctx, network, M.ParseSocksaddr(addr))
@@ -52,7 +63,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 			ReadIdleTimeout: time.Duration(options.IdleTimeout),
 			PingTimeout:     time.Duration(options.PingTimeout),
 			DialTLSContext: func(ctx context.Context, network, addr string, cfg *tls.STDConfig) (net.Conn, error) {
-				return tlsDialer.DialTLSContext(ctx, M.ParseSocksaddr(addr))
+				return tlsDialer.DialTLSContext(adapter.ContextForMultiplexSession(ctx), M.ParseSocksaddr(addr))
 			},
 		}
 	}
@@ -67,7 +78,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 	}
 	requestURL.Host = serverAddr.String()
 	requestURL.Path = options.Path
-	err := sHTTP.URLSetPath(&requestURL, options.Path)
+	err := badhttp.URLSetPath(&requestURL, options.Path)
 	if err != nil {
 		return nil, E.Cause(err, "parse path")
 	}
@@ -83,17 +94,18 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 	if headers.Get("User-Agent") == "" { //H
 		headers.Set("User-Agent", C.DefaultBrowserAgent) //H
 	} //H
-	return &Client{
+	client := &Client{
 		ctx:        ctx,
 		dialer:     dialer,
 		serverAddr: serverAddr,
 		requestURL: requestURL,
 		host:       options.Host,
 		method:     options.Method,
-		headers:    headers, //H
-		transport:  transport,
-		http2:      tlsConfig != nil,
-	}, nil
+		headers:    headers,
+		http2:      useHTTP2,
+	}
+	client.transport.Store(transport)
+	return client, nil
 }
 
 func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
@@ -117,7 +129,11 @@ func (c *Client) dialHTTP(ctx context.Context) (net.Conn, error) {
 	}
 	switch hostLen := len(c.host); hostLen {
 	case 0:
-		request.Host = c.serverAddr.AddrString()
+		if c.serverAddr.IsIPv6() {
+			request.Host = "[" + c.serverAddr.AddrString() + "]"
+		} else {
+			request.Host = c.serverAddr.AddrString()
+		}
 	case 1:
 		request.Host = c.host[0]
 	default:
@@ -129,13 +145,14 @@ func (c *Client) dialHTTP(ctx context.Context) (net.Conn, error) {
 
 func (c *Client) dialHTTP2(ctx context.Context) (net.Conn, error) {
 	pipeInReader, pipeInWriter := io.Pipe()
+	requestCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	request := &http.Request{
 		Method: c.method,
 		Body:   pipeInReader,
 		URL:    &c.requestURL,
 		Header: c.headers.Clone(),
 	}
-	request = request.WithContext(ctx)
+	request = request.WithContext(requestCtx)
 	switch hostLen := len(c.host); hostLen {
 	case 0:
 		// https://github.com/v2fly/v2ray-core/blob/master/transport/internet/http/config.go#L13
@@ -145,10 +162,29 @@ func (c *Client) dialHTTP2(ctx context.Context) (net.Conn, error) {
 	default:
 		request.Host = c.host[rand.Intn(hostLen)]
 	}
-	conn := NewLateHTTPConn(pipeInWriter)
+	conn := NewLateHTTPConn(pipeInWriter, cancel)
+	keepSession := adapter.KeepSessionFromContext(ctx)
+	conn.onClose = func() {
+		if c.closeIdle.Load() && !keepSession {
+			CloseIdleConnections(c.transport.Load())
+		}
+	}
+	handshakeTimeout := C.TCPTimeout
+	if deadline, hasDeadline := ctx.Deadline(); hasDeadline {
+		handshakeTimeout = time.Until(deadline)
+	}
+	var handshakeTimedOut atomic.Bool
+	handshakeTimer := time.AfterFunc(handshakeTimeout, func() {
+		handshakeTimedOut.Store(true)
+		cancel()
+	})
 	go func() {
-		response, err := c.transport.RoundTrip(request)
+		response, err := c.transport.Load().RoundTrip(request)
+		handshakeTimer.Stop()
 		if err != nil {
+			if handshakeTimedOut.Load() {
+				err = os.ErrDeadlineExceeded
+			}
 			conn.Setup(nil, err)
 		} else if response.StatusCode != 200 {
 			response.Body.Close()
@@ -160,7 +196,22 @@ func (c *Client) dialHTTP2(ctx context.Context) (net.Conn, error) {
 	return conn, nil
 }
 
+func (c *Client) MultiplexEnabled() bool {
+	return c.http2
+}
+
+func (c *Client) SetKeepIdleConnections(keep bool) {
+	c.closeIdle.Store(!keep)
+	if !keep {
+		c.CloseIdleConnections()
+	}
+}
+
+func (c *Client) CloseIdleConnections() {
+	CloseIdleConnections(c.transport.Load())
+}
+
 func (c *Client) Close() error {
-	c.transport = ResetTransport(c.transport)
+	c.transport.Store(ResetTransport(c.transport.Load()))
 	return nil
 }

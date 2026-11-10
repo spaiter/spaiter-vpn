@@ -6,7 +6,7 @@ import (
 	"net/netip"
 	"strings"
 
-	"github.com/spaiter/spaiter-vpn/core/option"
+	"github.com/sagernet/sing-box/option"
 	"github.com/spaiter/spaiter-vpn/internal/keys"
 )
 
@@ -287,12 +287,12 @@ func obfuscationFromOptions(opts *option.AwgEndpointOptions) keys.AWGObfuscation
 		H1: o.H1, H2: o.H2, H3: o.H3, H4: o.H4,
 		I1: o.I1, I2: o.I2,
 		HeaderProtectionKey:    o.HeaderProtectionKey,
-		ContentPaddingAddition: o.ContentPaddingAddition,
-		RekeyAfterTime:         o.RekeyAfterTime,
-		RekeyTimeout:           o.RekeyTimeout,
-		RejectAfterTime:        o.RejectAfterTime,
-		KeepaliveTimeout:       o.KeepaliveTimeout,
-		MaxHandshakeAttempts:   o.MaxHandshakeAttempts,
+		ContentPaddingAddition: string(o.ContentPaddingAddition),
+		RekeyAfterTime:         string(o.RekeyAfterTime),
+		RekeyTimeout:           string(o.RekeyTimeout),
+		RejectAfterTime:        string(o.RejectAfterTime),
+		KeepaliveTimeout:       string(o.KeepaliveTimeout),
+		MaxHandshakeAttempts:   string(o.MaxHandshakeAttempts),
 		RandomTrailers:         o.RandomTrailers,
 	}
 }
@@ -323,7 +323,7 @@ func recoverEndpoint(out *Secrets, users *userIndex, endpoint option.Endpoint) e
 	}
 
 	for _, peer := range opts.Peers {
-		slot := users.slot(peer.Name)
+		slot := users.slot(peer.Username)
 		if slot == nil {
 			// An unnamed peer predates per-peer naming or was made by hand.
 			// Skipped rather than guessed at: attaching it to the wrong user

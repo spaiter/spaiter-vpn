@@ -79,7 +79,7 @@ func (api *CloudflareApi) GetProfile(ctx context.Context, authToken string, id s
 	}
 	defer response.Body.Close()
 	if response.StatusCode != 200 {
-		return nil, fmt.Errorf("status code is not 200")
+		return nil, &StatusError{Operation: "get WARP device", Code: response.StatusCode} //H: tells a refused device from a network failure
 	}
 	content, err := io.ReadAll(response.Body)
 	if err != nil {
@@ -95,10 +95,10 @@ func (api *CloudflareApi) UpdateAccount(ctx context.Context, profile *Cloudflare
 	request, err := http.NewRequest("POST", fmt.Sprint(baseUrl, "reg/", deviceId, "/account"), strings.NewReader(
 		fmt.Sprintf("{\"license\":\"%s\"}", license),
 	))
-	request.Header.Set("Authorization", "Bearer "+authToken)
 	if err != nil {
 		return nil, err
 	}
+	request.Header.Set("Authorization", "Bearer "+authToken)
 	response, err := api.client.Do(request.WithContext(ctx))
 	if err != nil {
 		return nil, err

@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"github.com/cilium/ebpf"
 	"github.com/stretchr/testify/assert"
@@ -398,7 +398,7 @@ func TestService_BlockUnblock(t *testing.T) {
 	s := svc.(*Service)
 
 	// Start the service (skip Initialize which calls MustRegister — we test lifecycle separately)
-	require.NoError(t, s.Start(adapter.StartStateStart))
+	require.NoError(t, s.Start(adapter.StartStateStart, adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())))
 	defer s.Close()
 
 	ip := netip.MustParseAddr("198.51.100.1")
@@ -420,7 +420,7 @@ func TestService_IPv6_BlockUnblock(t *testing.T) {
 	require.NoError(t, err)
 
 	s := svc.(*Service)
-	require.NoError(t, s.Start(adapter.StartStateStart))
+	require.NoError(t, s.Start(adapter.StartStateStart, adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())))
 	defer s.Close()
 
 	ip6 := netip.MustParseAddr("2001:db8::1")
@@ -442,7 +442,7 @@ func TestService_MixedV4V6_BlockUnblock(t *testing.T) {
 	require.NoError(t, err)
 
 	s := svc.(*Service)
-	require.NoError(t, s.Start(adapter.StartStateStart))
+	require.NoError(t, s.Start(adapter.StartStateStart, adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())))
 	defer s.Close()
 
 	ip4 := netip.MustParseAddr("198.51.100.50")
@@ -469,7 +469,7 @@ func TestService_DefaultBanDuration(t *testing.T) {
 	require.NoError(t, err)
 
 	s := svc.(*Service)
-	require.NoError(t, s.Start(adapter.StartStateStart))
+	require.NoError(t, s.Start(adapter.StartStateStart, adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())))
 	defer s.Close()
 
 	ip := netip.MustParseAddr("203.0.113.1")
@@ -491,7 +491,7 @@ func TestService_TrackUserIP(t *testing.T) {
 	require.NoError(t, err)
 
 	s := svc.(*Service)
-	require.NoError(t, s.Start(adapter.StartStateStart))
+	require.NoError(t, s.Start(adapter.StartStateStart, adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())))
 	defer s.Close()
 
 	// Track IPs for a user
@@ -553,7 +553,7 @@ func TestService_BlockUserIPs(t *testing.T) {
 	require.NoError(t, err)
 
 	s := svc.(*Service)
-	require.NoError(t, s.Start(adapter.StartStateStart))
+	require.NoError(t, s.Start(adapter.StartStateStart, adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())))
 	defer s.Close()
 
 	ip4 := netip.MustParseAddr("10.0.0.1")
@@ -580,7 +580,7 @@ func TestService_BlockUserIPs_EmptyUser(t *testing.T) {
 	require.NoError(t, err)
 
 	s := svc.(*Service)
-	require.NoError(t, s.Start(adapter.StartStateStart))
+	require.NoError(t, s.Start(adapter.StartStateStart, adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())))
 	defer s.Close()
 
 	// Should be a no-op, no error
@@ -596,7 +596,7 @@ func TestService_BlockUserIPs_UnknownUser(t *testing.T) {
 	require.NoError(t, err)
 
 	s := svc.(*Service)
-	require.NoError(t, s.Start(adapter.StartStateStart))
+	require.NoError(t, s.Start(adapter.StartStateStart, adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())))
 	defer s.Close()
 
 	// Unknown user should be a no-op
@@ -612,7 +612,7 @@ func TestService_BlockUserIPs_CrossBlock(t *testing.T) {
 	require.NoError(t, err)
 
 	s := svc.(*Service)
-	require.NoError(t, s.Start(adapter.StartStateStart))
+	require.NoError(t, s.Start(adapter.StartStateStart, adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())))
 	defer s.Close()
 
 	aliceV4 := netip.MustParseAddr("10.0.0.1")
@@ -643,7 +643,7 @@ func TestService_BlockUserIPs_MultipleUsers(t *testing.T) {
 	require.NoError(t, err)
 
 	s := svc.(*Service)
-	require.NoError(t, s.Start(adapter.StartStateStart))
+	require.NoError(t, s.Start(adapter.StartStateStart, adapter.NewScope(context.Background(), log.NewNOPFactory().Logger())))
 	defer s.Close()
 
 	s.TrackUserIP("alice", netip.MustParseAddr("10.0.0.1"))

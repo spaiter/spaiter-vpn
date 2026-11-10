@@ -5,19 +5,20 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/amnezia-vpn/amneziawg-go/v3/conn"
 	"github.com/amnezia-vpn/amneziawg-go/v3/device"
 
+	"github.com/sagernet/sing-box/adapter"
 	singTun "github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/exceptions"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	"github.com/sagernet/sing/common/metadata"
 	"github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 )
 
 type DeviceOpts struct {
@@ -26,22 +27,35 @@ type DeviceOpts struct {
 	AllowedIps       []netip.Prefix
 	ExcludedIps      []netip.Prefix
 	MTU              uint32
-	Handler          singTun.Handler
-	UDPTimeout       time.Duration
-	Context          context.Context
-	// Bind, when non-nil, replaces the default UDP-socket bind. Used by the
-	// masque-wg outbound to ride WireGuard over a MASQUE CONNECT-UDP flow. The
-	// server-side awg endpoint leaves this nil and keeps its normal bind. //H
+	// Peer is the address of the only peer, when it has one: the bind then connects to it.
+	Peer netip.AddrPort
+	// Reserved, when set, are the peer's reserved bytes (WARP).
+	Reserved *Reserved
+	// MTUDiscovery and Fallback, the peer's other addresses: see h_path.go. //H
+	MTUDiscovery bool             //H
+	Fallback     []netip.AddrPort //H
+	// ListenPort, set on a server, is the port its peers send to: see h_listen.go. //H
+	ListenPort uint16 //H
+	// PeerPending: the only peer is given by a domain, resolved after the start (SetPeerEndpoint). //H
+	PeerPending bool //H
+	// Handler, when set, routes the peers' flows through sing-box (server mode): see device_stack.go.
+	Handler    singTun.Handler
+	UDPTimeout time.Duration
+	Context    context.Context
+	// Bind, when non-nil, replaces the default bind. Used by the masque-wg outbound to ride
+	// WireGuard over a MASQUE CONNECT-UDP flow; the server-side awg endpoint leaves it nil. //H
 	Bind conn.Bind
 }
 
 type Device struct {
-	awgDevice     *device.Device
-	tun           tunAdapter
-	bind          conn.Bind
-	logger        *device.Logger
-	ipcConfig     string
-	peerEndpoints peerEndpointCache //H tunnel address → peer's external IP
+	awgDevice *device.Device
+	tun       tunAdapter
+	bind      conn.Bind
+	logger    *device.Logger
+	ipcConfig string
+	path      *devicePath //H: MTU discovery and fallback addresses
+	// peerEndpoints maps a tunnel address to the peer's external address: see peer_endpoint.go //H
+	peerEndpoints peerEndpointCache //H
 }
 
 func NewDevice(ctx context.Context, logger logger.ContextLogger, dial network.Dialer, ipcConfig string, opts DeviceOpts) (*Device, error) {
@@ -76,15 +90,16 @@ func NewDevice(ctx context.Context, logger logger.ContextLogger, dial network.Di
 		},
 	}
 
-	bnd := opts.Bind //H allow injecting a custom bind (masque-wg); default otherwise
+	bnd := opts.Bind //H: an injected bind (masque-wg), else the default
 	if bnd == nil {
-		bnd = newBind(ctx, dial)
+		bnd = newDeviceBind(ctx, dial, opts) //H: a server listens on its port
 	}
 	return &Device{
 		tun:       tun,
 		bind:      bnd,
 		logger:    awgLogger,
 		ipcConfig: ipcConfig,
+		path:      newDevicePath(ctx, logger, tun, opts), //H
 	}, nil
 }
 
@@ -102,7 +117,11 @@ func (d *Device) Start(stage adapter.StartStage) error {
 		return E.Cause(err, "tun start")
 	}
 
-	return d.awgDevice.Up()
+	if err := d.awgDevice.Up(); err != nil { //H
+		return err //H
+	} //H
+	d.path.start(d) //H
+	return nil      //H
 }
 
 // IpcSetDelta applies a partial UAPI config to the running device. Unlike the
@@ -131,16 +150,31 @@ func (d *Device) IsUnderLoad() bool {
 }
 
 func (d *Device) Close() error {
+	d.path.close() //H
 	if d.awgDevice != nil {
+		// H: close the detour's connections first: a send stuck on a stalled detour holds the
+		// device's network lock, which device.Close needs to close the bind //H
+		if bind, isBind := d.bind.(*bind_adapter); isBind { //H
+			bind.abort() //H
+		} //H
 		d.awgDevice.Close()
 	}
 	return nil
 }
 
 func (d *Device) DialContext(ctx context.Context, network string, destination metadata.Socksaddr) (net.Conn, error) {
-	return d.tun.DialContext(ctx, network, destination)
+	conn, err := d.tun.DialContext(ctx, network, destination) //H
+	return d.path.track(network, conn, err)                   //H: closed when discovery lowers the MTU
 }
 
 func (d *Device) ListenPacket(ctx context.Context, destination metadata.Socksaddr) (net.PacketConn, error) {
 	return d.tun.ListenPacket(ctx, destination)
+}
+
+// IpcGet returns the device's state in the UAPI format; WARP reads handshakes and traffic from it.
+func (d *Device) IpcGet() (string, error) {
+	if d.awgDevice == nil {
+		return "", os.ErrInvalid
+	}
+	return d.awgDevice.IpcGet()
 }

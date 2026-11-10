@@ -12,7 +12,7 @@ RUN go mod download
 
 COPY . .
 
-ENV TAGS="with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_ccm,with_ocm,badlinkname,tfogo_checklinkname0,with_grpc,with_awg,with_xdp"
+ENV TAGS="with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_tailscale,with_ccm,with_ocm,badlinkname,tfogo_checklinkname0,with_grpc,with_awg,with_xdp"
 
 # Pre-compile all test binaries during build to catch errors early
 RUN go test -tags "${TAGS}" -run ^$ ./...

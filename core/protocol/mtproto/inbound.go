@@ -17,15 +17,15 @@ import (
 	"github.com/9seconds/mtg/v2/ipblocklist"
 	"github.com/9seconds/mtg/v2/mtglib"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/inbound"
+	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/listener"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/inbound"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	"github.com/spaiter/spaiter-vpn/core/common/listener"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 func RegisterInbound(registry *inbound.Registry) {
@@ -227,7 +227,10 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	return in, nil
 }
 
-func (i *Inbound) Start(stage adapter.StartStage) error {
+func (i *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage == adapter.StartStateInitialize {
+		scope.Add(i.Close) // closed with the box
+	}
 	if stage != adapter.StartStateStart {
 		return nil
 	}

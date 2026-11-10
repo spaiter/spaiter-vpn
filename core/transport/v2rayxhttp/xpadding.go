@@ -7,7 +7,7 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/spaiter/spaiter-vpn/core/option"
+	"github.com/sagernet/sing-box/option"
 	"golang.org/x/net/http2/hpack"
 )
 

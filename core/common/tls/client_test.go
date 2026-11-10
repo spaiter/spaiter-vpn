@@ -6,9 +6,9 @@ import (
 	"net"
 	"testing"
 
-	tf "github.com/spaiter/spaiter-vpn/core/common/tlsfragment"
-	"github.com/spaiter/spaiter-vpn/core/common/tlsspoof"
-	"github.com/spaiter/spaiter-vpn/core/option"
+	tf "github.com/sagernet/sing-box/common/tlsfragment"
+	"github.com/sagernet/sing-box/common/tlsspoof"
+	"github.com/sagernet/sing-box/option"
 
 	"github.com/stretchr/testify/require"
 )

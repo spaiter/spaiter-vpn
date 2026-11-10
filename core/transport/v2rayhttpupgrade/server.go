@@ -2,24 +2,28 @@ package v2rayhttpupgrade
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/base64"
 	"net"
 	"net/http"
 	"os"
 	"strings"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/badhttp"
+	"github.com/sagernet/sing-box/common/tls"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/transport/v2rayhttp"
 	"github.com/sagernet/sing/common"
+	"github.com/sagernet/sing/common/buf"
+	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	aTLS "github.com/sagernet/sing/common/tls"
-	sHttp "github.com/sagernet/sing/protocol/http"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	"github.com/spaiter/spaiter-vpn/core/transport/v2rayhttp"
 )
 
 var _ adapter.V2RayServerTransport = (*Server)(nil)
@@ -89,12 +93,13 @@ func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		s.invalidRequest(writer, request, http.StatusNotFound, E.New("not a websocket request"))
 		return
 	}
-	if request.Header.Get("Sec-WebSocket-Key") != "" {
-		s.invalidRequest(writer, request, http.StatusNotFound, E.New("real websocket request received"))
-		return
-	}
 	writer.Header().Set("Connection", "upgrade")
 	writer.Header().Set("Upgrade", "websocket")
+	// Xray clients send a Sec-WebSocket-Key to look like a real websocket handshake; answer it
+	// with a valid Sec-WebSocket-Accept, as the Xray server does
+	if wsKey := request.Header.Get("Sec-WebSocket-Key"); wsKey != "" {
+		writer.Header().Set("Sec-WebSocket-Accept", secWebSocketAccept(wsKey))
+	}
 	writer.WriteHeader(http.StatusSwitchingProtocols)
 	if flusher, isFlusher := writer.(httpFlusher); isFlusher {
 		err := flusher.FlushError()
@@ -107,12 +112,29 @@ func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		s.invalidRequest(writer, request, http.StatusInternalServerError, E.New("invalid connection, maybe HTTP/2"))
 		return
 	}
-	conn, _, err := hijacker.Hijack()
+	conn, reader, err := hijacker.Hijack()
 	if err != nil {
 		s.invalidRequest(writer, request, http.StatusInternalServerError, E.Cause(err, "hijack failed"))
 		return
 	}
-	s.handler.NewConnectionEx(v2rayhttp.DupContext(request.Context()), conn, sHttp.SourceAddress(request), M.Socksaddr{}, nil)
+	if cacheLen := reader.Reader.Buffered(); cacheLen > 0 {
+		cache := buf.NewSize(cacheLen)
+		_, err = cache.ReadFullFrom(reader.Reader, cacheLen)
+		if err != nil {
+			cache.Release()
+			conn.Close()
+			s.invalidRequest(writer, request, 0, E.Cause(err, "read cache"))
+			return
+		}
+		conn = bufio.NewCachedConn(conn, cache)
+	}
+	s.handler.NewConnectionEx(v2rayhttp.DupContext(request.Context()), conn, badhttp.SourceAddress(request), M.Socksaddr{}, nil)
+}
+
+// secWebSocketAccept computes the Sec-WebSocket-Accept value for key (RFC 6455 section 4.2.2).
+func secWebSocketAccept(key string) string {
+	accept := sha1.Sum([]byte(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+	return base64.StdEncoding.EncodeToString(accept[:])
 }
 
 func (s *Server) invalidRequest(writer http.ResponseWriter, request *http.Request, statusCode int, err error) {

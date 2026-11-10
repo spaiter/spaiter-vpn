@@ -3,8 +3,8 @@
 package include
 
 import (
-	"github.com/spaiter/spaiter-vpn/core/adapter/outbound"
-	"github.com/spaiter/spaiter-vpn/core/protocol/naive"
+	"github.com/sagernet/sing-box/adapter/outbound"
+	"github.com/sagernet/sing-box/protocol/naive"
 )
 
 func registerNaiveOutbound(registry *outbound.Registry) {

@@ -3,7 +3,7 @@ package cloudflare
 import (
 	"time"
 
-	C "github.com/spaiter/spaiter-vpn/core/constant"
+	C "github.com/sagernet/sing-box/constant"
 )
 
 type IdentityAccount struct {

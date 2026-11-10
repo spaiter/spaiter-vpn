@@ -2,34 +2,45 @@ package wireguard
 
 import (
 	"context"
+	hiddify "github.com/sagernet/wireguard-go/hiddify"
 	"net/netip"
 	"time"
 
 	"github.com/sagernet/sing-tun"
+	"github.com/sagernet/sing/common/control"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	hiddify "github.com/spaiter/spaiter-vpn/core/thirdparty/wireguard-go/hiddify"
 )
 
 type EndpointOptions struct {
+	Noise        hiddify.NoiseOptions //H
 	Context      context.Context
 	Logger       logger.ContextLogger
 	System       bool
 	Handler      tun.Handler
 	UDPTimeout   time.Duration
 	ICMPTimeout  time.Duration
-	Dialer       N.Dialer
-	CreateDialer func(interfaceName string) N.Dialer
-	Name         string
-	MTU          uint32
-	Address      []netip.Prefix
-	PrivateKey   string
-	ListenPort   uint16
-	ResolvePeer  func(domain string) (netip.Addr, error)
-	Peers        []PeerOptions
-	Workers      int
-	Noise        hiddify.NoiseOptions //H
+	UDPMapping   tun.NATMapping
+	UDPFiltering tun.NATFiltering
+	UDPNATMax    uint32
+
+	InterfaceFinder   control.InterfaceFinder
+	EgressPoolOptions tun.UDPEgressPoolOptions
+	Dialer            N.Dialer
+	CreateDialer      func(interfaceName string) N.Dialer
+	Tag               string
+	Name              string
+	MTU               uint32
+	Address           []netip.Prefix
+	PrivateKey        string
+	ListenPort        uint16
+	ResolvePeer       func(domain string) ([]netip.Addr, error)
+	Peers             []PeerOptions
+	Workers           int
+
+	DisableMTUDiscovery bool             //H: keep the configured MTU (see h_mtu_discovery.go)
+	PeerFallback        []netip.AddrPort //H: the only peer's other addresses (see h_peer_fallback.go)
 }
 
 type PeerOptions struct {

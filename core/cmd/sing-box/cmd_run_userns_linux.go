@@ -7,13 +7,15 @@ import (
 	"os/signal"
 	"syscall"
 
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"golang.org/x/sys/unix"
 )
+
+var initialDir, _ = os.Getwd()
 
 func runInUserNamespaceIfNeeded(options option.Options, optionsList []*OptionsEntry) error {
 	if !common.Any(options.NetworkNamespaces, func(namespace option.NetworkNamespace) bool {
@@ -31,8 +33,12 @@ func runInUserNamespaceIfNeeded(options option.Options, optionsList []*OptionsEn
 	if data[0].Effective&(1<<unix.CAP_SYS_ADMIN) != 0 {
 		return nil
 	}
+	if data[0].Effective != 0 || data[1].Effective != 0 {
+		return E.New("unshare network namespace requires CAP_SYS_ADMIN when running with other capabilities, as the rootless user namespace drops them")
+	}
 	command := exec.Command("/proc/self/exe", os.Args[1:]...)
 	command.Args = os.Args
+	command.Dir = initialDir
 	command.Stdin = os.Stdin
 	for _, entry := range optionsList {
 		if entry.path == "stdin" {
@@ -50,7 +56,7 @@ func runInUserNamespaceIfNeeded(options option.Options, optionsList []*OptionsEn
 			{ContainerID: os.Getegid(), HostID: os.Getegid(), Size: 1},
 		},
 		GidMappingsEnableSetgroups: false,
-		AmbientCaps:                []uintptr{unix.CAP_SYS_ADMIN, unix.CAP_NET_ADMIN, unix.CAP_NET_RAW},
+		AmbientCaps:                []uintptr{unix.CAP_SYS_ADMIN, unix.CAP_NET_ADMIN, unix.CAP_NET_RAW, unix.CAP_NET_BIND_SERVICE},
 		Setpgid:                    true,
 		Pdeathsig:                  syscall.SIGKILL,
 	}

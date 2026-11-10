@@ -3,18 +3,19 @@ package v2ray
 import (
 	"context"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/tls"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/transport/v2rayhttp"
+	"github.com/sagernet/sing-box/transport/v2rayhttpupgrade"
+	"github.com/sagernet/sing-box/transport/v2rayraw"
+	"github.com/sagernet/sing-box/transport/v2raywebsocket"
+	xhttp "github.com/sagernet/sing-box/transport/v2rayxhttp"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	"github.com/spaiter/spaiter-vpn/core/transport/v2rayhttp"
-	"github.com/spaiter/spaiter-vpn/core/transport/v2rayhttpupgrade"
-	"github.com/spaiter/spaiter-vpn/core/transport/v2raywebsocket"
-	xhttp "github.com/spaiter/spaiter-vpn/core/transport/v2rayxhttp"
 )
 
 type (
@@ -42,6 +43,12 @@ func NewServerTransport(ctx context.Context, logger logger.ContextLogger, option
 		return v2rayhttpupgrade.NewServer(ctx, logger, options.HTTPUpgradeOptions, tlsConfig, handler)
 	case C.V2RayTransportTypeXHTTP:
 		return xhttp.NewServer(ctx, logger, options.XHTTPOptions, tlsConfig, handler)
+	case C.V2RayTransportTypeRaw:
+		return v2rayraw.NewServer(ctx, logger, options.RawOptions, tlsConfig, handler)
+	case C.V2RayTransportTypeKCP: //H
+		return NewKCPServer(ctx, logger, options.KCPOptions, tlsConfig, handler) //H
+	case C.V2RayTransportTypeXDrive: //H
+		return NewXDriveServer(ctx, logger, options.XDriveOptions, tlsConfig, handler) //H
 	default:
 		return nil, E.New("unknown transport type: " + options.Type)
 	}
@@ -68,6 +75,12 @@ func NewClientTransport(ctx context.Context, dialer N.Dialer, serverAddr M.Socks
 		return v2rayhttpupgrade.NewClient(ctx, dialer, serverAddr, options.HTTPUpgradeOptions, tlsConfig)
 	case C.V2RayTransportTypeXHTTP:
 		return xhttp.NewClient(ctx, dialer, serverAddr, options.XHTTPOptions, tlsConfig)
+	case C.V2RayTransportTypeRaw:
+		return v2rayraw.NewClient(ctx, dialer, serverAddr, options.RawOptions, tlsConfig)
+	case C.V2RayTransportTypeKCP: //H
+		return NewKCPClient(ctx, dialer, serverAddr, options.KCPOptions, tlsConfig) //H
+	case C.V2RayTransportTypeXDrive: //H
+		return NewXDriveClient(ctx, dialer, serverAddr, options.XDriveOptions, tlsConfig) //H
 	default:
 		return nil, E.New("unknown client transport type: " + options.Type)
 	}

@@ -10,7 +10,7 @@ import (
 	"crypto/tls"
 	"unsafe"
 
-	"github.com/spaiter/spaiter-vpn/core/common/badtls"
+	"github.com/sagernet/sing-box/common/badtls"
 )
 
 type kernelCryptoCipherType uint16

@@ -7,7 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/spaiter/spaiter-vpn/core/log"
+	"github.com/sagernet/sing-box/log"
 
 	"golang.org/x/exp/slices"
 )

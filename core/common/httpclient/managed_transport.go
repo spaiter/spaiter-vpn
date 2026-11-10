@@ -6,9 +6,9 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/sagernet/sing-box/adapter"
 	E "github.com/sagernet/sing/common/exceptions"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 )
 
 type innerTransport interface {
@@ -25,10 +25,12 @@ type ManagedTransport struct {
 	factory       func() (innerTransport, error)
 	cheapRebuild  bool
 
-	dialer  N.Dialer
-	headers http.Header
-	host    string
-	tag     string
+	dialer          N.Dialer
+	headers         http.Header
+	host            string
+	tag             string
+	detour          string
+	defaultOutbound bool
 }
 
 type transportEpoch struct {

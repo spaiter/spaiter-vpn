@@ -4,28 +4,34 @@ import (
 	"context"
 	"net"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/outbound"
+	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/mux"
+	"github.com/sagernet/sing-box/common/tls"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/transport/v2ray"
+	"github.com/sagernet/sing-vmess"
+	"github.com/sagernet/sing-vmess/packetaddr"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/ntp"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/outbound"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	"github.com/spaiter/spaiter-vpn/core/common/mux"
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/sing-vmess"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/sing-vmess/packetaddr"
-	"github.com/spaiter/spaiter-vpn/core/transport/v2ray"
 )
 
 func RegisterOutbound(registry *outbound.Registry) {
 	outbound.Register[option.VMessOutboundOptions](registry, C.TypeVMess, NewOutbound)
 }
+
+var (
+	_ adapter.OutboundWithMultiplex   = (*Outbound)(nil)
+	_ adapter.InterfaceUpdateListener = (*Outbound)(nil)
+	_ adapter.IdleConnectionKeeper    = (*Outbound)(nil)
+)
 
 type Outbound struct {
 	outbound.Adapter
@@ -105,7 +111,15 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 	return outbound, nil
 }
 
-func (h *Outbound) InterfaceUpdated() {
+func (h *Outbound) MultiplexEnabled() bool {
+	if h.multiplexDialer != nil {
+		return true
+	}
+	multiplexTransport, isMultiplexTransport := h.transport.(adapter.V2RayMultiplexClientTransport)
+	return isMultiplexTransport && multiplexTransport.MultiplexEnabled()
+}
+
+func (h *Outbound) InterfaceUpdated(ctx context.Context) {
 	if h.transport != nil {
 		h.transport.Close()
 	}
@@ -114,8 +128,37 @@ func (h *Outbound) InterfaceUpdated() {
 	}
 }
 
-func (h *Outbound) Close() error {
-	return common.Close(common.PtrOrNil(h.multiplexDialer), h.transport)
+func (h *Outbound) SetKeepIdleConnections(keep bool) {
+	transportKeeper, isTransportKeeper := h.transport.(adapter.IdleConnectionKeeper)
+	if isTransportKeeper {
+		transportKeeper.SetKeepIdleConnections(keep)
+	}
+	if h.multiplexDialer != nil {
+		h.multiplexDialer.SetKeepIdleConnections(keep)
+	}
+}
+
+func (h *Outbound) CloseIdleConnections() {
+	transportKeeper, isTransportKeeper := h.transport.(adapter.IdleConnectionKeeper)
+	if isTransportKeeper {
+		transportKeeper.CloseIdleConnections()
+	}
+	if h.multiplexDialer != nil {
+		h.multiplexDialer.CloseIdleConnections()
+	}
+}
+
+func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage != adapter.StartStateInitialize {
+		return nil
+	}
+	if h.transport != nil {
+		scope.Add(h.transport.Close)
+	}
+	if h.multiplexDialer != nil {
+		scope.Add(h.multiplexDialer.Close)
+	}
+	return nil
 }
 
 func (h *Outbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {

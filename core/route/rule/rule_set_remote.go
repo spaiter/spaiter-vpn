@@ -3,14 +3,20 @@ package rule
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"io"
 	"net/http"
-	"runtime"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/srs"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/experimental/deprecated"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	F "github.com/sagernet/sing/common/format"
@@ -18,23 +24,29 @@ import (
 	"github.com/sagernet/sing/common/logger"
 	"github.com/sagernet/sing/common/x/list"
 	"github.com/sagernet/sing/service"
+	"github.com/sagernet/sing/service/filemanager"
 	"github.com/sagernet/sing/service/pause"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/srs"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/experimental/deprecated"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"go4.org/netipx"
 )
 
 var _ adapter.RuleSet = (*RemoteRuleSet)(nil)
 
+// H: a rule-set download gives up after this
+var hRuleSetFetchTimeout = 2 * time.Minute
+
+// H: retry delays after a failed rule-set fetch; the last one repeats until success
+var hRuleSetRetryDelays = []time.Duration{time.Second, 10 * time.Second, 30 * time.Second, time.Minute, 5 * time.Minute, 10 * time.Minute, 30 * time.Minute}
+
 type RemoteRuleSet struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 	logger         logger.ContextLogger
 	outbound       adapter.OutboundManager
+	tag            string
+	url            string
+	urlHash        [32]byte
+	initialPath    string
 	options        option.RuleSet
 	updateInterval time.Duration
 	httpClient     *http.Client
@@ -43,15 +55,15 @@ type RemoteRuleSet struct {
 	metadata       adapter.RuleSetMetadata
 	lastUpdated    time.Time
 	lastEtag       string
-	updateTicker   *time.Ticker
-	startupTicker  *time.Ticker //H
+	retries        int             //H: failed fetches in a row, for the updater's backoff
+	retryDelays    []time.Duration //H: overrides hRuleSetRetryDelays (tests)
 	cacheFile      adapter.CacheFile
 	pauseManager   pause.Manager
 	callbacks      list.List[adapter.RuleSetUpdateCallback]
 	refs           atomic.Int32
 }
 
-func NewRemoteRuleSet(ctx context.Context, logger logger.ContextLogger, options option.RuleSet) (*RemoteRuleSet, error) {
+func NewRemoteRuleSet(ctx context.Context, logger logger.ContextLogger, tag string, options option.RuleSet) (*RemoteRuleSet, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	var updateInterval time.Duration
 	if options.RemoteOptions.UpdateInterval > 0 {
@@ -59,11 +71,21 @@ func NewRemoteRuleSet(ctx context.Context, logger logger.ContextLogger, options 
 	} else {
 		updateInterval = 24 * time.Hour
 	}
+	var initialPath string
+	if options.RemoteOptions.InitialPath != "" {
+		initialPath = filemanager.BasePath(ctx, strings.ReplaceAll(options.RemoteOptions.InitialPath, C.RuleSetTagPlaceholder, tag))
+		initialPath, _ = filepath.Abs(initialPath)
+	}
+	url := strings.ReplaceAll(options.RemoteOptions.URL, C.RuleSetTagPlaceholder, tag)
 	return &RemoteRuleSet{
 		ctx:            ctx,
 		cancel:         cancel,
 		outbound:       service.FromContext[adapter.OutboundManager](ctx),
 		logger:         logger,
+		tag:            tag,
+		url:            url,
+		urlHash:        sha256.Sum256([]byte(url)),
+		initialPath:    initialPath,
 		options:        options,
 		updateInterval: updateInterval,
 		pauseManager:   service.FromContext[pause.Manager](ctx),
@@ -71,7 +93,7 @@ func NewRemoteRuleSet(ctx context.Context, logger logger.ContextLogger, options 
 }
 
 func (s *RemoteRuleSet) Name() string {
-	return s.options.Tag
+	return s.tag
 }
 
 func (s *RemoteRuleSet) String() string {
@@ -85,29 +107,36 @@ func (s *RemoteRuleSet) StartContext(ctx context.Context, startContext *adapter.
 		return E.Cause(err, "create rule-set http client")
 	}
 	startContext.Register(transport)
-	s.httpClient = &http.Client{Transport: transport}
+	s.httpClient = &http.Client{Transport: transport, Timeout: hRuleSetFetchTimeout} // H: a stalled download must not hang
 	if s.cacheFile != nil {
-		if savedSet := s.cacheFile.LoadRuleSet(s.options.Tag); savedSet != nil {
-			err = s.loadBytes(savedSet.Content)
-			if err != nil {
-				return E.Cause(err, "restore cached rule-set")
+		savedSet := s.cacheFile.LoadRuleSet(s.tag)
+		if savedSet != nil {
+			if len(savedSet.URLHash) > 0 && !bytes.Equal(savedSet.URLHash, s.urlHash[:]) {
+				s.logger.Info("cached rule-set was downloaded from another URL, will refetch")
+			} else {
+				err = s.loadBytes(savedSet.Content)
+				if err != nil {
+					s.logger.Warn(E.Cause(err, "restore cached rule-set, will refetch"))
+				} else {
+					s.lastUpdated = savedSet.LastUpdated
+					s.lastEtag = savedSet.LastEtag
+				}
 			}
-			s.lastUpdated = savedSet.LastUpdated
-			s.lastEtag = savedSet.LastEtag
 		}
 	}
-	if s.lastUpdated.IsZero() {
-		err = s.fetch(ctx, true)
+	if s.lastUpdated.IsZero() && s.initialPath != "" {
+		var content []byte
+		content, err = filemanager.ReadFile(s.ctx, s.initialPath)
+		if err == nil {
+			err = s.loadBytes(content)
+		}
 		if err != nil {
-			s.logger.Error(E.Cause(err, "initial rule-set: ", s.options.Tag))
+			s.logger.Warn(E.Cause(err, "load initial rule-set from ", s.initialPath))
 		}
 	}
-	s.updateTicker = time.NewTicker(s.updateInterval)
-	return nil
-}
-
-func (s *RemoteRuleSet) PostStart() error {
-	go s.loopUpdate()
+	// H: no download here: the start, and with it the tunnel, would wait for it, through an outbound
+	// that is itself still starting, and a stop could not cut it short. The rule-set starts empty and
+	// the RuleSetUpdater fetches it as soon as the service is up, retrying with backoff.
 	return nil
 }
 
@@ -170,7 +199,7 @@ func (s *RemoteRuleSet) loadBytes(content []byte) error {
 	default:
 		return E.New("unknown rule-set format: ", s.options.Format)
 	}
-	plainRuleSet, err := ruleSet.Upgrade()
+	plainRuleSet, err := mmapRuleSet(s.ctx, s.logger, s.tag, ruleSet).Upgrade()
 	if err != nil {
 		return err
 	}
@@ -182,7 +211,7 @@ func (s *RemoteRuleSet) loadBytes(content []byte) error {
 		}
 	}
 	metadata := buildRuleSetMetadata(plainRuleSet.Rules)
-	err = validateRuleSetMetadataUpdate(s.ctx, s.options.Tag, metadata)
+	err = validateRuleSetMetadataUpdate(s.ctx, s.tag, metadata)
 	if err != nil {
 		return err
 	}
@@ -197,43 +226,31 @@ func (s *RemoteRuleSet) loadBytes(content []byte) error {
 	return nil
 }
 
-func (s *RemoteRuleSet) loopUpdate() {
-	if time.Since(s.lastUpdated) > s.updateInterval {
-		s.updateOnce()
+// nextRetryDelay returns the wait before the next try after a failed fetch; the last delay
+// repeats until a fetch succeeds. //H
+func (s *RemoteRuleSet) nextRetryDelay() time.Duration {
+	retryDelays := s.retryDelays
+	if len(retryDelays) == 0 {
+		retryDelays = hRuleSetRetryDelays
 	}
-	for s.lastUpdated.IsZero() {
-		select {
-		case <-s.ctx.Done():
-			return
-		case <-s.startupTicker.C:
-			s.updateOnce()
-		}
-
-	}
-
-	for {
-		runtime.GC()
-		select {
-		case <-s.ctx.Done():
-			return
-		case <-s.updateTicker.C:
-			s.updateOnce()
-		}
-	}
+	delay := retryDelays[min(s.retries, len(retryDelays)-1)]
+	s.retries++
+	return delay
 }
 
-func (s *RemoteRuleSet) updateOnce() {
+func (s *RemoteRuleSet) updateOnce() error {
 	err := s.fetch(s.ctx, false)
 	if err != nil {
-		s.logger.Error("fetch rule-set ", s.options.Tag, ": ", err)
+		s.logger.Error("fetch rule-set ", s.tag, ": ", err)
 	} else if s.refs.Load() == 0 {
 		s.rules = nil
 	}
+	return err
 }
 
 func (s *RemoteRuleSet) fetch(ctx context.Context, isStart bool) error {
-	s.logger.Debug("updating rule-set ", s.options.Tag, " from URL: ", s.options.RemoteOptions.URL)
-	request, err := http.NewRequest("GET", s.options.RemoteOptions.URL, nil)
+	s.logger.Debug("updating rule-set ", s.tag, " from URL: ", s.url)
+	request, err := http.NewRequest("GET", s.url, nil)
 	if err != nil {
 		return err
 	}
@@ -253,17 +270,18 @@ func (s *RemoteRuleSet) fetch(ctx context.Context, isStart bool) error {
 	case http.StatusNotModified:
 		s.lastUpdated = time.Now()
 		if s.cacheFile != nil {
-			savedRuleSet := s.cacheFile.LoadRuleSet(s.options.Tag)
+			savedRuleSet := s.cacheFile.LoadRuleSet(s.tag)
 			if savedRuleSet != nil {
 				savedRuleSet.LastUpdated = s.lastUpdated
-				err = s.cacheFile.SaveRuleSet(s.options.Tag, savedRuleSet)
+				savedRuleSet.URLHash = s.urlHash[:]
+				err = s.cacheFile.SaveRuleSet(s.tag, savedRuleSet)
 				if err != nil {
 					s.logger.Error("save rule-set updated time: ", err)
 					return nil
 				}
 			}
 		}
-		s.logger.Info("update rule-set ", s.options.Tag, ": not modified")
+		s.logger.Info("update rule-set ", s.tag, ": not modified")
 		return nil
 	default:
 		return E.New("unexpected status: ", response.Status)
@@ -282,16 +300,17 @@ func (s *RemoteRuleSet) fetch(ctx context.Context, isStart bool) error {
 	}
 	s.lastUpdated = time.Now()
 	if s.cacheFile != nil {
-		err = s.cacheFile.SaveRuleSet(s.options.Tag, &adapter.SavedBinary{
+		err = s.cacheFile.SaveRuleSet(s.tag, &adapter.SavedBinary{
 			LastUpdated: s.lastUpdated,
 			Content:     content,
 			LastEtag:    s.lastEtag,
+			URLHash:     s.urlHash[:],
 		})
 		if err != nil {
 			s.logger.Error("save rule-set cache: ", err)
 		}
 	}
-	s.logger.Info("updated rule-set ", s.options.Tag)
+	s.logger.Info("updated rule-set ", s.tag)
 	return nil
 }
 
@@ -322,29 +341,13 @@ func (s *RemoteRuleSet) resolveTransport() (adapter.HTTPTransport, error) {
 func (s *RemoteRuleSet) Close() error {
 	s.rules = nil
 	s.cancel()
-	if s.startupTicker != nil {
-		s.startupTicker.Stop()
-	}
-	if s.updateTicker != nil {
-		s.updateTicker.Stop()
-	}
 	return nil
 }
 
 func (s *RemoteRuleSet) Match(metadata *adapter.InboundContext) bool {
-	return !s.matchStates(metadata).isEmpty()
+	return matchAnyHeadlessRule(s.rules, metadata)
 }
 
-func (s *RemoteRuleSet) matchStates(metadata *adapter.InboundContext) ruleMatchStateSet {
-	return s.matchStatesWithBase(metadata, 0)
-}
-
-func (s *RemoteRuleSet) matchStatesWithBase(metadata *adapter.InboundContext, base ruleMatchState) ruleMatchStateSet {
-	var stateSet ruleMatchStateSet
-	for _, rule := range s.rules {
-		nestedMetadata := *metadata
-		nestedMetadata.ResetRuleMatchCache()
-		stateSet = stateSet.merge(matchHeadlessRuleStatesWithBase(rule, &nestedMetadata, base))
-	}
-	return stateSet
+func (s *RemoteRuleSet) mergeableRule() *DefaultHeadlessRule {
+	return mergeableRuleIn(s.rules)
 }

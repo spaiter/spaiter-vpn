@@ -1,4 +1,4 @@
-//go:build with_gvisor
+//go:build with_tailscale
 
 package derp
 
@@ -14,9 +14,19 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	boxService "github.com/sagernet/sing-box/adapter/service"
+	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/listener"
+	"github.com/sagernet/sing-box/common/tls"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	boxScale "github.com/sagernet/sing-box/protocol/tailscale"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	F "github.com/sagernet/sing/common/format"
@@ -27,29 +37,21 @@ import (
 	aTLS "github.com/sagernet/sing/common/tls"
 	"github.com/sagernet/sing/service"
 	"github.com/sagernet/sing/service/filemanager"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	boxService "github.com/spaiter/spaiter-vpn/core/adapter/service"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	"github.com/spaiter/spaiter-vpn/core/common/listener"
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	boxScale "github.com/spaiter/spaiter-vpn/core/protocol/tailscale"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/client/local"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/derp"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/derp/derphttp"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/derp/derpserver"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/net/netmon"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/net/stun"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/net/wsconn"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/tsweb"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/types/key"
+	"github.com/sagernet/tailscale/client/local"
+	"github.com/sagernet/tailscale/derp"
+	"github.com/sagernet/tailscale/derp/derphttp"
+	"github.com/sagernet/tailscale/derp/derpserver"
+	"github.com/sagernet/tailscale/net/netmon"
+	"github.com/sagernet/tailscale/net/stun"
+	"github.com/sagernet/tailscale/net/wsconn"
+	"github.com/sagernet/tailscale/tsweb"
+	"github.com/sagernet/tailscale/types/key"
 
 	"github.com/coder/websocket"
 	"github.com/go-chi/render"
+	"go4.org/mem"
 	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
+	"golang.org/x/net/http2/h2c" //nolint:staticcheck
 )
 
 func Register(registry *boxService.Registry) {
@@ -67,6 +69,8 @@ type Service struct {
 	configPath           string
 	verifyClientEndpoint []string
 	verifyClientURL      []*option.DERPVerifyClientURLOptions
+	verifyClientInbound  []string
+	verifyClientKeys     []key.NodePublic
 	home                 string
 	meshKey              string
 	meshKeyPath          string
@@ -94,6 +98,15 @@ func NewService(ctx context.Context, logger log.ContextLogger, tag string, optio
 		if err != nil {
 			return nil, E.Cause(err, "invalid mesh_psk")
 		}
+	}
+
+	verifyClientKeys := make([]key.NodePublic, 0, len(options.VerifyClientKey))
+	for index, encodedKey := range options.VerifyClientKey {
+		publicKey, err := boxScale.DecodeTailcatKey(encodedKey)
+		if err != nil {
+			return nil, E.Cause(err, "parse verify_client_key[", index, "]")
+		}
+		verifyClientKeys = append(verifyClientKeys, key.NodePublicFromRaw32(mem.B(publicKey[:])))
 	}
 
 	var stunListener *listener.Listener
@@ -127,6 +140,8 @@ func NewService(ctx context.Context, logger log.ContextLogger, tag string, optio
 		configPath:           configPath,
 		verifyClientEndpoint: options.VerifyClientEndpoint,
 		verifyClientURL:      options.VerifyClientURL,
+		verifyClientInbound:  options.VerifyClientInbound,
+		verifyClientKeys:     verifyClientKeys,
 		home:                 options.Home,
 		meshKey:              options.MeshPSK,
 		meshKeyPath:          options.MeshPSKFile,
@@ -134,10 +149,10 @@ func NewService(ctx context.Context, logger log.ContextLogger, tag string, optio
 	}, nil
 }
 
-func (d *Service) Start(stage adapter.StartStage) error {
+func (d *Service) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	switch stage {
 	case adapter.StartStateStart:
-		config, err := readDERPConfig(filemanager.BasePath(d.ctx, d.configPath))
+		config, err := readDERPConfig(d.ctx, filemanager.BasePath(d.ctx, d.configPath))
 		if err != nil {
 			return err
 		}
@@ -162,11 +177,23 @@ func (d *Service) Start(stage adapter.StartStage) error {
 			server.SetVerifyClientURL(urls)
 		}
 
+		verifyClientKeys := slices.Clone(d.verifyClientKeys)
+		if len(d.verifyClientInbound) > 0 {
+			inboundKeys, err := resolveTailcatVerifyKeys(d.ctx, d.verifyClientInbound)
+			if err != nil {
+				return err
+			}
+			verifyClientKeys = append(verifyClientKeys, inboundKeys...)
+		}
+		if len(verifyClientKeys) > 0 {
+			server.SetVerifyClientKeys(verifyClientKeys)
+		}
+
 		if d.meshKey != "" {
 			server.SetMeshKey(d.meshKey)
 		} else if d.meshKeyPath != "" {
 			var meshKeyContent []byte
-			meshKeyContent, err = os.ReadFile(d.meshKeyPath)
+			meshKeyContent, err = filemanager.ReadFile(d.ctx, d.meshKeyPath)
 			if err != nil {
 				return err
 			}
@@ -205,11 +232,13 @@ func (d *Service) Start(stage adapter.StartStage) error {
 		if err != nil {
 			return err
 		}
+		scope.Add(d.tlsConfig.Close)
 
 		tcpListener, err := d.listener.ListenTCP()
 		if err != nil {
 			return err
 		}
+		scope.Add(d.listener.Close)
 		if len(d.tlsConfig.NextProtos()) == 0 {
 			d.tlsConfig.SetNextProtos([]string{http2.NextProtoTLS, "http/1.1"})
 		} else if !common.Contains(d.tlsConfig.NextProtos(), http2.NextProtoTLS) {
@@ -217,6 +246,7 @@ func (d *Service) Start(stage adapter.StartStage) error {
 		}
 		tcpListener = aTLS.NewListener(tcpListener, d.tlsConfig)
 		httpServer := &http.Server{
+			//nolint:staticcheck
 			Handler: h2c.NewHandler(derpMux, &http2.Server{}),
 		}
 		go httpServer.Serve(tcpListener)
@@ -226,6 +256,7 @@ func (d *Service) Start(stage adapter.StartStage) error {
 			if err != nil {
 				return err
 			}
+			scope.Add(d.stunListener.Close)
 			go d.loopSTUNPacket(stunConn.(*net.UDPConn))
 		}
 	case adapter.StartStatePostStart:
@@ -305,11 +336,14 @@ func (d *Service) startMeshWithHost(derpServer *derpserver.Server, server *optio
 	logf := func(format string, args ...any) {
 		d.logger.Debug(F.ToString("mesh(", hostname, "): ", fmt.Sprintf(format, args...)))
 	}
+	meshAddress := M.ParseSocksaddrHostPort(hostname, server.ServerPort)
 	var meshHost string
-	if server.ServerPort == 0 || server.ServerPort == 443 {
-		meshHost = hostname
+	if server.ServerPort != 0 && server.ServerPort != 443 {
+		meshHost = meshAddress.String()
+	} else if meshAddress.IsIPv6() {
+		meshHost = "[" + meshAddress.AddrString() + "]"
 	} else {
-		meshHost = M.ParseSocksaddrHostPort(hostname, server.ServerPort).String()
+		meshHost = meshAddress.AddrString()
 	}
 	var serverURL string
 	if stdConfig != nil {
@@ -325,21 +359,13 @@ func (d *Service) startMeshWithHost(derpServer *derpserver.Server, server *optio
 	meshClient.MeshKey = derpServer.MeshKey()
 	meshClient.WatchConnectionChanges = true
 	meshClient.SetURLDialer(func(ctx context.Context, network, addr string) (net.Conn, error) {
-		return meshDialer.DialContext(ctx, network, M.ParseSocksaddr(addr))
+		return meshDialer.DialContext(ctx, network, M.ParseSocksaddrHostPort(server.Server, M.ParseSocksaddr(addr).Port))
 	})
 	add := func(m derp.PeerPresentMessage) { derpServer.AddPacketForwarder(m.Key, meshClient) }
 	remove := func(m derp.PeerGoneMessage) { derpServer.RemovePacketForwarder(m.Peer, meshClient) }
 	notifyError := func(err error) { d.logger.Error(err) }
 	go meshClient.RunWatchConnectionLoop(context.Background(), derpServer.PublicKey(), logf, add, remove, notifyError)
 	return nil
-}
-
-func (d *Service) Close() error {
-	err := common.Close(
-		common.PtrOrNil(d.listener),
-		d.tlsConfig,
-	)
-	return err
 }
 
 var homePage = `
@@ -447,11 +473,11 @@ type derpConfig struct {
 	PrivateKey key.NodePrivate
 }
 
-func readDERPConfig(path string) (*derpConfig, error) {
-	content, err := os.ReadFile(path)
+func readDERPConfig(ctx context.Context, path string) (*derpConfig, error) {
+	content, err := filemanager.ReadFile(ctx, path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return writeNewDERPConfig(path)
+			return writeNewDERPConfig(ctx, path)
 		}
 		return nil, err
 	}
@@ -463,9 +489,9 @@ func readDERPConfig(path string) (*derpConfig, error) {
 	return &config, nil
 }
 
-func writeNewDERPConfig(path string) (*derpConfig, error) {
+func writeNewDERPConfig(ctx context.Context, path string) (*derpConfig, error) {
 	newKey := key.NewNode()
-	err := os.MkdirAll(filepath.Dir(path), 0o777)
+	err := filemanager.MkdirAll(ctx, filepath.Dir(path), 0o777)
 	if err != nil {
 		return nil, err
 	}
@@ -476,7 +502,7 @@ func writeNewDERPConfig(path string) (*derpConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = os.WriteFile(path, content, 0o644)
+	err = filemanager.WriteFile(ctx, path, content, 0o644)
 	if err != nil {
 		return nil, err
 	}
@@ -510,4 +536,10 @@ func (d *Service) loopSTUNPacket(packetConn *net.UDPConn) {
 		}
 		packetConn.WriteMsgUDPAddrPort(stun.Response(txid, addrPort), oob[:oobN], addrPort)
 	}
+}
+
+func (d *Service) References() []string {
+	return common.FilterNotDefault(common.Map(d.meshWith, func(it *option.DERPMeshOptions) string {
+		return it.Detour
+	}))
 }

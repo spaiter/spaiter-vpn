@@ -1,9 +1,9 @@
 package main
 
 import (
+	"github.com/sagernet/sing-box/common/geosite"
+	"github.com/sagernet/sing-box/log"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/common/geosite"
-	"github.com/spaiter/spaiter-vpn/core/log"
 
 	"github.com/spf13/cobra"
 )

@@ -4,20 +4,20 @@ import (
 	"context"
 	"net"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/outbound"
+	"github.com/sagernet/sing-box/common/dialer"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	snellprotocol "github.com/sagernet/sing-snell"
+	"github.com/sagernet/sing-snell/snellv4"
+	"github.com/sagernet/sing-snell/snellv6"
 	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/outbound"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	snellprotocol "github.com/spaiter/spaiter-vpn/core/thirdparty/sing-snell"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/sing-snell/snellv4"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/sing-snell/snellv6"
 )
 
 func RegisterOutbound(registry *outbound.Registry) {
@@ -30,11 +30,21 @@ type Outbound struct {
 	dialer     N.Dialer
 	client     snellClient
 	serverAddr M.Socksaddr
+	reuse      bool
 }
+
+var (
+	_ adapter.InterfaceUpdateListener = (*Outbound)(nil)
+	_ adapter.IdleConnectionKeeper    = (*Outbound)(nil)
+	_ adapter.OutboundWithMultiplex   = (*Outbound)(nil)
+)
 
 type snellClient interface {
 	snellprotocol.Method
 	DialContext(ctx context.Context, destination M.Socksaddr) (net.Conn, error)
+	Reset()
+	SetKeepIdleConnections(keep bool)
+	CloseIdleConnections()
 	Close() error
 }
 
@@ -89,6 +99,7 @@ func NewOutbound(ctx context.Context, router adapter.Router, logger log.ContextL
 		dialer:     outboundDialer,
 		client:     client,
 		serverAddr: serverAddr,
+		reuse:      options.Reuse,
 	}
 	return outbound, nil
 }
@@ -101,6 +112,9 @@ func (h *Outbound) DialContext(ctx context.Context, network string, destination 
 	switch networkName {
 	case N.NetworkTCP:
 		h.logger.InfoContext(ctx, "outbound connection to ", destination)
+		if h.reuse {
+			return h.client.DialContext(adapter.ContextForMultiplexSession(ctx), destination)
+		}
 		return h.client.DialContext(ctx, destination)
 	case N.NetworkUDP:
 		h.logger.InfoContext(ctx, "outbound packet connection to ", destination)
@@ -136,6 +150,26 @@ func (h *Outbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	return packetConn, nil
 }
 
-func (h *Outbound) Close() error {
-	return h.client.Close()
+func (h *Outbound) InterfaceUpdated(ctx context.Context) {
+	h.client.Reset()
+}
+
+func (h *Outbound) MultiplexEnabled() bool {
+	return h.reuse
+}
+
+func (h *Outbound) SetKeepIdleConnections(keep bool) {
+	h.client.SetKeepIdleConnections(keep)
+}
+
+func (h *Outbound) CloseIdleConnections() {
+	h.client.CloseIdleConnections()
+}
+
+func (h *Outbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage != adapter.StartStateInitialize {
+		return nil
+	}
+	scope.Add(h.client.Close)
+	return nil
 }

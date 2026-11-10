@@ -19,9 +19,9 @@ import (
 	"strings"
 	"time"
 
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/json/badoption"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
 	"github.com/spaiter/spaiter-vpn/internal/corelog"
@@ -455,7 +455,7 @@ func testEndpoint(opts Options, serverKey, clientKey wgtypes.Key, serverAddr, cl
 			MTU:              uint32(opts.MTU),
 			ListenPort:       opts.Port,
 			Peers: []option.AwgPeerOptions{{
-				Name:       "selftest",
+				Username:   "selftest",
 				PublicKey:  clientKey.PublicKey().String(),
 				AllowedIPs: badoption.Listable[netip.Prefix]{netip.PrefixFrom(clientAddr.Addr(), 32)},
 			}},

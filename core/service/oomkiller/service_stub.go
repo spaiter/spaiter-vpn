@@ -3,22 +3,20 @@
 package oomkiller
 
 import (
-	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
+	"github.com/sagernet/sing-box/adapter"
 )
 
-func (s *Service) Start(stage adapter.StartStage) error {
+func (s *Service) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateStart {
 		return nil
 	}
-	if !s.timerConfig.policyMode.hasTimerMode() {
-		return E.New("memory pressure monitoring is not available on this platform without memory_limit")
+	err := s.startTimer()
+	if err != nil {
+		return err
 	}
-	s.startTimer()
-	return nil
-}
-
-func (s *Service) Close() error {
-	s.stopTimer()
+	scope.Add(func() error {
+		s.stopTimer()
+		return nil
+	})
 	return nil
 }

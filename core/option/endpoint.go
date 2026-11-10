@@ -3,6 +3,8 @@ package option
 import (
 	"context"
 
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/schema"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/common/json/badjson"
@@ -10,6 +12,7 @@ import (
 )
 
 type EndpointOptionsRegistry interface {
+	OptionTypes() []string
 	CreateOptions(endpointType string) (any, bool)
 }
 
@@ -22,6 +25,9 @@ type _Endpoint struct {
 type Endpoint _Endpoint
 
 func (h *Endpoint) MarshalJSONContext(ctx context.Context) ([]byte, error) {
+	if raw, isRaw := rawInvalidConfig(h.Type, h.Options); isRaw {
+		return raw, nil
+	}
 	return badjson.MarshallObjectsContext(ctx, (*_Endpoint)(h), h.Options)
 }
 
@@ -34,14 +40,34 @@ func (h *Endpoint) UnmarshalJSONContext(ctx context.Context, content []byte) err
 	if registry == nil {
 		return E.New("missing endpoint fields registry in context")
 	}
+	// H: keep a broken endpoint as an invalid placeholder instead of failing the whole config
+	err = h.unmarshalOptions(ctx, registry, content)
+	if err != nil {
+		h.Options = newInvalidOptions(h.Type, content, err)
+		h.Type = C.TypeHInvalidConfig
+	}
+	return nil
+}
+
+func (h *Endpoint) unmarshalOptions(ctx context.Context, registry EndpointOptionsRegistry, content []byte) error {
 	options, loaded := registry.CreateOptions(h.Type)
 	if !loaded {
 		return E.New("unknown endpoint type: ", h.Type)
 	}
-	err = badjson.UnmarshallExcludedContext(ctx, content, (*_Endpoint)(h), options)
+	err := badjson.UnmarshallExcludedContext(ctx, content, (*_Endpoint)(h), options)
 	if err != nil {
 		return err
 	}
 	h.Options = options
 	return nil
+}
+
+func (h Endpoint) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
+	return builder.Define("Endpoint", func() (*schema.Node, error) {
+		registry := service.FromContext[EndpointOptionsRegistry](builder.Context())
+		if registry == nil {
+			return nil, E.New("missing endpoint options registry in context")
+		}
+		return registryUnion(builder, registry, nil, true)
+	})
 }

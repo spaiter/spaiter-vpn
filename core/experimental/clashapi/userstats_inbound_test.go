@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/spaiter/spaiter-vpn/core/log"
+	"github.com/sagernet/sing-box/log"
 )
 
 func newTestStats(t *testing.T) *UserStatsManager {

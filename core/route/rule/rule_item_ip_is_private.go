@@ -1,8 +1,8 @@
 package rule
 
 import (
+	"github.com/sagernet/sing-box/adapter"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 )
 
 var _ RuleItem = (*IPIsPrivateItem)(nil)

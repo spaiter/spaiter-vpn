@@ -9,21 +9,23 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"os"
 	"reflect"
 	"slices"
 	"strings"
 	"time"
 	"unsafe"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/certificate"
+	boxtls "github.com/sagernet/sing-box/common/tls"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/certificate"
-	boxtls "github.com/spaiter/spaiter-vpn/core/common/tls"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
+	"github.com/sagernet/sing/service/filemanager"
 
 	"github.com/caddyserver/certmagic"
 	"github.com/caddyserver/zerossl"
@@ -46,11 +48,12 @@ var (
 
 type Service struct {
 	certificate.Adapter
-	ctx        context.Context
-	config     *certmagic.Config
-	cache      *certmagic.Cache
-	domain     []string
-	nextProtos []string
+	ctx           context.Context
+	config        *certmagic.Config
+	zapLogger     *zap.Logger
+	dataDirectory string
+	domain        []string
+	nextProtos    []string
 }
 
 func NewCertificateProvider(ctx context.Context, logger log.ContextLogger, tag string, options option.ACMECertificateProviderOptions) (adapter.CertificateProviderService, error) {
@@ -76,9 +79,13 @@ func NewCertificateProvider(ctx context.Context, logger log.ContextLogger, tag s
 		return nil, E.New("email is required to use the ZeroSSL ACME endpoint without external_account or account_key")
 	}
 
-	var storage certmagic.Storage
+	var (
+		storage       certmagic.Storage
+		dataDirectory string
+	)
 	if options.DataDirectory != "" {
-		storage = &certmagic.FileStorage{Path: options.DataDirectory}
+		dataDirectory = filemanager.BasePath(ctx, os.ExpandEnv(options.DataDirectory))
+		storage = &certmagic.FileStorage{Path: dataDirectory}
 	} else {
 		storage = certmagic.Default.Storage
 	}
@@ -108,7 +115,7 @@ func NewCertificateProvider(ctx context.Context, logger log.ContextLogger, tag s
 		case option.ACMEKeyTypeRSA4096:
 			keyType = certmagic.RSA4096
 		default:
-			return nil, E.New("unsupported ACME key type: ", options.KeyType)
+			return nil, E.New("unsupported ACME key type: ", string(options.KeyType))
 		}
 		config.KeySource = certmagic.StandardKeyGenerator{KeyType: keyType}
 	}
@@ -162,38 +169,46 @@ func NewCertificateProvider(ctx context.Context, logger log.ContextLogger, tag s
 	}
 	reflect.NewAt(httpClientField.Type(), unsafe.Pointer(httpClientField.UnsafeAddr())).Elem().Set(reflect.ValueOf(acmeHTTPClient))
 	config.Issuers = []certmagic.Issuer{certmagicIssuer}
-	cache := certmagic.NewCache(certmagic.CacheOptions{
-		GetConfigForCert: func(certificate certmagic.Certificate) (*certmagic.Config, error) {
-			return config, nil
-		},
-		Logger: zapLogger,
-	})
-	config = certmagic.New(cache, *config)
 
 	var nextProtos []string
 	if !acmeIssuer.DisableTLSALPNChallenge && acmeIssuer.DNS01Solver == nil {
 		nextProtos = []string{C.ACMETLS1Protocol}
 	}
 	return &Service{
-		Adapter:    certificate.NewAdapter(C.TypeACME, tag),
-		ctx:        ctx,
-		config:     config,
-		cache:      cache,
-		domain:     options.Domain,
-		nextProtos: nextProtos,
+		Adapter:       certificate.NewAdapter(C.TypeACME, tag),
+		ctx:           ctx,
+		config:        config,
+		zapLogger:     zapLogger,
+		dataDirectory: dataDirectory,
+		domain:        options.Domain,
+		nextProtos:    nextProtos,
 	}, nil
 }
 
-func (s *Service) Start(stage adapter.StartStage) error {
-	if stage != adapter.StartStateStart {
-		return nil
-	}
-	return s.config.ManageAsync(s.ctx, s.domain)
-}
-
-func (s *Service) Close() error {
-	if s.cache != nil {
-		s.cache.Stop()
+func (s *Service) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	switch stage {
+	case adapter.StartStateInitialize:
+		if s.dataDirectory != "" {
+			err := filemanager.MkdirAll(s.ctx, s.dataDirectory, 0o700)
+			if err != nil {
+				return E.Cause(err, "create ACME data directory")
+			}
+		}
+		config := s.config
+		cache := certmagic.NewCache(certmagic.CacheOptions{
+			GetConfigForCert: func(certificate certmagic.Certificate) (*certmagic.Config, error) {
+				return config, nil
+			},
+			Logger: s.zapLogger,
+		})
+		scope.Add(func() error {
+			cache.Stop()
+			return nil
+		})
+		config = certmagic.New(cache, *config)
+		s.config = config
+	case adapter.StartStateStart:
+		return s.config.ManageAsync(s.ctx, s.domain)
 	}
 	return nil
 }
@@ -211,13 +226,13 @@ func newDNSSolver(dnsOptions *option.ACMEProviderDNS01ChallengeOptions, logger *
 		return nil, nil
 	}
 	if dnsOptions.TTL < 0 {
-		return nil, E.New("invalid ACME DNS01 ttl: ", dnsOptions.TTL)
+		return nil, E.New("invalid ACME DNS01 ttl: ", dnsOptions.TTL.Build())
 	}
 	if dnsOptions.PropagationDelay < 0 {
-		return nil, E.New("invalid ACME DNS01 propagation_delay: ", dnsOptions.PropagationDelay)
+		return nil, E.New("invalid ACME DNS01 propagation_delay: ", dnsOptions.PropagationDelay.Build())
 	}
 	if dnsOptions.PropagationTimeout < -1 {
-		return nil, E.New("invalid ACME DNS01 propagation_timeout: ", dnsOptions.PropagationTimeout)
+		return nil, E.New("invalid ACME DNS01 propagation_timeout: ", dnsOptions.PropagationTimeout.Build())
 	}
 	solver := &certmagic.DNS01Solver{
 		DNSManager: certmagic.DNSManager{

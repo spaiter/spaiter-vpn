@@ -1,5 +1,10 @@
 # Provenance of `core/`
 
+> **Newest chapter: "2026-11-10: re-based onto hiddify/v5" at the end.** It supersedes the
+> statements below that `core/` has zero `replace` directives, that `core/thirdparty/`
+> holds the forks and that a rebase is no longer possible; the sections above it are the
+> history that led there.
+
 This directory is not a copy kept in sync with somewhere else. It is the
 project's source of truth for the VPN core, absorbed here on **2026-10-23** so
 that one repository builds everything and resolves nothing over the network
@@ -342,3 +347,90 @@ it belongs to their rewritten `transport/http` layer and our MASQUE (the
 Cloudflare WARP transport) picks h2 or h3 statically from the endpoint type;
 and MTU discovery for WireGuard endpoints, a 500-line feature on top of
 endpoint internals (`device_peer_router`) this tree does not have.
+
+## 2026-11-10: re-based onto hiddify/v5 `e70a33ec6` (sing-box 1.15.0-alpha.13 ⊇ 1.14.4); `core/` is a nested module again
+
+The absorbed tree sat on hiddify/v5 of 2026-07-09 (merge-base `706727617`, 1.14.0-alpha.26).
+Upstream moved 979 commits (+414k lines) and rewrote the v5 history, and the zero-replace
+layout above made every upgrade a rewrite of ~17 module paths plus a repair of every
+`*.pb.go` descriptor. Both facts together decided the change of policy recorded here:
+
+**`core/` is the fork itself, module `github.com/sagernet/sing-box`, with its own
+`go.mod`.** The root module reaches it through `replace github.com/sagernet/sing-box =>
+./core` and mirrors every replace directive of `core/go.mod` with a `./core/` prefix (only
+the main module's replaces count). The forks the fork needs live in `core/replace/<name>/`
+as plain directories (hiddify keeps them as submodules of `github.com/hiddify/<name>`), so
+a clean clone still builds without reaching anything but ordinary Go modules.
+`core/thirdparty/` is gone; what it held is now either in `core/replace/` (wireguard-go,
+tailscale, sing-vmess, sing-shadowtls) or an ordinary pinned module (connect-ip-go, dnscrypt,
+vaydns, sing-snell, sing-anytls, GooseRelayVPN). First-party imports moved from
+`github.com/spaiter/spaiter-vpn/core/…` to `github.com/sagernet/sing-box/…` (14 files).
+
+### How the series was carried over
+
+The historical record is `github.com/spaiter/hiddify-sing-box`, branch `extended`
+(`95c4dcb7e`): 32 commits on hiddify/v5 `13267cb94`. They were rebased onto `e70a33ec6`
+as branch `upgrade/v5-20261110` and this tree is `git archive` of its head plus the
+contents of the `replace/` submodules. 27 commits survived; five were dropped, each
+because upstream now does the same thing. A 28th commit carries what this directory had
+acquired after the absorption and `extended` never saw (per-user MTProto secrets and
+speed limits, per-inbound statistics, naive user reload, masque-wg and xhttp fixes with
+their tests, the WARP registration `port` option, the shadowsocks 2022 dial); it is a
+tree diff of the old `core/` against `extended`, rebased onto v5, and wherever v5
+already had the same change the v5 text was kept:
+
+| dropped | why |
+|---|---|
+| `integrate: XDP core … route hook onto v5` | patch contents already upstream (git found it empty) |
+| `fix(submodule): pin tailscale to working 788aa623` | v5 is on tailscale 1.102.1; `with_tailscale` is not built anyway |
+| `fix(gooserelay): vendor v1.7.1 shim in-repo` | v5 pins `hiddify/GooseRelayVPN`; GooseRelay was torn down 2026-08-15 |
+| `fix(awg): bind a real listening UDP socket on listen_port` | v5 `transport/awg/h_listen.go` gives a server `conn.NewStdNetBind()`; our version replaced the client bind's `Open` with `net.ListenUDP`, which broke the detour path (three `TestH_*` in `transport/awg` fail with it, pass without) |
+| `Restore the libbox bridge types` | `experimental/libbox/platform.go` upstream declares them |
+
+What upstream absorbed meanwhile, so our commits shrank to the parts it does not have:
+peer attribution (`hiddify/peeruser`, `AwgPeerOptions.Username` under json `name`) replaced
+our `peerNameTable`; AWG 3.x options (`AwgRange`), the domain-peer deferral, MTU
+discovery/fallback and the server listen bind are theirs. Kept as ours: the gVisor stack
+tun that routes peers' flows through the router (`transport/awg/device_stack.go`, now on
+sing-tun 0.9.7's `NewUDPForwarder(ctx, stack, handler, nil, UDPNatOptions{Timeout})`), the
+per-user stats / `/manage` / `/stats` / `/panel` layer, XDP blocker with the tunnel-address
+→ peer-endpoint mapping, the BitTorrent detector and pcap corpus, mtproto, masque-wg,
+hot-reload of users/peers, snell users in `/manage`.
+
+Adaptations made while rebasing (each visible as the resolution of the respective commit):
+
+- Lifecycle: `Start(stage)` became `Start(stage, scope *adapter.Scope)`; components
+  register their `Close` with `scope.Add` at `StartStateInitialize` (clash server, XDP
+  service, mtproto and masque-wg inbounds).
+- `header_protection_key` stays **base64** on the wire (the Amnezia `.conf` form the bot
+  emits; `awg3-in` in production carries a 44-char key) and is hex-encoded for the UAPI;
+  64 hex digits pass through for upstream-style configs. Upstream alone would reject the
+  live config.
+- `peerUsers` is an `atomic.Pointer` so `ReloadPeers` can swap it; `genIpcConfig` keeps
+  upstream's `net.JoinHostPort` (IPv6 peers) and the peer block is `genIpcPeer`.
+- shadowsocks reload uses upstream's `usersAccess`/`userName` instead of our atomic copy;
+  anytls reload uses upstream `sing-anytls`'s `MultiService.UpdateUsers(names, passwords)`,
+  which is now race-free, so that vendored copy is gone. `sing-shadowtls` still has no
+  setter: `core/replace/sing-shadowtls` is the pinned `v0.2.2-0.20260928201441` plus
+  `users atomic.TypedValue` + `UpdateUsers` (marked `//H`).
+- The inbound/endpoint managers' `Remove` left the interfaces (hiddify's own box-level hot
+  reload, `h_box_hotreload.go`, 2026-10-08, kept it on the implementations); `apply.go`
+  reaches it through a type assertion. Whether our per-inbound apply should give way to
+  that reload is an open question, not decided here.
+- `UserStatsManager.Start/Close` tolerate a nil receiver (the typed-nil-in-closer-list
+  case from the 2026-10-23 entry) — it is in the series now, not a local edit.
+
+Carried from the 2026-11 entries above and checked against the new base: `godebug
+multipathtcp=0` is in v5's `go.mod`; the Go 1.27 `force_close_go127.go` split and the
+`badtls` anchor are upstream; the `bufio.CachedConn` mutex and the amneziawg
+`netstack.Close` fix are in hiddify's `replace/sing` and `replace/amneziawg-go`; the gvisor
+`handleConnecting` fix is in hiddify's `replace/gvisor` as well (their variant, marked `H:`). The three pinned
+`github.com/spaiter/{gvisor,sing,amneziawg-go}` forks are therefore gone from the root
+`go.mod`. `psiphon` is registered unconditionally by v5 (`include/registry.go`); it was
+removed from the absorbed tree because `psiphon-tls` panicked in `init` on Go ≥ 1.26 — v5
+builds on go 1.27 with `replace/psiphon-tls`, verified by running the binary (below).
+The `with_dnstt` gate (license, THIRD-PARTY-NOTICES.md §6) now covers three outbounds,
+not one: `dnstt`, `masterdns` and `soar` all consume `hiddify/hmrd_multi_resolver_dns`
+through `common/dnspool`, so `include/dnstt.go` registers all of them and
+`include/dnstt_stub.go` makes each report "not included in this build". `smart_dns_pool`
+as a service no longer exists upstream. None of them is in a published build.

@@ -3,7 +3,6 @@
 package libbox
 
 import (
-	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -11,34 +10,39 @@ import (
 	"strconv"
 	"time"
 
+	C "github.com/sagernet/sing-box/constant"
 	E "github.com/sagernet/sing/common/exceptions"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
 )
 
 type reportMetadata struct {
-	Source              string `json:"source,omitempty"`
-	BundleIdentifier    string `json:"bundleIdentifier,omitempty"`
-	ProcessName         string `json:"processName,omitempty"`
-	ProcessPath         string `json:"processPath,omitempty"`
-	StartedAt           string `json:"startedAt,omitempty"`
-	AppVersion          string `json:"appVersion,omitempty"`
-	AppMarketingVersion string `json:"appMarketingVersion,omitempty"`
-	CoreVersion         string `json:"coreVersion,omitempty"`
-	GoVersion           string `json:"goVersion,omitempty"`
+	Source              string          `json:"source,omitempty"`
+	BundleIdentifier    string          `json:"bundleIdentifier,omitempty"`
+	ProcessName         string          `json:"processName,omitempty"`
+	ProcessPath         string          `json:"processPath,omitempty"`
+	StartedAt           string          `json:"startedAt,omitempty"`
+	AppVersion          string          `json:"appVersion,omitempty"`
+	AppMarketingVersion string          `json:"appMarketingVersion,omitempty"`
+	CoreVersion         string          `json:"coreVersion,omitempty"`
+	GoVersion           string          `json:"goVersion,omitempty"`
+	Platform            json.RawMessage `json:"platform,omitempty"`
 }
 
 func baseReportMetadata() reportMetadata {
 	processPath, _ := os.Executable()
 	processName := filepath.Base(processPath)
+	processPath = processName //H: the full path can hold the user name
 	if processName == "." {
 		processName = ""
 	}
 	return reportMetadata{
-		Source:      sCrashReportSource,
-		ProcessName: processName,
-		ProcessPath: processPath,
-		CoreVersion: C.Version,
-		GoVersion:   GoVersion(),
+		Source:              sCrashReportSource,
+		ProcessName:         processName,
+		ProcessPath:         processPath,
+		AppVersion:          sAppVersion,
+		AppMarketingVersion: sAppMarketingVersion,
+		CoreVersion:         C.Version,
+		GoVersion:           GoVersion(),
+		Platform:            sPlatformMetadata,
 	}
 }
 
@@ -56,16 +60,30 @@ func writeReportMetadata(destPath string, metadata any) {
 	writeReportFile(destPath, "metadata.json", data)
 }
 
+// H: reports do not carry the configuration; see saveConfigSnapshot
 func copyConfigSnapshot(destPath string) {
-	snapshotPath := configSnapshotPath()
-	content, err := os.ReadFile(snapshotPath)
-	if err != nil {
+}
+
+func platformSnapshotPath() string {
+	return filepath.Join(sWorkingPath, "PlatformMetadata-"+sCrashReportSource+".json")
+}
+
+func savePlatformSnapshot() {
+	snapshotPath := platformSnapshotPath()
+	if sPlatformMetadata == nil {
+		os.Remove(snapshotPath)
 		return
 	}
-	if len(bytes.TrimSpace(content)) == 0 {
-		return
+	os.WriteFile(snapshotPath, sPlatformMetadata, 0o666)
+	chownReport(snapshotPath)
+}
+
+func readPlatformSnapshot() json.RawMessage {
+	content, err := os.ReadFile(platformSnapshotPath())
+	if err != nil || !json.Valid(content) {
+		return nil
 	}
-	writeReportFile(destPath, "configuration.json", content)
+	return content
 }
 
 func initReportDir(path string) {

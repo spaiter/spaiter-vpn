@@ -12,7 +12,7 @@ import "C"
 import (
 	"crypto/x509"
 
-	"github.com/spaiter/spaiter-vpn/core/common/jni"
+	"github.com/sagernet/sing-box/common/jni"
 )
 
 func systemCertificates() []*x509.Certificate {

@@ -10,7 +10,7 @@ icon: material/new-box
 
     需要特权。支持 Linux、macOS、Windows、rooted Android 和越狱 iOS。
 
-    对于图形客户端：macOS 仅独立版本可用，且需要 Root Helper；Android 需要 root 权限；iOS 需要越狱。
+    对于图形客户端：macOS 仅独立版本可用，且需要辅助服务；Android 需要 root 权限；iOS 需要越狱。
 
 `bridge` 是 `direct` 出站的 L3 版本：它将 L3 连接（TCP、UDP 和 ICMP）直接从网络接口转发出去。
 通过[预匹配](/zh/configuration/shared/pre-match/)中的 `route` 动作，将 L3 流量从 TUN
@@ -43,8 +43,6 @@ icon: material/new-box
 
 默认使用默认接口。
 
-接口不可用期间，转发流量将被丢弃。
-
 #### bridge_name
 
 自定义 bridge TUN 接口名前缀，默认使用 `bridge`。
@@ -55,9 +53,9 @@ icon: material/new-box
 
 !!! quote ""
 
-    仅支持 Linux，且仅在设置了 `interface` 时生效。
+    仅支持 Linux。
 
-用于固定出口路由的 Linux iproute2 路由表索引。
+Linux iproute2 路由表索引。
 
 默认使用 `2200` + 实例索引。
 

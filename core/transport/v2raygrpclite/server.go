@@ -8,21 +8,22 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/badhttp"
+	"github.com/sagernet/sing-box/common/grpcname" //H
+	"github.com/sagernet/sing-box/common/tls"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/transport/v2rayhttp"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	aTLS "github.com/sagernet/sing/common/tls"
-	sHttp "github.com/sagernet/sing/protocol/http"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	"github.com/spaiter/spaiter-vpn/core/transport/v2rayhttp"
 
 	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
+	"golang.org/x/net/http2/h2c" //nolint:staticcheck
 )
 
 var _ adapter.V2RayServerTransport = (*Server)(nil)
@@ -42,7 +43,7 @@ func NewServer(ctx context.Context, logger logger.ContextLogger, options option.
 		tlsConfig: tlsConfig,
 		logger:    logger,
 		handler:   handler,
-		path:      "/" + options.ServiceName + "/Tun",
+		path:      grpcname.UnescapedPath(options.ServiceName), //H: Xray's custom paths; compared with the decoded request path
 		h2Server: &http2.Server{
 			IdleTimeout: time.Duration(options.IdleTimeout),
 		},
@@ -56,6 +57,7 @@ func NewServer(ctx context.Context, logger logger.ContextLogger, options option.
 			return log.ContextWithNewID(ctx)
 		},
 	}
+	//nolint:staticcheck
 	server.h2cHandler = h2c.NewHandler(server, server.h2Server)
 	return server, nil
 }
@@ -82,7 +84,7 @@ func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	writer.WriteHeader(http.StatusOK)
 	done := make(chan struct{})
 	conn := v2rayhttp.NewHTTP2Wrapper(newGunConn(request.Body, writer, writer.(http.Flusher)))
-	s.handler.NewConnectionEx(request.Context(), conn, sHttp.SourceAddress(request), M.Socksaddr{}, N.OnceClose(func(it error) {
+	s.handler.NewConnectionEx(request.Context(), conn, badhttp.SourceAddress(request), M.Socksaddr{}, N.OnceClose(func(it error) {
 		close(done)
 	}))
 	<-done

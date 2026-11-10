@@ -7,8 +7,8 @@ import (
 	"net/netip"
 	"slices"
 
+	"github.com/sagernet/sing-box/adapter"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 
 	"github.com/jsimonetti/rtnetlink"
 	"github.com/mdlayher/netlink"

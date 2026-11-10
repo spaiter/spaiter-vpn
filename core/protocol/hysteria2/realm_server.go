@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sagernet/sing-box/log"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/log"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/render"

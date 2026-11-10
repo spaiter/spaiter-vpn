@@ -1,9 +1,9 @@
 package naive
 
 import (
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/auth"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 // ReloadUsers implements adapter.UserReloader.

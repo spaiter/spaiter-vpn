@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spaiter/spaiter-vpn/core/common/networkquality"
-	"github.com/spaiter/spaiter-vpn/core/log"
+	"github.com/sagernet/sing-box/common/networkquality"
+	"github.com/sagernet/sing-box/log"
 
 	"github.com/spf13/cobra"
 )

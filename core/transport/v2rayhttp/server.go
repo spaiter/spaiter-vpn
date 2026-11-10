@@ -8,6 +8,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/badhttp"
+	"github.com/sagernet/sing-box/common/tls"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/sing/common/bufio"
@@ -16,15 +22,9 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	aTLS "github.com/sagernet/sing/common/tls"
-	sHttp "github.com/sagernet/sing/protocol/http"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
+	"golang.org/x/net/http2/h2c" //nolint:staticcheck
 )
 
 var _ adapter.V2RayServerTransport = (*Server)(nil)
@@ -41,6 +41,7 @@ type Server struct {
 	path       string
 	method     string
 	headers    http.Header
+	version    int //H
 }
 
 func NewServer(ctx context.Context, logger logger.ContextLogger, options option.V2RayHTTPOptions, tlsConfig tls.ServerConfig, handler adapter.V2RayServerTransportHandler) (*Server, error) {
@@ -56,6 +57,7 @@ func NewServer(ctx context.Context, logger logger.ContextLogger, options option.
 		path:    options.Path,
 		method:  options.Method,
 		headers: options.Headers.Build(),
+		version: options.Version, //H
 	}
 	if !strings.HasPrefix(server.path, "/") {
 		server.path = "/" + server.path
@@ -71,6 +73,7 @@ func NewServer(ctx context.Context, logger logger.ContextLogger, options option.
 			return log.ContextWithNewID(ctx)
 		},
 	}
+	//nolint:staticcheck
 	server.h2cHandler = h2c.NewHandler(server, server.h2Server)
 	return server, nil
 }
@@ -102,13 +105,18 @@ func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		}
 	}
 
-	source := sHttp.SourceAddress(request)
+	source := badhttp.SourceAddress(request)
 	if h, ok := writer.(http.Hijacker); ok {
+		if request.ContentLength > buf.MaxPooledBufferSize {
+			s.invalidRequest(writer, request, http.StatusRequestEntityTooLarge, E.New("request body too large: ", request.ContentLength))
+			return
+		}
 		var requestBody *buf.Buffer
 		if contentLength := int(request.ContentLength); contentLength > 0 {
 			requestBody = buf.NewSize(contentLength)
 			_, err := requestBody.ReadFullFrom(request.Body, contentLength)
 			if err != nil {
+				requestBody.Release()
 				s.invalidRequest(writer, request, 0, E.Cause(err, "read request"))
 				return
 			}
@@ -117,6 +125,7 @@ func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		writer.(http.Flusher).Flush()
 		conn, reader, err := h.Hijack()
 		if err != nil {
+			requestBody.Release()
 			s.invalidRequest(writer, request, 0, E.Cause(err, "hijack conn"))
 			return
 		}
@@ -124,6 +133,8 @@ func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			cache := buf.NewSize(cacheLen)
 			_, err = cache.ReadFullFrom(reader.Reader, cacheLen)
 			if err != nil {
+				cache.Release()
+				requestBody.Release()
 				conn.Close()
 				s.invalidRequest(writer, request, 0, E.Cause(err, "read cache"))
 				return
@@ -164,7 +175,11 @@ func (s *Server) Network() []string {
 
 func (s *Server) Serve(listener net.Listener) error {
 	if s.tlsConfig != nil {
-		if len(s.tlsConfig.NextProtos()) == 0 {
+		if s.version == 1 { //H
+			if len(s.tlsConfig.NextProtos()) == 0 { //H
+				s.tlsConfig.SetNextProtos([]string{"http/1.1"}) //H
+			} //H
+		} else if len(s.tlsConfig.NextProtos()) == 0 {
 			s.tlsConfig.SetNextProtos([]string{http2.NextProtoTLS, "http/1.1"})
 		} else if !common.Contains(s.tlsConfig.NextProtos(), http2.NextProtoTLS) {
 			s.tlsConfig.SetNextProtos(append([]string{http2.NextProtoTLS}, s.tlsConfig.NextProtos()...))

@@ -4,13 +4,13 @@ import (
 	"context"
 	"os"
 
+	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/task"
-	"github.com/spaiter/spaiter-vpn/core/log"
 
 	"github.com/spf13/cobra"
 )

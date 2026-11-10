@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/json/badoption"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,7 +23,7 @@ func awgPeer(key, name string, prefixes ...string) option.AwgPeerOptions {
 	for _, prefix := range prefixes {
 		allowed = append(allowed, netip.MustParsePrefix(prefix))
 	}
-	return option.AwgPeerOptions{PublicKey: key, Name: name, AllowedIPs: allowed}
+	return option.AwgPeerOptions{PublicKey: key, Username: name, AllowedIPs: allowed}
 }
 
 func TestPeersEqualIgnoresName(t *testing.T) {
@@ -98,8 +98,8 @@ func TestNewPeerStateIndexesByKey(t *testing.T) {
 		awgPeer(keyB, "b", "10.10.0.3/32"),
 	})
 	assert.Len(t, state.peers, 2)
-	assert.Equal(t, "a", state.peers[keyA].Name)
-	assert.Equal(t, "b", state.peers[keyB].Name)
+	assert.Equal(t, "a", state.peers[keyA].Username)
+	assert.Equal(t, "b", state.peers[keyB].Username)
 }
 
 func TestReloadPeersRejectsBadInput(t *testing.T) {

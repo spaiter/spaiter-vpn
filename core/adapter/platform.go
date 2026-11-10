@@ -1,11 +1,12 @@
 package adapter
 
 import (
+	"context"
 	"net/netip"
 
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/logger"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 type PlatformInterface interface {
@@ -16,6 +17,7 @@ type PlatformInterface interface {
 
 	UsePlatformInterface() bool
 	OpenInterface(options *tun.Options, platformOptions option.TunPlatformOptions) (tun.Tun, error)
+	ProcessPlatformOptions(options option.TunPlatformOptions) error
 
 	UsePlatformDefaultInterfaceMonitor() bool
 	CreateDefaultInterfaceMonitor(logger logger.Logger) tun.DefaultInterfaceMonitor
@@ -28,7 +30,9 @@ type PlatformInterface interface {
 
 	ClearDNSCache()
 	RequestPermissionForWIFIState() error
-	ReadWIFIState() WIFIState
+	ReadWIFIState(ctx context.Context) WIFIState
+
+	//H: system trust anchors sourced from the host platform, used when no local certificate store is configured.
 	SystemCertificates() []string
 
 	UsePlatformConnectionOwnerFinder() bool
@@ -38,6 +42,7 @@ type PlatformInterface interface {
 
 	UsePlatformNotification() bool
 	SendNotification(notification *Notification) error
+	CancelNotification(identifier string, typeID int32) error
 
 	MyInterfaceAddress() []netip.Addr
 
@@ -55,6 +60,23 @@ type PlatformInterface interface {
 
 	UsePlatformBridge() bool
 	CreateBridge(options BridgeOptions) (BridgeSession, error)
+
+	UsePlatformAutoRedirect() bool
+	CreateAutoRedirect(options AutoRedirectOptions) (AutoRedirectSession, error)
+}
+
+type AutoRedirectOptions struct {
+	TunOptions                     *tun.Options
+	TableName                      string
+	RedirectPort                   uint16
+	RedirectListenerFileDescriptor func() (int, error)
+	RouteAddressSetFileDescriptor  func() (int, error)
+	Handler                        tun.AutoRedirectHandler
+}
+
+type AutoRedirectSession interface {
+	Close() error
+	UpdateRouteAddressSet() error
 }
 
 type BridgeOptions struct {
@@ -93,11 +115,11 @@ type FindConnectionOwnerRequest struct {
 }
 
 type ConnectionOwner struct {
-	ProcessID           uint32
-	UserId              int32
-	UserName            string
-	ProcessPath         string
-	AndroidPackageNames []string
+	ProcessID    uint32
+	UserId       int32
+	UserName     string
+	ProcessPaths []string
+	PackageNames []string
 }
 
 type Notification struct {

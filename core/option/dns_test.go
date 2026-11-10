@@ -4,14 +4,18 @@ import (
 	"context"
 	"testing"
 
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/service"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
 
 	"github.com/stretchr/testify/require"
 )
 
 type stubDNSTransportOptionsRegistry struct{}
+
+func (stubDNSTransportOptionsRegistry) OptionTypes() []string {
+	return []string{C.DNSTypeUDP, C.DNSTypeFakeIP}
+}
 
 func (stubDNSTransportOptionsRegistry) CreateOptions(transportType string) (any, bool) {
 	switch transportType {

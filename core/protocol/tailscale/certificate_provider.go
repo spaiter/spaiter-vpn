@@ -1,4 +1,4 @@
-//go:build with_gvisor
+//go:build with_tailscale
 
 package tailscale
 
@@ -7,17 +7,17 @@ import (
 	"crypto/tls"
 	"net"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/certificate"
+	"github.com/sagernet/sing-box/common/dialer"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/certificate"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/tailscale/client/local"
+	"github.com/sagernet/tailscale/client/local"
 )
 
 func RegisterCertificateProvider(registry *certificate.Registry) {
@@ -63,7 +63,7 @@ func NewCertificateProvider(ctx context.Context, _ log.ContextLogger, tag string
 	}, nil
 }
 
-func (p *CertificateProvider) Start(stage adapter.StartStage) error {
+func (p *CertificateProvider) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateStart {
 		return nil
 	}
@@ -79,10 +79,6 @@ func (p *CertificateProvider) Start(stage adapter.StartStage) error {
 		return p.dialer.DialContext(ctx, network, M.ParseSocksaddr(addr))
 	}
 	p.localClient = localClient
-	return nil
-}
-
-func (p *CertificateProvider) Close() error {
 	return nil
 }
 

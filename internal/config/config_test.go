@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 )
 
 // vlessOptions is a config whose inbound carries protocol-specific options:

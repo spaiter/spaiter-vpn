@@ -1,8 +1,8 @@
 package rule
 
 import (
+	"github.com/sagernet/sing-box/adapter"
 	F "github.com/sagernet/sing/common/format"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 
 	"github.com/miekg/dns"
 )

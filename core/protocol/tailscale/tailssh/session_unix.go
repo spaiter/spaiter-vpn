@@ -1,4 +1,4 @@
-//go:build with_gvisor && unix && !android && !ios
+//go:build with_tailscale && unix && !android && !ios
 
 package tailssh
 
@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/sagernet/sing-box/adapter"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 )
 
 func selectShellBackend(platformInterface adapter.PlatformInterface) shellBackend {
@@ -45,7 +45,7 @@ func (b *directShellBackend) OpenSession(request shellRequest) (shellSession, er
 		args = []string{"-" + filepath.Base(shell)}
 	}
 	if request.Term != "" {
-		return OpenPtyShell(shell, args, request.Env, request.User.HomeDir, request.User.Uid, request.User.Gid, request.User.Groups, request.Rows, request.Cols)
+		return OpenPtyShell(shell, args, request.Env, request.User.HomeDir, request.User.Uid, request.User.Gid, request.User.Groups, request.Rows, request.Cols, request.WidthPixels, request.HeightPixels)
 	}
 	return OpenSocketpairShell(shell, args, request.Env, request.User.HomeDir, request.User.Uid, request.User.Gid, request.User.Groups)
 }

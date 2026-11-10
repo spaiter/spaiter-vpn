@@ -4,20 +4,20 @@ import (
 	"context"
 	"net"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/inbound"
+	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/listener"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-shadowtls"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/auth"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/inbound"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	"github.com/spaiter/spaiter-vpn/core/common/listener"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	"github.com/spaiter/spaiter-vpn/core/thirdparty/sing-shadowtls"
 )
 
 func RegisterInbound(registry *inbound.Registry) {
@@ -26,10 +26,11 @@ func RegisterInbound(registry *inbound.Registry) {
 
 type Inbound struct {
 	inbound.Adapter
-	router   adapter.Router
-	logger   logger.ContextLogger
-	listener *listener.Listener
-	service  *shadowtls.Service
+	router     adapter.Router
+	logger     logger.ContextLogger
+	listener   *listener.Listener
+	service    *shadowtls.Service
+	references []string
 }
 
 func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.ShadowTLSInboundOptions) (adapter.Inbound, error) {
@@ -48,6 +49,9 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		handshakeForServerName = make(map[string]shadowtls.HandshakeConfig)
 		if options.HandshakeForServerName != nil {
 			for _, entry := range options.HandshakeForServerName.Entries() {
+				if entry.Value.Detour != "" {
+					inbound.references = append(inbound.references, entry.Value.Detour)
+				}
 				handshakeDialer, err := dialer.New(ctx, entry.Value.DialerOptions, entry.Value.ServerIsDomain())
 				if err != nil {
 					return nil, err
@@ -67,11 +71,14 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if err != nil {
 		return nil, err
 	}
+	if options.Handshake.Detour != "" {
+		inbound.references = append(inbound.references, options.Handshake.Detour)
+	}
 	service, err := shadowtls.NewService(shadowtls.ServiceConfig{
 		Version:  options.Version,
 		Password: options.Password,
 		Users: common.Map(options.Users, func(it option.ShadowTLSUser) shadowtls.User {
-			return (shadowtls.User)(it)
+			return shadowtls.User(it)
 		}),
 		Handshake: shadowtls.HandshakeConfig{
 			Server: options.Handshake.ServerOptions.Build(),
@@ -97,15 +104,16 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	return inbound, nil
 }
 
-func (h *Inbound) Start(stage adapter.StartStage) error {
+func (h *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateStart {
 		return nil
 	}
-	return h.listener.Start()
-}
-
-func (h *Inbound) Close() error {
-	return h.listener.Close()
+	err := h.listener.Start()
+	if err != nil {
+		return err
+	}
+	scope.Add(h.listener.Close)
+	return nil
 }
 
 func (h *Inbound) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
@@ -138,4 +146,8 @@ func (h *inboundHandler) NewConnectionEx(ctx context.Context, conn net.Conn, sou
 		h.logger.InfoContext(ctx, "inbound connection to ", metadata.Destination)
 	}
 	h.router.RouteConnectionEx(ctx, conn, metadata, onClose)
+}
+
+func (h *Inbound) References() []string {
+	return h.references
 }

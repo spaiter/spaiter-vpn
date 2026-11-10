@@ -46,7 +46,10 @@ The type of the DNS server.
 | `mdns`          | [mDNS](./mdns/)           |
 | `fakeip`        | [Fake IP](./fakeip/)      |
 | `tailscale`     | [Tailscale](./tailscale/) |
+| `openconnect`   | [OpenConnect](./openconnect/) |
+| `openvpn`       | [OpenVPN](./openvpn/)         |
 | `resolved`      | [Resolved](./resolved/)   |
+| `group`         | [Group](./group/)         |
 
 #### tag
 

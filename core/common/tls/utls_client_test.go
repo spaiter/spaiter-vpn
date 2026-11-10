@@ -7,7 +7,7 @@ import (
 	"net"
 	"testing"
 
-	tf "github.com/spaiter/spaiter-vpn/core/common/tlsfragment"
+	tf "github.com/sagernet/sing-box/common/tlsfragment"
 
 	utls "github.com/metacubex/utls"
 	"github.com/stretchr/testify/require"

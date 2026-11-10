@@ -4,8 +4,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/sagernet/sing-box/adapter"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 )
 
 var ErrBadPortRange = E.New("bad port range")

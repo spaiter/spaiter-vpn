@@ -12,13 +12,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sagernet/sing-box"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/common/json/badjson"
-	"github.com/spaiter/spaiter-vpn/core"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
+	"github.com/sagernet/sing/service"
 
 	"github.com/spf13/cobra"
 )
@@ -136,10 +137,11 @@ func create(options option.Options) (*box.Box, context.CancelFunc, error) {
 		}
 		options.Log.DisableColor = true
 	}
-	ctx, cancel := context.WithCancel(globalCtx)
+	ctx, cancel := context.WithCancel(service.ExtendContext(globalCtx))
 	instance, err := box.New(box.Options{
-		Context: ctx,
-		Options: options,
+		Context:                    ctx,
+		Options:                    options,
+		NetworkNamespaceHolderArgs: []string{"/proc/self/exe", commandNetnsHolder.Use},
 	})
 	if err != nil {
 		cancel()

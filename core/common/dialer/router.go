@@ -4,10 +4,10 @@ import (
 	"context"
 	"net"
 
+	"github.com/sagernet/sing-box/adapter"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 )
 
 type DefaultOutboundDialer struct {

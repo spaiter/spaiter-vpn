@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/spaiter/spaiter-vpn/core/common/geosite"
+	"github.com/sagernet/sing-box/common/geosite"
 )
 
 type searchGeositeMatcher struct {

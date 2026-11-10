@@ -6,7 +6,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/spaiter/spaiter-vpn/core/daemon"
+	"github.com/sagernet/sing-box/daemon"
 )
 
 type TailscaleSSHOptions struct {

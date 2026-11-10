@@ -3,8 +3,8 @@
 package include
 
 import (
-	"github.com/spaiter/spaiter-vpn/core/adapter/service"
-	"github.com/spaiter/spaiter-vpn/core/service/ccm"
+	"github.com/sagernet/sing-box/adapter/service"
+	"github.com/sagernet/sing-box/service/ccm"
 )
 
 func registerCCMService(registry *service.Registry) {

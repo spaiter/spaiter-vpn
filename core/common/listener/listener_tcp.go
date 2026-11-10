@@ -7,24 +7,21 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/proxyproto"
+	"github.com/sagernet/sing-box/common/redir"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/redir"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
 
 	"github.com/database64128/tfo-go/v2"
 )
 
 func (l *Listener) ListenTCP() (net.Listener, error) {
-	//nolint:staticcheck
-	if l.listenOptions.ProxyProtocol || l.listenOptions.ProxyProtocolAcceptNoHeader {
-		return nil, E.New("Proxy Protocol is deprecated and removed in sing-box 1.6.0")
-	}
 	var err error
 	bindAddr := M.SocksaddrFrom(l.listenOptions.Listen.Build(netip.AddrFrom4([4]byte{127, 0, 0, 1})), l.listenOptions.ListenPort)
 	var listenConfig net.ListenConfig
@@ -55,10 +52,7 @@ func (l *Listener) ListenTCP() (net.Listener, error) {
 			Interval: keepInterval,
 		}
 	}
-	// Explicitly, both ways: Go 1.24+ listens on MPTCP by default, and
-	// CVE-2026-98432 made an IPv4 MPTCP listener a remote root. Only an
-	// inbound that asks for tcp_multi_path gets it.
-	listenConfig.SetMultipathTCP(l.listenOptions.TCPMultiPath)
+	listenConfig.SetMultipathTCP(l.listenOptions.TCPMultiPath) //H: Go 1.24+ listens MPTCP by default; only when asked
 	if l.tproxy {
 		listenConfig.Control = control.Append(listenConfig.Control, func(network, address string, conn syscall.RawConn) error {
 			return control.Raw(conn, func(fd uintptr) error {
@@ -78,6 +72,10 @@ func (l *Listener) ListenTCP() (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
+	//nolint:staticcheck
+	if l.listenOptions.ProxyProtocol || l.listenOptions.ProxyProtocolAcceptNoHeader { // H: restored
+		tcpListener = proxyproto.NewListener(tcpListener, l.listenOptions.ProxyProtocolAcceptNoHeader)
+	}
 	l.logger.Info("tcp server started at ", tcpListener.Addr())
 	l.tcpListener = tcpListener
 	return tcpListener, err
@@ -85,22 +83,32 @@ func (l *Listener) ListenTCP() (net.Listener, error) {
 
 func (l *Listener) loopTCPIn() {
 	tcpListener := l.tcpListener
-	var metadata adapter.InboundContext
+	var (
+		metadata    adapter.InboundContext
+		acceptDelay time.Duration
+	)
 	for {
 		conn, err := tcpListener.Accept()
 		if err != nil {
-			//nolint:staticcheck
-			if netError, isNetError := err.(net.Error); isNetError && netError.Temporary() {
-				l.logger.Error(err)
-				continue
-			}
 			if l.shutdown.Load() && E.IsClosed(err) {
 				return
 			}
+			//nolint:staticcheck
+			if netError, isNetError := err.(net.Error); isNetError && netError.Temporary() {
+				if acceptDelay == 0 {
+					acceptDelay = 5 * time.Millisecond
+				} else {
+					acceptDelay = min(2*acceptDelay, time.Second)
+				}
+				l.logger.Error(err, ", retrying in ", acceptDelay)
+				time.Sleep(acceptDelay)
+				continue
+			}
 			l.tcpListener.Close()
 			l.logger.Error("tcp listener closed: ", err)
-			continue
+			return
 		}
+		acceptDelay = 0
 		//nolint:staticcheck
 		metadata.InboundDetour = l.listenOptions.Detour
 		metadata.Source = M.SocksaddrFromNet(conn.RemoteAddr()).Unwrap()

@@ -5,9 +5,9 @@ import (
 	"math"
 	"runtime/debug"
 
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/service/oomkiller"
+	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/service/oomkiller"
 )
 
 func FromContext(ctx context.Context, platformInterface PlatformInterface) context.Context {
@@ -22,8 +22,7 @@ func WrapPlatformInterface(platformInterface PlatformInterface) adapter.Platform
 		return nil
 	}
 	return &platformInterfaceWrapper{
-		iif:       platformInterface,
-		useProcFS: platformInterface.UseProcFS(),
+		iif: platformInterface,
 	}
 }
 

@@ -3,8 +3,8 @@
 package networkquality
 
 import (
+	C "github.com/sagernet/sing-box/constant"
 	N "github.com/sagernet/sing/common/network"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
 )
 
 func NewHTTP3MeasurementClientFactory(dialer N.Dialer) (MeasurementClientFactory, error) {

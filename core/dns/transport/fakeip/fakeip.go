@@ -4,13 +4,13 @@ import (
 	"context"
 	"net/netip"
 
+	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/dns"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/dns"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	mDNS "github.com/miekg/dns"
 )
@@ -45,15 +45,16 @@ func NewTransport(ctx context.Context, logger log.ContextLogger, tag string, opt
 	}, nil
 }
 
-func (t *Transport) Start(stage adapter.StartStage) error {
+func (t *Transport) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateStart {
 		return nil
 	}
-	return t.store.Start()
-}
-
-func (t *Transport) Close() error {
-	return t.store.Close()
+	err := t.store.Start()
+	if err != nil {
+		return err
+	}
+	scope.Add(t.store.Close)
+	return nil
 }
 
 func (t *Transport) Reset() {
@@ -67,11 +68,19 @@ func (t *Transport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg,
 	if question.Qtype == mDNS.TypeA && !t.inet4Enabled || question.Qtype == mDNS.TypeAAAA && !t.inet6Enabled {
 		return dns.FixedResponseStatus(message, mDNS.RcodeSuccess), nil
 	}
-	address, err := t.store.Create(dns.FqdnToDomain(question.Name), question.Qtype == mDNS.TypeAAAA)
+	domain := dns.FqdnToDomain(question.Name)
+	if len(domain) > 255 {
+		return nil, E.New("domain name too long for fakeip")
+	}
+	address, err := t.store.Create(domain, question.Qtype == mDNS.TypeAAAA)
 	if err != nil {
 		return nil, err
 	}
 	return dns.FixedResponse(message.Id, question, []netip.Addr{address}, C.DefaultDNSTTL), nil
+}
+
+func (t *Transport) ExchangeAsync(ctx context.Context, message *mDNS.Msg, callback func(response *mDNS.Msg, err error)) {
+	callback(t.Exchange(ctx, message))
 }
 
 func (t *Transport) Store() adapter.FakeIPStore {

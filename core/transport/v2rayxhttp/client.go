@@ -15,23 +15,22 @@ import (
 
 	"github.com/sagernet/quic-go"
 	"github.com/sagernet/quic-go/http3"
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/tls"
+	"github.com/sagernet/sing-box/common/xray/buf"
+	"github.com/sagernet/sing-box/common/xray/net"
+	"github.com/sagernet/sing-box/common/xray/pipe"
+	"github.com/sagernet/sing-box/common/xray/signal/done"
+	"github.com/sagernet/sing-box/common/xray/uuid"
+	"github.com/sagernet/sing-box/option"
 	qtls "github.com/sagernet/sing-quic"
 	"github.com/sagernet/sing/common"
-	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	sHTTP "github.com/sagernet/sing/protocol/http"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/buf"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/net"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/pipe"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/signal/done"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/uuid"
-	"github.com/spaiter/spaiter-vpn/core/option"
 	"golang.org/x/net/http2"
 )
 
@@ -144,6 +143,10 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 			}
 		},
 	}
+	fail := func(err error) (net.Conn, error) { //H: a failed dial releases what it took
+		conn.Close()    //H
+		return nil, err //H
+	} //H
 	var err error
 	if mode == "stream-one" {
 		requestURL.Path = options.GetNormalizedPath()
@@ -152,7 +155,7 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 		}
 		conn.reader, conn.remoteAddr, conn.localAddr, err = httpClient.OpenStream(ctx, requestURL.String(), sessionId, reader, false)
 		if err != nil { // browser dialer only
-			return nil, err
+			return fail(err) //H
 		}
 		return &conn, nil
 	} else { // stream-down
@@ -161,7 +164,7 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 		}
 		conn.reader, conn.remoteAddr, conn.localAddr, err = httpClient2.OpenStream(ctx, requestURL2.String(), sessionId, nil, false)
 		if err != nil { // browser dialer only
-			return nil, err
+			return fail(err) //H
 		}
 	}
 	if mode == "stream-up" {
@@ -170,7 +173,7 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 		}
 		_, _, _, err = httpClient.OpenStream(ctx, requestURL.String(), sessionId, reader, true)
 		if err != nil { // browser dialer only
-			return nil, err
+			return fail(err) //H
 		}
 		return &conn, nil
 	}
@@ -189,6 +192,7 @@ func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 		uploadPipeWriter,
 		maxUploadSize,
 	}
+	ctx = context.WithoutCancel(ctx) //H: the uploads belong to the conn, which outlives the dial context
 	go func() {
 		var seq int64
 		var lastWrite time.Time
@@ -325,7 +329,7 @@ func createHTTPClient(dest M.Socksaddr, dialer N.Dialer, options *option.V2RayXH
 				if dErr != nil {
 					return nil, dErr
 				}
-				return qtls.DialEarly(ctx, bufio.NewUnbindPacketConn(udpConn), udpConn.RemoteAddr(), tlsConfig, cfg)
+				return qtls.DialEarly(ctx, udpConn, tlsConfig, cfg)
 			},
 		}
 	case "2":

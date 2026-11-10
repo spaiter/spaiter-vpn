@@ -1,6 +1,6 @@
 package libbox
 
-import "github.com/spaiter/spaiter-vpn/core/daemon"
+import "github.com/sagernet/sing-box/daemon"
 
 type STUNTestProgress struct {
 	Phase        int32

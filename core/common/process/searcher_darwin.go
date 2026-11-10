@@ -9,7 +9,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/spaiter/spaiter-vpn/core/adapter"
+	"github.com/sagernet/sing-box/adapter"
 )
 
 var _ Searcher = (*darwinSearcher)(nil)
@@ -18,6 +18,10 @@ type darwinSearcher struct{}
 
 func NewSearcher(_ Config) (Searcher, error) {
 	return &darwinSearcher{}, nil
+}
+
+func (d *darwinSearcher) ResetCache() {
+	sharedDarwinConnectionFinder.resetCache()
 }
 
 func (d *darwinSearcher) Close() error {

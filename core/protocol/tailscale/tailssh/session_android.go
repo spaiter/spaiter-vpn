@@ -1,8 +1,8 @@
-//go:build with_gvisor && android
+//go:build with_tailscale && android
 
 package tailssh
 
-import "github.com/spaiter/spaiter-vpn/core/adapter"
+import "github.com/sagernet/sing-box/adapter"
 
 func selectShellBackend(platformInterface adapter.PlatformInterface) shellBackend {
 	return &platformShellBackend{platform: platformInterface}

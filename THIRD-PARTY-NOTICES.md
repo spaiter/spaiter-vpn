@@ -53,28 +53,28 @@ GPL-3.0 and is not what that clause prohibits.
 | qWDTT | `kostfuciy/qWDTT` | **GPL-3.0** | `relay/` is a fork of its `server.go`; the WRAP/RTP/DTLS codec is reused verbatim, so qWDTT clients stay wire-compatible. See `relay/NOTICE.md`. |
 | mieru | `enfein/mieru` | **GPL-3.0** | Go dependency of the core (mieru protocol support). |
 | sing, sing-tun, sing-mux, sing-quic, sing-shadowsocks, sing-shadowsocks2, sing-cloudflared, fswatch | `SagerNet/*` | **GPL-3.0-or-later** | Go dependencies of the core (the standard sing-box library set). |
-| sing-anytls | `anytls/sing-anytls` | **GPL-3.0** | Absorbed as `core/thirdparty/sing-anytls`. |
-| sing-shadowtls | `SagerNet/sing-shadowtls` | **GPL-3.0** | Absorbed as `core/thirdparty/sing-shadowtls`. |
-| sing-snell | `reF1nd/sing-snell` | **GPL-3.0** | Absorbed as `core/thirdparty/sing-snell`. |
-| sing-vmess | `starifly/sing-vmess` | **GPL-3.0** | Absorbed as `core/thirdparty/sing-vmess`. |
+| sing-anytls | `SagerNet/sing-anytls` | **GPL-3.0** | Go dependency of the core (pinned module). |
+| sing-shadowtls | `SagerNet/sing-shadowtls` | **GPL-3.0** | Fork in `core/replace/sing-shadowtls` (adds `UpdateUsers`). |
+| sing-snell | `SagerNet/sing-snell` | **GPL-3.0** | Go dependency of the core (pinned module). |
+| sing-vmess | `SagerNet/sing-vmess` | **GPL-3.0** | hiddify's fork in `core/replace/sing-vmess`. |
 | podkop | `itdoginfo/podkop` | **GPL-2.0** | OpenWrt-side routing controller, referenced for the router path. GPL-2.0-only is *not* upward-compatible with GPL-3.0 — keep it as a separate, independently-installed package and do not link or merge its code into the GPL-3.0 tree. |
 | nDPI test captures | `ntop/nDPI` | **LGPL-3.0** | Packet captures used as sniffer test fixtures. See §5. |
 
-`psiphon-tunnel-core` is **no longer** a dependency: `protocol/psiphon` was
-dropped when the core was absorbed (see `core/PROVENANCE.md`), and neither it
-nor `psiphon-quic-go`/`psiphon-tls` appear in `go.mod`.
+`psiphon-tunnel-core` (GPL-3.0) is a dependency again since the 2026-11-10
+rebase onto hiddify/v5, which registers `protocol/psiphon` unconditionally;
+`psiphon-quic-go` and `psiphon-tls` are hiddify's forks under `core/replace/`.
 
-Nothing is reached through a `replace` directive any more; the former
-`replace/` directory became `core/thirdparty/`, each module keeping its own
-`LICENSE`.
+Forked dependencies are reached through `replace` directives: `core/go.mod`
+points them at `core/replace/<name>/` and the root `go.mod` mirrors every one
+of them (only the main module's replaces count). Each keeps its own `LICENSE`.
 
 ---
 
 ## 3. Permissive components
 
 These impose no license obligation on the combined work beyond preserving their
-copyright notices and license text. Absorbed modules live under
-`core/thirdparty/<name>/` with their upstream `LICENSE` beside them.
+copyright notices and license text. Forked modules live under
+`core/replace/<name>/` with their upstream `LICENSE` beside them.
 
 | Component | Upstream | License |
 |---|---|---|

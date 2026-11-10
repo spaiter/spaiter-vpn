@@ -3,7 +3,7 @@ package stat
 import (
 	"net"
 
-	"github.com/spaiter/spaiter-vpn/core/common/xray/stats"
+	"github.com/sagernet/sing-box/common/xray/stats"
 )
 
 type Connection interface {

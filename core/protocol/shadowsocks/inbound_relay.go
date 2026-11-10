@@ -6,6 +6,14 @@ import (
 	"os"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/inbound"
+	"github.com/sagernet/sing-box/common/listener"
+	"github.com/sagernet/sing-box/common/mux"
+	"github.com/sagernet/sing-box/common/uot"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-shadowsocks/shadowaead_2022"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/auth"
@@ -15,15 +23,6 @@ import (
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/inbound"
-	"github.com/spaiter/spaiter-vpn/core/common/listener"
-	"github.com/spaiter/spaiter-vpn/core/common/mux"
-	"github.com/spaiter/spaiter-vpn/core/common/uot"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	obfs "github.com/spaiter/spaiter-vpn/core/transport/simple-obfs"
 )
 
 var _ adapter.TCPInjectableInbound = (*RelayInbound)(nil)
@@ -36,14 +35,13 @@ type RelayInbound struct {
 	listener     *listener.Listener
 	service      *shadowaead_2022.RelayService[int]
 	destinations []option.ShadowsocksDestination
-	obfsMode     string
+	obfs         obfsServer
 }
 
 func newRelayInbound(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.ShadowsocksInboundOptions) (*RelayInbound, error) {
-	switch options.ObfsMode {
-	case "", "http", "tls":
-	default:
-		return nil, E.New("shadowsocks: unsupported obfs mode: ", options.ObfsMode)
+	obfsServer, err := newObfsServer(options)
+	if err != nil {
+		return nil, err
 	}
 	inbound := &RelayInbound{
 		Adapter:      inbound.NewAdapter(C.TypeShadowsocks, tag),
@@ -51,9 +49,8 @@ func newRelayInbound(ctx context.Context, router adapter.Router, logger log.Cont
 		router:       uot.NewRouter(router, logger),
 		logger:       logger,
 		destinations: options.Destinations,
-		obfsMode:     options.ObfsMode,
+		obfs:         obfsServer,
 	}
-	var err error
 	inbound.router, err = mux.NewRouterWithOptions(inbound.router, logger, common.PtrValueOrDefault(options.Multiplex))
 	if err != nil {
 		return nil, err
@@ -94,34 +91,23 @@ func newRelayInbound(ctx context.Context, router adapter.Router, logger log.Cont
 	return inbound, err
 }
 
-func (h *RelayInbound) Start(stage adapter.StartStage) error {
+func (h *RelayInbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateStart {
 		return nil
 	}
-	return h.listener.Start()
-}
-
-func (h *RelayInbound) Close() error {
-	return h.listener.Close()
+	err := h.listener.Start()
+	if err != nil {
+		return err
+	}
+	scope.Add(h.listener.Close)
+	return nil
 }
 
 //nolint:staticcheck
 func (h *RelayInbound) NewConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, onClose N.CloseHandlerFunc) {
-	switch h.obfsMode {
-	case "http":
-		conn = obfs.NewHTTPObfsServer(conn)
-	case "tls":
-		conn = obfs.NewTLSObfsServer(conn)
-	}
-	err := h.service.NewConnection(ctx, conn, adapter.UpstreamMetadata(metadata))
-	N.CloseOnHandshakeFailure(conn, onClose, err)
-	if err != nil {
-		if E.IsClosedOrCanceled(err) {
-			h.logger.DebugContext(ctx, "connection closed: ", err)
-		} else {
-			h.logger.ErrorContext(ctx, E.Cause(err, "process connection from ", metadata.Source))
-		}
-	}
+	h.obfs.serve(ctx, conn, metadata, onClose, h, h.router, h.logger, func(ctx context.Context, conn net.Conn) error {
+		return h.service.NewConnection(ctx, conn, adapter.UpstreamMetadata(metadata))
+	})
 }
 
 //nolint:staticcheck
@@ -133,6 +119,7 @@ func (h *RelayInbound) NewPacket(buffer *buf.Buffer, source M.Socksaddr) {
 }
 
 func (h *RelayInbound) newConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext) error {
+	markAuthenticated(ctx)
 	destinationIndex, loaded := auth.UserFromContext[int](ctx)
 	if !loaded {
 		return os.ErrInvalid

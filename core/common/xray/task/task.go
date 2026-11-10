@@ -3,7 +3,7 @@ package task
 import (
 	"context"
 
-	"github.com/spaiter/spaiter-vpn/core/common/xray/signal/semaphore"
+	"github.com/sagernet/sing-box/common/xray/signal/semaphore"
 )
 
 // OnSuccess executes g() after f() returns nil.

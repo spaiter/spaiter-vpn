@@ -3,8 +3,8 @@ package main
 import (
 	"os"
 
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	"github.com/spaiter/spaiter-vpn/core/log"
+	"github.com/sagernet/sing-box/common/tls"
+	"github.com/sagernet/sing-box/log"
 
 	"github.com/spf13/cobra"
 )

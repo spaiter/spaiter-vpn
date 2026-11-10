@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing/common/control"
 	F "github.com/sagernet/sing/common/format"
-	"github.com/spaiter/spaiter-vpn/core/log"
 
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
@@ -411,9 +411,10 @@ func testLargeDataWithPacketConnSize(t *testing.T, port uint16, chunkSize int, p
 		buf := make([]byte, 64*1024)
 
 		for i := 0; i < times; i++ {
-			_, rAddr, err = l.ReadFrom(buf)
-			if err != nil {
-				t.Log(err.Error())
+			var readErr error
+			_, rAddr, readErr = l.ReadFrom(buf)
+			if readErr != nil {
+				t.Log(readErr.Error())
 				return
 			}
 			hash := md5.Sum(buf[:chunkSize])

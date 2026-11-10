@@ -3,8 +3,8 @@ package daemon
 import (
 	"sync"
 
+	"github.com/sagernet/sing-box/experimental/deprecated"
 	"github.com/sagernet/sing/common"
-	"github.com/spaiter/spaiter-vpn/core/experimental/deprecated"
 )
 
 var _ deprecated.Manager = (*deprecatedManager)(nil)

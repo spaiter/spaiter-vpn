@@ -12,10 +12,10 @@ import (
 	"syscall"
 	"unsafe"
 
+	"github.com/sagernet/sing-box/common/badversion"
 	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/shell"
-	"github.com/spaiter/spaiter-vpn/core/common/badversion"
 
 	"golang.org/x/sys/unix"
 )

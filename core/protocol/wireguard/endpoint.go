@@ -4,9 +4,20 @@ import (
 	"context"
 	"net"
 	"net/netip"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/adapter/endpoint"
+	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/iponly"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/hiddify/peeruser"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/service/oomkiller"
+	"github.com/sagernet/sing-box/transport/wireguard"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/bufio"
@@ -15,17 +26,13 @@ import (
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/adapter/endpoint"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	"github.com/spaiter/spaiter-vpn/core/transport/wireguard"
 )
 
 var (
 	_ adapter.OutboundWithPreferredRoutes = (*Endpoint)(nil)
+	_ adapter.InterfaceUpdateListener     = (*Endpoint)(nil)
+	_ adapter.OutboundWithMultiplex       = (*Endpoint)(nil)
+	_ adapter.OnDemandEndpoint            = (*Endpoint)(nil)
 	_ dialer.PacketDialerWithDestination  = (*Endpoint)(nil)
 )
 
@@ -40,11 +47,20 @@ type Endpoint struct {
 	dnsRouter      adapter.DNSRouter
 	logger         logger.ContextLogger
 	localAddresses []netip.Prefix
+	peerUsers      *peeruser.Users //H
 	endpoint       *wireguard.Endpoint
+	onDemand       bool
+	bindAccess     sync.Mutex
 	started        atomic.Bool
 }
 
 func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.WireGuardEndpointOptions) (adapter.Endpoint, error) {
+	if options.AWG.IsAvailble() { //H: it was ignored, so the endpoint ran plain WireGuard
+		return nil, E.New(`the awg block is not read by "type": "wireguard", use "type": "awg"`) //H
+	} //H
+	if err := options.Noise.FakePacket.Validate(); err != nil { //H: a bad template fails the config, not the handshake
+		return nil, E.Cause(err, "wireguard") //H
+	} //H
 	ep := &Endpoint{
 		Adapter:        endpoint.NewAdapterWithDialerOptions(C.TypeWireGuard, tag, []string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, options.DialerOptions),
 		ctx:            ctx,
@@ -52,13 +68,17 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		dnsRouter:      service.FromContext[adapter.DNSRouter](ctx),
 		logger:         logger,
 		localAddresses: options.Address,
+		onDemand:       options.OnDemand,
 	}
+	ep.peerUsers = peeruser.New(common.Map(options.Peers, func(it option.WireGuardPeer) peeruser.Peer { //H
+		return peeruser.Peer{User: it.Username, AllowedIPs: it.AllowedIPs}
+	}))
 	if options.Detour != "" && options.ListenPort != 0 {
 		return nil, E.New("`listen_port` is conflict with `detour`")
 	}
-	// let the kernel fragment WireGuard's UDP, as official WireGuard does; with DF a packet
+	// H: let the kernel fragment WireGuard's UDP, as official WireGuard does; with DF a packet
 	// larger than the path MTU (a tunnel inside another tunnel) is dropped
-	options.UDPFragmentDefault = true
+	options.UDPFragmentDefault = true //H
 	outboundDialer, err := dialer.NewWithOptions(dialer.Options{
 		Context: ctx,
 		Options: options.DialerOptions,
@@ -76,30 +96,46 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	} else {
 		udpTimeout = C.UDPTimeout
 	}
+	fallback, err := peerFallback(options) //H
+	if err != nil {                        //H
+		return nil, err //H
+	} //H
+	networkManager := service.FromContext[adapter.NetworkManager](ctx)
 	wgEndpoint, err := wireguard.NewEndpoint(wireguard.EndpointOptions{
-		Context:     ctx,
-		Logger:      logger,
-		System:      options.System,
-		Handler:     ep,
-		UDPTimeout:  udpTimeout,
-		ICMPTimeout: C.ICMPTimeout,
-		Dialer:      outboundDialer,
+		Context:         ctx,
+		Logger:          logger,
+		System:          options.System,
+		Handler:         ep,
+		UDPTimeout:      udpTimeout,
+		ICMPTimeout:     C.ICMPTimeout,
+		UDPMapping:      tun.NATMapping(options.UDPMapping),
+		UDPFiltering:    tun.NATFiltering(options.UDPFiltering),
+		UDPNATMax:       options.UDPNATMax,
+		InterfaceFinder: networkManager.InterfaceFinder(),
+		EgressPoolOptions: tun.UDPEgressPoolOptions{
+			Logger:           logger,
+			InterfaceFinder:  networkManager.InterfaceFinder(),
+			InterfaceMonitor: networkManager.InterfaceMonitor(),
+			IsExempt: func() bool {
+				return networkManager.AutoRedirectOutputMark() != 0
+			},
+		},
+		Dialer: outboundDialer,
 		CreateDialer: func(interfaceName string) N.Dialer {
 			return common.Must1(dialer.NewDefault(ctx, option.DialerOptions{
-				BindInterface: interfaceName,
+				AbstractDialerOptions: option.AbstractDialerOptions{
+					BindInterface: interfaceName,
+				},
 			}))
 		},
+		Tag:        tag,
 		Name:       options.Name,
 		MTU:        options.MTU,
 		Address:    options.Address,
 		PrivateKey: options.PrivateKey,
 		ListenPort: options.ListenPort,
-		ResolvePeer: func(domain string) (netip.Addr, error) {
-			endpointAddresses, lookupErr := ep.dnsRouter.Lookup(ctx, domain, outboundDialer.(dialer.ResolveDialer).QueryOptions())
-			if lookupErr != nil {
-				return netip.Addr{}, lookupErr
-			}
-			return endpointAddresses[0], nil
+		ResolvePeer: func(domain string) ([]netip.Addr, error) {
+			return ep.dnsRouter.Lookup(ctx, domain, outboundDialer.(dialer.ResolveDialer).QueryOptions())
 		},
 		Peers: common.Map(options.Peers, func(it option.WireGuardPeer) wireguard.PeerOptions {
 			return wireguard.PeerOptions{
@@ -113,6 +149,9 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 		}),
 		Workers: options.Workers,
 		Noise:   options.Noise,
+		// H: MTU discovery and the peer's fallback addresses, see transport/wireguard
+		DisableMTUDiscovery: options.MTUDiscovery != nil && !*options.MTUDiscovery, //H: on unless false
+		PeerFallback:        fallback,                                              //H
 	})
 	if err != nil {
 		return nil, err
@@ -121,8 +160,14 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	return ep, nil
 }
 
-func (w *Endpoint) Start(stage adapter.StartStage) error {
+func (w *Endpoint) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	switch stage {
+	case adapter.StartStateInitialize:
+		err := w.endpoint.Initialize(oomkiller.MemoryPressure(w.ctx))
+		if err != nil {
+			return err
+		}
+		scope.Add(w.endpoint.Close)
 	case adapter.StartStateStart:
 		return w.endpoint.Start(false)
 	case adapter.StartStatePostStart:
@@ -131,13 +176,45 @@ func (w *Endpoint) Start(stage adapter.StartStage) error {
 			return err
 		}
 		w.started.Store(true)
+		scope.Add(func() error {
+			w.bindAccess.Lock()
+			w.started.Store(false)
+			w.bindAccess.Unlock()
+			return nil
+		})
 	}
 	return nil
 }
 
-func (w *Endpoint) Close() error {
-	w.started.Store(false)
-	return w.endpoint.Close()
+func (w *Endpoint) MultiplexEnabled() bool {
+	return true
+}
+
+func (w *Endpoint) InterfaceUpdated(ctx context.Context) {
+	if !w.started.Load() {
+		return
+	}
+	go w.updateBind(ctx)
+}
+
+func (w *Endpoint) OnDemand() bool {
+	return w.onDemand
+}
+
+func (w *Endpoint) SetKeepIdleConnections(keep bool) {
+	w.endpoint.SetIdle(!keep)
+}
+
+func (w *Endpoint) updateBind(ctx context.Context) {
+	w.bindAccess.Lock()
+	defer w.bindAccess.Unlock()
+	if ctx.Err() != nil || !w.started.Load() {
+		return
+	}
+	err := w.endpoint.BindUpdate()
+	if err != nil {
+		w.logger.Error(E.Cause(err, "update WireGuard bind after network change"))
+	}
 }
 
 func (w *Endpoint) PreMatchFlow(network string, destination netip.Addr) adapter.PreMatchAction {
@@ -150,6 +227,10 @@ func (w *Endpoint) PortAddresses() (netip.Addr, netip.Addr) {
 
 func (w *Endpoint) PortMTU() uint32 {
 	return w.endpoint.PortMTU()
+}
+
+func (w *Endpoint) UpstreamPort() any {
+	return w.endpoint
 }
 
 func (w *Endpoint) AttachReturn(returnPath tun.Return) error {
@@ -166,7 +247,20 @@ func (w *Endpoint) JudgeFlow(network uint8, source netip.AddrPort, destination n
 			return tun.FlowVerdict{Action: tun.ActionAccept}
 		}
 	}
-	return adapter.JudgeFlow(w.router, w.Tag(), w.Type(), network, source, destination, firstPacket)
+	return adapter.JudgeFlow(w.router, adapter.InboundContext{Inbound: w.Tag(), InboundType: w.Type()}, network, source, destination, firstPacket)
+}
+
+func (w *Endpoint) NewDNSPacket(payload []byte, source M.Socksaddr, destination M.Socksaddr, writer N.PacketWriter) {
+	ctx := log.ContextWithNewID(w.ctx)
+	var metadata adapter.InboundContext
+	metadata.Inbound = w.Tag()
+	metadata.InboundType = w.Type()
+	metadata.Network = N.NetworkUDP
+	metadata.Source = source
+	metadata.Destination = destination
+	metadata.Protocol = C.ProtocolDNS
+	w.logger.InfoContext(ctx, "inbound DNS packet from ", source)
+	w.router.HijackDNSPacket(ctx, payload, writer, metadata)
 }
 
 func (w *Endpoint) WritePackets(packets [][]byte) error {
@@ -181,6 +275,7 @@ func (w *Endpoint) NewConnectionEx(ctx context.Context, conn net.Conn, source M.
 	metadata.Inbound = w.Tag()
 	metadata.InboundType = w.Type()
 	metadata.Source = source
+	metadata.User = w.peerUsers.Lookup(source.Addr) //H
 	for _, localPrefix := range w.localAddresses {
 		if localPrefix.Contains(destination.Addr) {
 			metadata.OriginDestination = destination
@@ -203,6 +298,7 @@ func (w *Endpoint) NewPacketConnectionEx(ctx context.Context, conn N.PacketConn,
 	metadata.Inbound = w.Tag()
 	metadata.InboundType = w.Type()
 	metadata.Source = source
+	metadata.User = w.peerUsers.Lookup(source.Addr) //H
 	metadata.Destination = destination
 	for _, localPrefix := range w.localAddresses {
 		if localPrefix.Contains(destination.Addr) {
@@ -252,16 +348,20 @@ func (w *Endpoint) ListenPacketWithDestination(ctx context.Context, destination 
 		if err != nil {
 			return nil, netip.Addr{}, err
 		}
-		return N.ListenSerial(ctx, w.endpoint, destination, destinationAddresses)
+		packetConn, destinationAddress, err := N.ListenSerial(ctx, w.endpoint, destination, destinationAddresses)
+		if err != nil {
+			return nil, netip.Addr{}, err
+		}
+		return iponly.NewPacketConn(w.logger, packetConn), destinationAddress, nil
 	}
 	packetConn, err := w.endpoint.ListenPacket(ctx, destination)
 	if err != nil {
 		return nil, netip.Addr{}, err
 	}
 	if destination.IsIP() {
-		return packetConn, destination.Addr, nil
+		return iponly.NewPacketConn(w.logger, packetConn), destination.Addr, nil
 	}
-	return packetConn, netip.Addr{}, nil
+	return iponly.NewPacketConn(w.logger, packetConn), netip.Addr{}, nil
 }
 
 func (w *Endpoint) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
@@ -284,4 +384,9 @@ func (w *Endpoint) PreferredAddress(metadata *adapter.InboundContext, address ne
 		return false
 	}
 	return w.endpoint.Lookup(address) != nil
+}
+
+// IpcGet returns the device's state in the UAPI format; WARP reads handshakes and traffic from it. //H
+func (w *Endpoint) IpcGet() (string, error) {
+	return w.endpoint.IpcGet()
 }

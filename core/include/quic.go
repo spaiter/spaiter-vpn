@@ -3,16 +3,16 @@
 package include
 
 import (
-	"github.com/spaiter/spaiter-vpn/core/adapter/inbound"
-	"github.com/spaiter/spaiter-vpn/core/adapter/outbound"
-	"github.com/spaiter/spaiter-vpn/core/adapter/service"
-	"github.com/spaiter/spaiter-vpn/core/dns"
-	"github.com/spaiter/spaiter-vpn/core/dns/transport/quic"
-	"github.com/spaiter/spaiter-vpn/core/protocol/hysteria"
-	"github.com/spaiter/spaiter-vpn/core/protocol/hysteria2"
-	_ "github.com/spaiter/spaiter-vpn/core/protocol/naive/quic"
-	"github.com/spaiter/spaiter-vpn/core/protocol/tuic"
-	_ "github.com/spaiter/spaiter-vpn/core/transport/v2rayquic"
+	"github.com/sagernet/sing-box/adapter/inbound"
+	"github.com/sagernet/sing-box/adapter/outbound"
+	"github.com/sagernet/sing-box/adapter/service"
+	"github.com/sagernet/sing-box/dns"
+	"github.com/sagernet/sing-box/dns/transport/quic"
+	"github.com/sagernet/sing-box/protocol/hysteria"
+	"github.com/sagernet/sing-box/protocol/hysteria2"
+	_ "github.com/sagernet/sing-box/protocol/naive/quic"
+	"github.com/sagernet/sing-box/protocol/tuic"
+	_ "github.com/sagernet/sing-box/transport/v2rayquic"
 )
 
 func registerQUICInbounds(registry *inbound.Registry) {

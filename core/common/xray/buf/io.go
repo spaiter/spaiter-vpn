@@ -6,9 +6,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/sagernet/sing-box/common/xray/stat"
+	"github.com/sagernet/sing-box/common/xray/stats"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/stat"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/stats"
 )
 
 // Reader extends io.Reader with MultiBuffer.

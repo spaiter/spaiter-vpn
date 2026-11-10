@@ -1,8 +1,2 @@
 core/daemon/managed_service.go:76:12: possible misuse of unsafe.Pointer
 core/experimental/libbox/debug.go:10:11: possible misuse of unsafe.Pointer
-core/thirdparty/sing-vmess/vless/vision.go:187:33: possible misuse of unsafe.Pointer
-core/thirdparty/sing-vmess/vless/vision.go:188:36: possible misuse of unsafe.Pointer
-core/thirdparty/sing-vmess/vless/vision.go:207:31: possible misuse of unsafe.Pointer
-core/thirdparty/sing-vmess/vless/vision.go:208:34: possible misuse of unsafe.Pointer
-core/thirdparty/sing-vmess/vless/vision.go:218:33: possible misuse of unsafe.Pointer
-core/thirdparty/sing-vmess/vless/vision.go:219:36: possible misuse of unsafe.Pointer

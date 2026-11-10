@@ -4,11 +4,11 @@ import (
 	"net/netip"
 	"testing"
 
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-shadowsocks/shadowaead"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/json/badoption"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 func TestTCPSlowOpen(t *testing.T) {
@@ -52,7 +52,9 @@ func TestTCPSlowOpen(t *testing.T) {
 						ServerPort: serverPort,
 					},
 					DialerOptions: option.DialerOptions{
-						TCPFastOpen: true,
+						AbstractDialerOptions: option.AbstractDialerOptions{
+							TCPFastOpen: true,
+						},
 					},
 					Method:   method,
 					Password: password,

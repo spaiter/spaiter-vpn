@@ -5,9 +5,9 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing/common/bufio"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
 )
 
 var _ adapter.SSMTracker = (*TrafficManager)(nil)

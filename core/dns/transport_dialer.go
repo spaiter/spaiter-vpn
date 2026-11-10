@@ -3,9 +3,9 @@ package dns
 import (
 	"context"
 
+	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/option"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 func NewLocalDialer(ctx context.Context, options option.LocalDNSServerOptions) (N.Dialer, error) {

@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sagernet/sing-box/common/xray/cpuid"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/cpuid"
 	"lukechampine.com/blake3"
 )
 

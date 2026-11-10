@@ -35,9 +35,8 @@ COPY . .
 # config or any of its backups, and none in the bot or the installer (their
 # apparent hits are "derP" inside HeaderProtectionKey). A tailscale config
 # would now fail with "not included in this build", which is the point --
-# that is cheaper than linking a stack nobody uses and carrying the
-# thirdparty/tailscale pin, which upstream had broken and we hold at
-# 788aa623.
+# that is cheaper than linking a stack nobody uses (core/replace/tailscale
+# is hiddify's 1.102.1 fork, kept only because core/go.mod replaces it).
 #
 # with_masque enables the Cloudflare WARP MASQUE outbound (the "WARP -> server"
 # chain the bot builds). It is separate from masque-wg, our self-hosted
@@ -45,8 +44,8 @@ COPY . .
 RUN export GOTOOLCHAIN=local && \
     CGO_ENABLED=0 go build -v -trimpath \
       -tags "with_gvisor,with_quic,with_dhcp,with_wireguard,with_utls,with_acme,with_clash_api,with_ccm,with_ocm,with_cloudflared,badlinkname,tfogo_checklinkname0,with_grpc,with_awg,with_xdp,with_masque" \
-      -ldflags "-X 'github.com/spaiter/spaiter-vpn/core/constant.Version=${VERSION}' -checklinkname=0 -s -w -buildid=" \
-      -o /src/sing-box ./core/cmd/sing-box
+      -ldflags "-X 'github.com/sagernet/sing-box/constant.Version=${VERSION}' -checklinkname=0 -s -w -buildid=" \
+      -o /src/sing-box github.com/sagernet/sing-box/cmd/sing-box
 
 FROM alpine
 # OCI provenance so a published image names its own source and licence.

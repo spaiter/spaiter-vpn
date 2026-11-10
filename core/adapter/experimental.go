@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"io"
 	"time"
 
+	"github.com/sagernet/sing-box/hiddify/ipinfo"
+	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/observable"
 	"github.com/sagernet/sing/common/varbin"
-	"github.com/spaiter/spaiter-vpn/core/hiddify/ipinfo"
 )
 
 type ClashServer interface {
@@ -26,6 +28,15 @@ type URLTestHistory struct {
 	Delay       uint16         `json:"delay"`
 	IpInfo      *ipinfo.IpInfo `json:"ipinfo"`
 	IsFromCache bool           `json:"from_cache"`
+	// IpInfoFromCache: IpInfo is the one of a previous run, not looked up in this one yet. //H
+	IpInfoFromCache bool `json:"ipinfo_from_cache"` //H
+	// IPv6: whether the outbound carries IPv6, as the monitoring verified at the URL test, the
+	// link declared or the connections showed; nil until known. //H
+	IPv6 *bool `json:"ipv6,omitempty"` //H
+	// IPv6FromCache: IPv6 is the answer of a previous run, not verified in this one yet. //H
+	IPv6FromCache bool `json:"ipv6_from_cache,omitempty"` //H
+	// Error: why the last URL test failed; empty when it worked. //H
+	Error string `json:"error,omitempty"` //H
 }
 
 type URLTestHistoryStorage interface {
@@ -45,6 +56,8 @@ type V2RayServer interface {
 type CacheFile interface {
 	LifecycleService
 
+	CacheID() string
+
 	StoreFakeIP() bool
 	FakeIPStorage
 
@@ -59,6 +72,7 @@ type CacheFile interface {
 
 	SetDisableExpire(disableExpire bool)
 	SetOptimisticTimeout(timeout time.Duration)
+	Flush()
 
 	LoadMode() string
 	StoreMode(mode string) error
@@ -76,11 +90,12 @@ type SavedBinary struct {
 	Content     []byte
 	LastUpdated time.Time
 	LastEtag    string
+	URLHash     []byte
 }
 
 func (s *SavedBinary) MarshalBinary() ([]byte, error) {
 	var buffer bytes.Buffer
-	err := binary.Write(&buffer, binary.BigEndian, uint8(1))
+	err := binary.Write(&buffer, binary.BigEndian, uint8(2))
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +111,14 @@ func (s *SavedBinary) MarshalBinary() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	_, err = varbin.WriteUvarint(&buffer, uint64(len(s.URLHash)))
+	if err != nil {
+		return nil, err
+	}
+	_, err = buffer.Write(s.URLHash)
+	if err != nil {
+		return nil, err
+	}
 	return buffer.Bytes(), nil
 }
 
@@ -106,7 +129,15 @@ func (s *SavedBinary) UnmarshalBinary(data []byte) error {
 	if err != nil {
 		return err
 	}
-	err = varbin.Read(reader, binary.BigEndian, &s.Content)
+	contentLength, err := binary.ReadUvarint(reader)
+	if err != nil {
+		return err
+	}
+	if contentLength > uint64(reader.Len()) {
+		return E.New("invalid content length: ", contentLength)
+	}
+	s.Content = make([]byte, contentLength)
+	_, err = io.ReadFull(reader, s.Content)
 	if err != nil {
 		return err
 	}
@@ -116,7 +147,31 @@ func (s *SavedBinary) UnmarshalBinary(data []byte) error {
 		return err
 	}
 	s.LastUpdated = time.Unix(lastUpdated, 0)
-	err = varbin.Read(reader, binary.BigEndian, &s.LastEtag)
+	etagLength, err := binary.ReadUvarint(reader)
+	if err != nil {
+		return err
+	}
+	if etagLength > uint64(reader.Len()) {
+		return E.New("invalid etag length: ", etagLength)
+	}
+	etagBytes := make([]byte, etagLength)
+	_, err = io.ReadFull(reader, etagBytes)
+	if err != nil {
+		return err
+	}
+	s.LastEtag = string(etagBytes)
+	if version < 2 {
+		return nil
+	}
+	urlHashLength, err := binary.ReadUvarint(reader)
+	if err != nil {
+		return err
+	}
+	if urlHashLength > uint64(reader.Len()) {
+		return E.New("invalid url hash length: ", urlHashLength)
+	}
+	s.URLHash = make([]byte, urlHashLength)
+	_, err = io.ReadFull(reader, s.URLHash)
 	if err != nil {
 		return err
 	}
@@ -125,18 +180,20 @@ func (s *SavedBinary) UnmarshalBinary(data []byte) error {
 
 type OutboundGroup interface {
 	Outbound
-	Now() string
 	All() []string
+	Selected(network string) Outbound
+	AttachConnection(closer io.Closer) (detach func())
+}
+
+// H: PerConnectionOutboundGroup is a group that picks its outbound for each connection
+// (e.g. balancer), so the router hands connections to the group instead of resolving Selected.
+type PerConnectionOutboundGroup interface {
+	OutboundGroup
+	SelectsPerConnection()
 }
 
 type URLTestGroup interface {
 	OutboundGroup
 	URLTest(ctx context.Context) (map[string]uint16, error)
-}
-
-func OutboundTag(detour Outbound) string {
-	if group, isGroup := detour.(OutboundGroup); isGroup {
-		return group.Now()
-	}
-	return detour.Tag()
+	PerformUpdateCheck()
 }

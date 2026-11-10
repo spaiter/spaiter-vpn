@@ -18,6 +18,8 @@ const (
 	RuleSetFormatBinary = "binary"
 )
 
+const RuleSetTagPlaceholder = "{tag}"
+
 const (
 	RuleSetVersion1 = 1 + iota
 	RuleSetVersion2
@@ -32,7 +34,6 @@ const (
 	RuleActionTypeRouteOptions = "route-options"
 	RuleActionTypeEvaluate     = "evaluate"
 	RuleActionTypeRespond      = "respond"
-	RuleActionTypeDirect       = "direct"
 	RuleActionTypeBypass       = "bypass"
 	RuleActionTypeReject       = "reject"
 	RuleActionTypeHijackDNS    = "hijack-dns"

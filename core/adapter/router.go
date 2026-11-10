@@ -19,6 +19,7 @@ type Router interface {
 	Lifecycle
 	ConnectionRouter
 	PreMatch(metadata InboundContext, firstPacket []byte) PreMatchResult
+	HijackDNSPacket(ctx context.Context, payload []byte, writer N.PacketWriter, metadata InboundContext)
 	ConnectionRouterEx
 	RuleSet(tag string) (RuleSet, bool)
 	Rules() []Rule
@@ -37,6 +38,7 @@ const (
 	PreMatchReject
 	PreMatchDrop
 	PreMatchBypass
+	PreMatchHijackDNS
 )
 
 type PreMatchResult struct {
@@ -47,7 +49,7 @@ type PreMatchResult struct {
 	NewTracker  func() tun.FlowTracker
 }
 
-func JudgeFlow(router Router, inbound string, inboundType string, network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
+func JudgeFlow(router Router, metadata InboundContext, network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
 	var networkName string
 	switch network {
 	case uint8(header.TCPProtocolNumber):
@@ -59,13 +61,9 @@ func JudgeFlow(router Router, inbound string, inboundType string, network uint8,
 	default:
 		return tun.FlowVerdict{Action: tun.ActionAccept}
 	}
-	metadata := InboundContext{
-		Inbound:     inbound,
-		InboundType: inboundType,
-		Network:     networkName,
-		Source:      M.SocksaddrFromNetIP(source),
-		Destination: M.SocksaddrFromNetIP(destination),
-	}
+	metadata.Network = networkName
+	metadata.Source = M.SocksaddrFromNetIP(source)
+	metadata.Destination = M.SocksaddrFromNetIP(destination)
 	if networkName == N.NetworkICMP {
 		metadata.Source.Port = 0
 		metadata.Destination.Port = 0
@@ -91,7 +89,13 @@ func JudgeFlow(router Router, inbound string, inboundType string, network uint8,
 	case PreMatchDrop:
 		return tun.FlowVerdict{Action: tun.ActionDrop}
 	case PreMatchBypass:
-		return tun.FlowVerdict{Action: tun.ActionBypass}
+		port, isPort := result.Outbound.(tun.Port)
+		if !isPort {
+			return tun.FlowVerdict{Action: tun.ActionBypass}
+		}
+		return tun.FlowVerdict{Action: tun.ActionBypass, Port: port, UDPTimeout: result.UDPTimeout, NewTracker: result.NewTracker}
+	case PreMatchHijackDNS:
+		return tun.FlowVerdict{Action: tun.ActionHijackDNS}
 	default:
 		return tun.FlowVerdict{Action: tun.ActionAccept}
 	}

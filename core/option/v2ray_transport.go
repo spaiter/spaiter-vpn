@@ -2,19 +2,21 @@ package option
 
 import (
 	"net/http"
+	"reflect"
 	"strings"
 
+	Xbadoption "github.com/sagernet/sing-box/common/xray/json/badoption"
+	"github.com/sagernet/sing-box/common/xray/utils"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/schema"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json"
 	"github.com/sagernet/sing/common/json/badjson"
 	"github.com/sagernet/sing/common/json/badoption"
-	Xbadoption "github.com/spaiter/spaiter-vpn/core/common/xray/json/badoption"
-	"github.com/spaiter/spaiter-vpn/core/common/xray/utils"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
 )
 
 type _V2RayTransportOptions struct {
-	Type               string                  `json:"type"`
+	Type               string                  `json:"type" enum:"http,ws,quic,grpc,httpupgrade,xhttp,raw,mkcp,kcp"` //H
 	HTTPOptions        V2RayHTTPOptions        `json:"-"`
 	WebsocketOptions   V2RayWebsocketOptions   `json:"-"`
 	QUICOptions        V2RayQUICOptions        `json:"-"`
@@ -22,6 +24,9 @@ type _V2RayTransportOptions struct {
 	HTTPUpgradeOptions V2RayHTTPUpgradeOptions `json:"-"`
 	XHTTPOptions       V2RayXHTTPOptions       `json:"-"` //H
 	DNSTTOptions       DnsttOptions            `json:"-"` //H
+	RawOptions         V2RayRawOptions         `json:"-"` //H
+	KCPOptions         V2RayKCPOptions         `json:"-"` //H
+	XDriveOptions      V2RayXDriveOptions      `json:"-"` //H
 }
 
 type V2RayTransportOptions _V2RayTransportOptions
@@ -41,12 +46,19 @@ func (o V2RayTransportOptions) MarshalJSON() ([]byte, error) {
 		v = o.HTTPUpgradeOptions
 	case C.V2RayTransportTypeXHTTP:
 		v = o.XHTTPOptions
+	case C.V2RayTransportTypeRaw: //H
+		v = o.RawOptions //H
+	case C.V2RayTransportTypeKCP, C.V2RayTransportTypeKCPAlias: //H
+		v = o.KCPOptions //H
+	case C.V2RayTransportTypeXDrive: //H
+		v = o.XDriveOptions //H
+
 	case "":
 		return nil, E.New("missing transport type")
 	default:
 		return nil, E.New("unknown transport type: " + o.Type)
 	}
-	return badjson.MarshallObjects((_V2RayTransportOptions)(o), v)
+	return badjson.MarshallObjects(_V2RayTransportOptions(o), v)
 }
 
 func (o *V2RayTransportOptions) UnmarshalJSON(bytes []byte) error {
@@ -68,6 +80,13 @@ func (o *V2RayTransportOptions) UnmarshalJSON(bytes []byte) error {
 		v = &o.HTTPUpgradeOptions
 	case C.V2RayTransportTypeXHTTP:
 		v = &o.XHTTPOptions
+	case C.V2RayTransportTypeRaw:
+		v = &o.RawOptions
+	case C.V2RayTransportTypeKCP, C.V2RayTransportTypeKCPAlias: //H
+		o.Type = C.V2RayTransportTypeKCP //H
+		v = &o.KCPOptions                //H
+	case C.V2RayTransportTypeXDrive: //H
+		v = &o.XDriveOptions //H
 	default:
 		return E.New("unknown transport type: " + o.Type)
 	}
@@ -78,6 +97,22 @@ func (o *V2RayTransportOptions) UnmarshalJSON(bytes []byte) error {
 	return nil
 }
 
+func (o V2RayTransportOptions) DescribeSchema(builder schema.Builder) (*schema.Node, error) {
+	return builder.Define("V2RayTransport", func() (*schema.Node, error) {
+		return schema.DiscriminatedUnion(builder, "type", true, []schema.UnionVariant{
+			{Value: C.V2RayTransportTypeHTTP, StructType: reflect.TypeFor[V2RayHTTPOptions]()},
+			{Value: C.V2RayTransportTypeWebsocket, StructType: reflect.TypeFor[V2RayWebsocketOptions]()},
+			{Value: C.V2RayTransportTypeQUIC, StructType: reflect.TypeFor[V2RayQUICOptions]()},
+			{Value: C.V2RayTransportTypeGRPC, StructType: reflect.TypeFor[V2RayGRPCOptions]()},
+			{Value: C.V2RayTransportTypeHTTPUpgrade, StructType: reflect.TypeFor[V2RayHTTPUpgradeOptions]()},
+			{Value: C.V2RayTransportTypeXHTTP, StructType: reflect.TypeFor[V2RayXHTTPOptions]()},   //H
+			{Value: C.V2RayTransportTypeRaw, StructType: reflect.TypeFor[V2RayRawOptions]()},       //H
+			{Value: C.V2RayTransportTypeKCP, StructType: reflect.TypeFor[V2RayKCPOptions]()},       //H
+			{Value: C.V2RayTransportTypeXDrive, StructType: reflect.TypeFor[V2RayXDriveOptions]()}, //H
+		}, nil)
+	})
+}
+
 type V2RayHTTPOptions struct {
 	Host        badoption.Listable[string] `json:"host,omitempty"`
 	Path        string                     `json:"path,omitempty"`
@@ -85,7 +120,13 @@ type V2RayHTTPOptions struct {
 	Headers     badoption.HTTPHeader       `json:"headers,omitempty"`
 	IdleTimeout badoption.Duration         `json:"idle_timeout,omitempty"`
 	PingTimeout badoption.Duration         `json:"ping_timeout,omitempty"`
+	Version     int                        `json:"version,omitempty" enum:"1,2"` //H version of HTTP protocol to use; when TLS is enabled, defaults to 2 (h2), set to 1 to force HTTP/1.1
 }
+
+// V2RayRawOptions configures the "raw" V2Ray transport: it passes the
+// underlying (optionally TLS-wrapped) connection through unmodified, with no
+// additional framing or headers, similar to Xray's "raw" stream setting. //H
+type V2RayRawOptions struct{} //H
 
 type V2RayWebsocketOptions struct {
 	Path                string               `json:"path,omitempty"`
@@ -116,7 +157,7 @@ type V2RayXHTTPBaseOptions struct {
 	Host                 string                 `json:"host,omitempty"`
 	Path                 string                 `json:"path,omitempty"`
 	Headers              map[string]string      `json:"headers,omitempty"`
-	DomainStrategy       DomainStrategy         `json:"domain_strategy,omitempty"`
+	DomainStrategy       DomainStrategy         `json:"domain_strategy,omitempty"` //H: accepted for configs from other forks, not used: the outbound's domain_strategy applies
 	XPaddingBytes        Xbadoption.Range       `json:"x_padding_bytes"`
 	NoGRPCHeader         bool                   `json:"no_grpc_header,omitempty"`
 	NoSSEHeader          bool                   `json:"no_sse_header,omitempty"`

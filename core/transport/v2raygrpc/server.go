@@ -7,14 +7,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/grpcname" //H
+	"github.com/sagernet/sing-box/common/tls"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	"golang.org/x/net/http2"
 	"google.golang.org/grpc"
@@ -47,7 +48,8 @@ func NewServer(ctx context.Context, logger logger.ContextLogger, options option.
 		}))
 	}
 	server := &Server{ctx, logger, handler, grpc.NewServer(serverOptions...)}
-	RegisterGunServiceCustomNameServer(server.server, server, options.ServiceName)
+	serviceName, streamName := grpcname.Names(options.ServiceName)                     //H: Xray's custom paths
+	RegisterGunServiceCustomNameServer(server.server, server, serviceName, streamName) //H
 	return server, nil
 }
 

@@ -7,20 +7,19 @@ import (
 	"time"
 
 	"github.com/sagernet/quic-go"
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/dialer"
+	"github.com/sagernet/sing-box/common/tls"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/dns"
+	"github.com/sagernet/sing-box/dns/transport"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
 	sQUIC "github.com/sagernet/sing-quic"
 	"github.com/sagernet/sing/common"
-	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/dialer"
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/dns"
-	"github.com/spaiter/spaiter-vpn/core/dns/transport"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
 
 	mDNS "github.com/miekg/dns"
 )
@@ -80,15 +79,12 @@ func NewQUIC(ctx context.Context, logger log.ContextLogger, tag string, options 
 	}, nil
 }
 
-func (t *Transport) Start(stage adapter.StartStage) error {
+func (t *Transport) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	if stage != adapter.StartStateStart {
 		return nil
 	}
+	scope.Add(t.connection.Close)
 	return dialer.InitializeDetour(t.dialer)
-}
-
-func (t *Transport) Close() error {
-	return t.connection.Close()
 }
 
 func (t *Transport) Reset() {
@@ -109,8 +105,7 @@ func (t *Transport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg,
 			}
 			earlyConnection, err := sQUIC.DialEarly(
 				ctx,
-				bufio.NewUnbindPacketConn(rawConn),
-				t.serverAddr.UDPAddr(),
+				rawConn,
 				t.tlsConfig,
 				nil,
 			)
@@ -143,6 +138,12 @@ func (t *Transport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg,
 		}
 	}
 	return nil, err
+}
+
+func (t *Transport) ExchangeAsync(ctx context.Context, message *mDNS.Msg, callback func(response *mDNS.Msg, err error)) {
+	go func() {
+		callback(t.Exchange(ctx, message))
+	}()
 }
 
 func (t *Transport) exchange(ctx context.Context, message *mDNS.Msg, conn *quic.Conn) (*mDNS.Msg, error) {

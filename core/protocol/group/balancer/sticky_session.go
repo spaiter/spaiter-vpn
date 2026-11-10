@@ -1,16 +1,15 @@
 package balancer
 
 import (
-	"math"
 	"sync"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/contrab/freelru"
 	"github.com/sagernet/sing/contrab/maphash"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 type StickySession struct {
@@ -22,11 +21,17 @@ type StickySession struct {
 
 	mu                   sync.Mutex
 	delayAcceptableRatio float64
-	lruCache             *freelru.ShardedLRU[uint64, int]
+	stickyHash           []string // H: what a connection sticks by, see stickyKey
+	lruCache             *freelru.Cache[uint64, int]
+	alive                map[string]string // members within the acceptable delay, per network
 }
 
-func NewStickySession(outbounds []adapter.Outbound, options option.BalancerOutboundOptions) *StickySession {
-	lruCache := common.Must1(freelru.NewSharded[uint64, int](1000, maphash.NewHasher[uint64]().Hash32))
+func NewStickySession(outbounds []adapter.Outbound, options option.BalancerOutboundOptions) (*StickySession, error) { //H: an error for a bad sticky_hash
+	stickyHash, err := parseStickyHash(options.StickyHash, defaultStickySessionHash) //H
+	if err != nil {                                                                  //H
+		return nil, err //H
+	} //H
+	lruCache := common.Must1(freelru.New[uint64, int](1000, maphash.NewHasher[uint64]().Hash32, true))
 	lruCache.SetLifetime(options.TTL.Build())
 	cOutbounds := convertOutbounds(outbounds)
 	return &StickySession{
@@ -34,8 +39,9 @@ func NewStickySession(outbounds []adapter.Outbound, options option.BalancerOutbo
 		lruCache:             lruCache,
 		hash:                 maphash.NewHasher[string](),
 		maxRetry:             options.MaxRetry,
-		delayAcceptableRatio: options.DelayAcceptableRatio,
-	}
+		delayAcceptableRatio: acceptableRatio(options),
+		stickyHash:           stickyHash, //H
+	}, nil //H
 }
 
 var _ Strategy = (*StickySession)(nil)
@@ -47,30 +53,41 @@ func (s *StickySession) Select(metadata adapter.InboundContext, net string, touc
 	if net != N.NetworkTCP && net != N.NetworkUDP {
 		net = N.NetworkTCP
 	}
-	key := s.hash.Hash(getKeyWithSrcAndDst(&metadata))
-	length := len(s.outbounds[net])
+	key := s.hash.Hash(stickyKey(&metadata, s.stickyHash)) //H
+	outbounds := s.outbounds[net]
+	length := int32(len(outbounds))
 	idx, has := s.lruCache.Get(key)
-	if !has || idx >= length {
-		idx = int(jumpHash(key+uint64(time.Now().UnixNano()), int32(length)))
+	if !has || idx >= len(outbounds) {
+		has = false
+		idx = int(jumpHash(key+uint64(time.Now().UnixNano()), length))
 	}
 
-	nowIdx := idx
-	for i := 1; i < s.maxRetry; i++ {
-		proxy := s.outbounds[net][nowIdx]
-		if s.Alive(proxy, net) {
-			if !has || nowIdx != idx {
-				s.lruCache.Add(key, nowIdx)
+	pick := idx
+	if !s.Alive(outbounds[pick], net) {
+		pick = -1
+		// a new random seed per session, stepped on each retry so every retry draws again
+		seed := key + uint64(time.Now().UnixNano())
+		for i := 0; i < s.maxRetry; i++ {
+			candidate := int(jumpHash(seed+uint64(i)+1, length))
+			if s.Alive(outbounds[candidate], net) {
+				pick = candidate
+				break
 			}
-
-			return proxy
-		} else {
-			nowIdx = int(jumpHash(key+uint64(time.Now().UnixNano()), int32(length)))
+		}
+		// when availability is poor, traverse the entire list to get the available nodes
+		for i := 0; pick < 0 && i < len(outbounds); i++ {
+			if s.Alive(outbounds[i], net) {
+				pick = i
+			}
+		}
+		if pick < 0 {
+			pick = idx
 		}
 	}
-
-	s.lruCache.Add(key, nowIdx)
-	return s.outbounds[net][nowIdx]
-
+	if !has || pick != idx {
+		s.lruCache.Add(key, pick)
+	}
+	return outbounds[pick]
 }
 
 func (s *StickySession) Now() string {
@@ -81,14 +98,16 @@ func (s *StickySession) UpdateOutboundsInfo(history map[string]*adapter.URLTestH
 	delayMap := getDelayMap(history)
 	res := map[string]uint16{}
 	for net, d := range minDelay {
-		acceptableDelay := uint16(math.Max(100, float64(d)) * s.delayAcceptableRatio)
-		res[net] = acceptableDelay
+		res[net] = getMaxAcceptableDelay(d, s.delayAcceptableRatio)
 	}
+	alive := aliveSet(s.outbounds, delayMap, res)
 	s.mu.Lock()
+	changed := aliveSetChanged(s.alive, alive) // not every update: interrupt_exist_connections would close all connections each time
 	s.delays = delayMap
 	s.maxAcceptableDelay = res
+	s.alive = alive
 	s.mu.Unlock()
-	return true
+	return changed
 }
 
 func (s *StickySession) Alive(proxy adapter.Outbound, net string) bool {

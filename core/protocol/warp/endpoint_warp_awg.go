@@ -6,12 +6,12 @@ import (
 	"context"
 	"net/netip"
 
+	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/protocol/awg"
 	"github.com/sagernet/sing/common/json/badoption"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/log"
-	"github.com/spaiter/spaiter-vpn/core/option"
-	"github.com/spaiter/spaiter-vpn/core/protocol/awg"
 )
 
 func createWARPAwgEndpoint(
@@ -25,27 +25,31 @@ func createWARPAwgEndpoint(
 	peerPort uint16,
 	peerPublicKey string,
 ) (adapter.Endpoint, error) {
+	addresses, err := warpInterfaceAddresses(config) //H: a config without addresses crashed the process
+	if err != nil {                                  //H
+		return nil, err //H
+	} //H
 	return awg.NewEndpoint(ctx, router, logger, tag, option.AwgEndpointOptions{
 		UseIntegratedTun: options.System,
 		PrivateKey:       config.PrivateKey,
-		Address: badoption.Listable[netip.Prefix]{
-			netip.MustParsePrefix(config.Interface.Addresses.V4 + "/32"),
-			netip.MustParsePrefix(config.Interface.Addresses.V6 + "/128"),
-		},
-		MTU:        options.MTU,
-		ListenPort: options.ListenPort,
-		Awg:        *options.AWG,
+		Address:          addresses, //H
+		MTU:              options.MTU,
+		ListenPort:       options.ListenPort,
+		Awg:              *options.AWG,
 		Peers: []option.AwgPeerOptions{
 			{
-				Address:   peerAddr,
-				Port:      peerPort,
-				PublicKey: peerPublicKey,
+				Address:                     peerAddr,
+				Port:                        peerPort,
+				PublicKey:                   peerPublicKey,
+				PersistentKeepaliveInterval: warpKeepalive, //H: keeps the handshake fresh, so IsReady can tell a dead path
 				AllowedIPs: badoption.Listable[netip.Prefix]{
 					netip.MustParsePrefix("0.0.0.0/0"),
 					netip.MustParsePrefix("::/0"),
 				},
 			},
 		},
-		DialerOptions: options.DialerOptions,
+		DialerOptions:   options.DialerOptions,   //H
+		MTUDiscovery:    options.MTUDiscovery,    //H
+		FallbackAddress: options.FallbackAddress, //H
 	})
 }

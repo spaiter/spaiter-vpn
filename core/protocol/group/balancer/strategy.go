@@ -1,6 +1,6 @@
 package balancer
 
-import "github.com/spaiter/spaiter-vpn/core/adapter"
+import "github.com/sagernet/sing-box/adapter"
 
 type Strategy interface {
 	UpdateOutboundsInfo(outbounds map[string]*adapter.URLTestHistory) (changed bool)

@@ -1,34 +1,35 @@
 package libbox
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"net"
 	"net/netip"
-	"os"
 	"runtime"
 	"strconv"
 	"sync"
 	"syscall"
 
+	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	"github.com/sagernet/sing-box/service/powerreport"
 	tun "github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
 	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/experimental/libbox/internal/procfs"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 var _ adapter.PlatformInterface = (*platformInterfaceWrapper)(nil)
 
 type platformInterfaceWrapper struct {
 	iif                    PlatformInterface
-	useProcFS              bool
 	networkManager         adapter.NetworkManager
+	powerManager           *powerreport.Manager
 	myTunName              string
 	myTunAddress           []netip.Addr
 	defaultInterfaceAccess sync.Mutex
@@ -85,6 +86,10 @@ func (w *platformInterfaceWrapper) OpenInterface(options *tun.Options, platformO
 	return tun.New(*options)
 }
 
+func (w *platformInterfaceWrapper) ProcessPlatformOptions(options option.TunPlatformOptions) error {
+	return nil
+}
+
 func myTunAddress(options *tun.Options) []netip.Addr {
 	addresses := make([]netip.Addr, 0, len(options.Inet4Address)+len(options.Inet6Address))
 	for _, prefix := range options.Inet4Address {
@@ -136,8 +141,13 @@ func (w *platformInterfaceWrapper) NetworkInterfaces() ([]adapter.NetworkInterfa
 				Addresses: common.Map(iteratorToArray[string](netInterface.Addresses), netip.MustParsePrefix),
 				Flags:     linkFlags(uint32(netInterface.Flags)),
 			},
-			Type:        C.InterfaceType(netInterface.Type),
-			DNSServers:  iteratorToArray[string](netInterface.DNSServer),
+			Type:             C.InterfaceType(netInterface.Type),
+			DNSServers:       iteratorToArray[string](netInterface.DNSServer),
+			DNSSearchDomains: iteratorToArray[string](netInterface.DNSSearchDomain),
+			Gateways: common.Filter(common.Map(iteratorToArray[string](netInterface.Gateway), func(it string) netip.Addr {
+				gateway, _ := netip.ParseAddr(it)
+				return gateway.Unmap().WithZone("")
+			}), netip.Addr.IsValid),
 			Expensive:   netInterface.Metered || isDefault && w.isExpensive,
 			Constrained: isDefault && w.isConstrained,
 		})
@@ -168,12 +178,12 @@ func (w *platformInterfaceWrapper) UsePlatformWIFIMonitor() bool {
 	return true
 }
 
-func (w *platformInterfaceWrapper) ReadWIFIState() adapter.WIFIState {
+func (w *platformInterfaceWrapper) ReadWIFIState(ctx context.Context) adapter.WIFIState {
 	wifiState := w.iif.ReadWIFIState()
 	if wifiState == nil {
 		return adapter.WIFIState{}
 	}
-	return (adapter.WIFIState)(*wifiState)
+	return adapter.WIFIState(*wifiState)
 }
 
 func (w *platformInterfaceWrapper) SystemCertificates() []string {
@@ -185,42 +195,19 @@ func (w *platformInterfaceWrapper) UsePlatformConnectionOwnerFinder() bool {
 }
 
 func (w *platformInterfaceWrapper) FindConnectionOwner(request *adapter.FindConnectionOwnerRequest) (*adapter.ConnectionOwner, error) {
-	if w.useProcFS {
-		var source netip.AddrPort
-		var destination netip.AddrPort
-		sourceAddr, _ := netip.ParseAddr(request.SourceAddress)
-		source = netip.AddrPortFrom(sourceAddr, uint16(request.SourcePort))
-		destAddr, _ := netip.ParseAddr(request.DestinationAddress)
-		destination = netip.AddrPortFrom(destAddr, uint16(request.DestinationPort))
-
-		var network string
-		switch request.IpProtocol {
-		case int32(syscall.IPPROTO_TCP):
-			network = "tcp"
-		case int32(syscall.IPPROTO_UDP):
-			network = "udp"
-		default:
-			return nil, E.New("unknown protocol: ", request.IpProtocol)
-		}
-
-		uid := procfs.ResolveSocketByProcSearch(network, source, destination)
-		if uid == -1 {
-			return nil, E.New("procfs: not found")
-		}
-		return &adapter.ConnectionOwner{
-			UserId: uid,
-		}, nil
-	}
-
 	result, err := w.iif.FindConnectionOwner(request.IpProtocol, request.SourceAddress, request.SourcePort, request.DestinationAddress, request.DestinationPort)
 	if err != nil {
 		return nil, err
 	}
+	processPaths := result.processPaths
+	if len(processPaths) == 0 && result.ProcessPath != "" {
+		processPaths = []string{result.ProcessPath}
+	}
 	return &adapter.ConnectionOwner{
-		UserId:              result.UserId,
-		UserName:            result.UserName,
-		ProcessPath:         result.ProcessPath,
-		AndroidPackageNames: result.androidPackageNames,
+		UserId:       result.UserId,
+		UserName:     result.UserName,
+		ProcessPaths: processPaths,
+		PackageNames: result.androidPackageNames,
 	}, nil
 }
 
@@ -236,6 +223,10 @@ func (w *platformInterfaceWrapper) SendNotification(notification *adapter.Notifi
 	return w.iif.SendNotification((*Notification)(notification))
 }
 
+func (w *platformInterfaceWrapper) CancelNotification(identifier string, typeID int32) error {
+	return w.iif.CancelNotification(identifier, typeID)
+}
+
 func (w *platformInterfaceWrapper) UsePlatformNeighborResolver() bool {
 	return true
 }
@@ -249,39 +240,182 @@ func (w *platformInterfaceWrapper) CloseNeighborMonitor(listener adapter.Neighbo
 }
 
 func (w *platformInterfaceWrapper) UsePlatformShell() bool {
-	return false
+	return w.iif.UsePlatformShell()
 }
 
 func (w *platformInterfaceWrapper) CheckPlatformShell() error {
-	return os.ErrInvalid
+	return w.iif.CheckPlatformShell()
 }
 
-func (w *platformInterfaceWrapper) OpenShellSession(user *adapter.PlatformUser, command string, env []string, term string, rows int32, cols int32) (adapter.ShellSession, error) {
-	return nil, os.ErrInvalid
-}
-
-func (w *platformInterfaceWrapper) LookupUser(username string) (*adapter.PlatformUser, error) {
-	return nil, os.ErrInvalid
+func (w *platformInterfaceWrapper) OpenShellSession(user *adapter.PlatformUser, command string, environ []string, term string, rows int32, cols int32) (adapter.ShellSession, error) {
+	libboxUser := &PlatformUser{
+		Username: user.Username,
+		Uid:      int32(user.Uid),
+		Gid:      int32(user.Gid),
+		HomeDir:  user.HomeDir,
+		Shell:    user.Shell,
+	}
+	if len(user.Groups) > 0 {
+		libboxUser.SetGroups(newIterator(common.Map(user.Groups, func(g int) int32 { return int32(g) })))
+	}
+	session, err := w.iif.OpenShellSession(libboxUser, command, newIterator(environ), term, rows, cols)
+	if err != nil {
+		return nil, err
+	}
+	return session, nil
 }
 
 func (w *platformInterfaceWrapper) LookupSFTPServer() (string, error) {
-	return "", os.ErrInvalid
+	return w.iif.LookupSFTPServer()
 }
 
 func (w *platformInterfaceWrapper) ReadSystemSSHHostKey() ([]byte, error) {
-	return nil, os.ErrInvalid
+	result, err := w.iif.ReadSystemSSHHostKey()
+	if err != nil {
+		return nil, err
+	}
+	return []byte(result), nil
 }
 
 func (w *platformInterfaceWrapper) TailscaleHostname() string {
-	return ""
+	return w.iif.TailscaleHostname()
 }
 
 func (w *platformInterfaceWrapper) UsePlatformBridge() bool {
-	return false
+	return w.iif.UsePlatformBridge()
 }
 
 func (w *platformInterfaceWrapper) CreateBridge(options adapter.BridgeOptions) (adapter.BridgeSession, error) {
-	return nil, os.ErrInvalid
+	bridgeOptions := &BridgeOptions{
+		BridgeName: options.BridgeName,
+		MTU:        int32(options.MTU),
+		Interface:  options.Interface,
+		RuleIndex:  int32(options.RuleIndex),
+		RouteTable: int32(options.RouteTable),
+	}
+	if options.Inet4Port.IsValid() {
+		bridgeOptions.Inet4Port = options.Inet4Port.String()
+	}
+	if options.Inet6Port.IsValid() {
+		bridgeOptions.Inet6Port = options.Inet6Port.String()
+	}
+	session, err := w.iif.CreateBridge(bridgeOptions)
+	if err != nil {
+		return nil, err
+	}
+	return &bridgeSessionWrapper{session}, nil
+}
+
+type bridgeSessionWrapper struct {
+	session BridgeSession
+}
+
+func (w *bridgeSessionWrapper) FileDescriptor() int {
+	return int(w.session.FileDescriptor())
+}
+
+func (w *bridgeSessionWrapper) Name() string {
+	return w.session.Name()
+}
+
+func (w *bridgeSessionWrapper) Inet6Active() bool {
+	return w.session.Inet6Active()
+}
+
+func (w *bridgeSessionWrapper) SetEgress(interfaceName string) error {
+	return w.session.SetEgress(interfaceName)
+}
+
+func (w *bridgeSessionWrapper) Close() error {
+	return w.session.Close()
+}
+
+func (w *platformInterfaceWrapper) UsePlatformAutoRedirect() bool {
+	return w.iif.UsePlatformAutoRedirect()
+}
+
+func (w *platformInterfaceWrapper) CreateAutoRedirect(options adapter.AutoRedirectOptions) (adapter.AutoRedirectSession, error) {
+	encodedOptions, err := encodeAutoRedirectOptions(options)
+	if err != nil {
+		return nil, err
+	}
+	return w.iif.CreateAutoRedirect(encodedOptions, &autoRedirectHandlerWrapper{
+		handler:                   options.Handler,
+		listenerFileDescriptor:    options.RedirectListenerFileDescriptor,
+		routeAddressSetDescriptor: options.RouteAddressSetFileDescriptor,
+		logger:                    options.TunOptions.Logger,
+	})
+}
+
+type autoRedirectHandlerWrapper struct {
+	handler                   tun.AutoRedirectHandler
+	listenerFileDescriptor    func() (int, error)
+	routeAddressSetDescriptor func() (int, error)
+	logger                    logger.Logger
+}
+
+func (w *autoRedirectHandlerWrapper) RedirectListenerFileDescriptor() (int32, error) {
+	fd, err := w.listenerFileDescriptor()
+	if err != nil {
+		return 0, err
+	}
+	return int32(fd), nil
+}
+
+func (w *autoRedirectHandlerWrapper) RouteAddressSetFileDescriptor() (int32, error) {
+	fd, err := w.routeAddressSetDescriptor()
+	if err != nil {
+		return 0, err
+	}
+	return int32(fd), nil
+}
+
+func (w *autoRedirectHandlerWrapper) JudgeFlow(ipProtocol int32, sourceAddress string, sourcePort int32, destinationAddress string, destinationPort int32, firstPacket []byte) (int32, error) {
+	source, err := netip.ParseAddr(sourceAddress)
+	if err != nil {
+		return 0, E.Cause(err, "parse source address")
+	}
+	destination, err := netip.ParseAddr(destinationAddress)
+	if err != nil {
+		return 0, E.Cause(err, "parse destination address")
+	}
+	verdict := w.handler.JudgeFlow(
+		uint8(ipProtocol),
+		netip.AddrPortFrom(source, uint16(sourcePort)),
+		netip.AddrPortFrom(destination, uint16(destinationPort)),
+		firstPacket,
+	)
+	return int32(verdict.Action), nil
+}
+
+func (w *autoRedirectHandlerWrapper) WriteLog(level int32, message string) {
+	switch log.Level(level) {
+	case log.LevelTrace:
+		w.logger.Trace(message)
+	case log.LevelDebug:
+		w.logger.Debug(message)
+	case log.LevelInfo:
+		w.logger.Info(message)
+	case log.LevelWarn:
+		w.logger.Warn(message)
+	default:
+		w.logger.Error(message)
+	}
+}
+
+func (w *platformInterfaceWrapper) LookupUser(username string) (*adapter.PlatformUser, error) {
+	platformUser, err := w.iif.LookupUser(username)
+	if err != nil {
+		return nil, err
+	}
+	return &adapter.PlatformUser{
+		Username: platformUser.Username,
+		Uid:      int(platformUser.Uid),
+		Gid:      int(platformUser.Gid),
+		HomeDir:  platformUser.HomeDir,
+		Shell:    platformUser.Shell,
+		Groups:   common.Map(iteratorToArray[int32](platformUser.Groups()), func(g int32) int { return int(g) }),
+	}, nil
 }
 
 type neighborUpdateListenerWrapper struct {

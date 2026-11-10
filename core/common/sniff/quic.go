@@ -10,12 +10,12 @@ import (
 	"io"
 	"os"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/ja3"
+	"github.com/sagernet/sing-box/common/sniff/internal/qtls"
+	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing/common/buf"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/ja3"
-	"github.com/spaiter/spaiter-vpn/core/common/sniff/internal/qtls"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
 
 	"golang.org/x/crypto/hkdf"
 )
@@ -245,6 +245,9 @@ func QUICClientHello(ctx context.Context, metadata *adapter.InboundContext, pack
 			if err != nil {
 				return err
 			}
+			if length > uint64(decryptedReader.Len()) {
+				return os.ErrInvalid
+			}
 			index := len(decrypted) - decryptedReader.Len()
 			fragments = append(fragments, qCryptoFragment{offset, length, decrypted[index : index+int(length)]})
 			_, err = decryptedReader.Seek(int64(length), io.SeekCurrent)
@@ -291,7 +294,7 @@ func QUICClientHello(ctx context.Context, metadata *adapter.InboundContext, pack
 find:
 	for {
 		for _, fragment := range fragments {
-			if fragment.offset == index {
+			if fragment.offset == index && fragment.length > 0 {
 				buffer.Write(fragment.payload)
 				index = fragment.offset + fragment.length
 				length++

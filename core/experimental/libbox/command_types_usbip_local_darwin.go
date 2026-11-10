@@ -9,9 +9,9 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/sagernet/sing-box/daemon"
 	"github.com/sagernet/sing-usbip"
 	E "github.com/sagernet/sing/common/exceptions"
-	"github.com/spaiter/spaiter-vpn/core/daemon"
 )
 
 func (c *CommandClient) NewUSBLocalProvider(handler USBLocalProviderHandler) (*USBLocalProviderManager, error) {

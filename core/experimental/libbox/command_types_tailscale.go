@@ -1,6 +1,6 @@
 package libbox
 
-import "github.com/spaiter/spaiter-vpn/core/daemon"
+import "github.com/sagernet/sing-box/daemon"
 
 type TailscaleStatusUpdate struct {
 	endpoints []*TailscaleEndpointStatus
@@ -16,14 +16,20 @@ type TailscaleEndpointStatusIterator interface {
 }
 
 type TailscaleEndpointStatus struct {
-	EndpointTag    string
-	BackendState   string
-	AuthURL        string
-	NetworkName    string
-	MagicDNSSuffix string
-	Self           *TailscalePeer
-	ExitNode       *TailscalePeer
-	userGroups     []*TailscaleUserGroup
+	EndpointTag        string
+	BackendState       string
+	StateText          string
+	AuthURL            string
+	NetworkName        string
+	MagicDNSSuffix     string
+	Self               *TailscalePeer
+	ExitNode           *TailscalePeer
+	KeyAuth            bool
+	CanShareFiles      bool
+	WaitingFileCount   int32
+	ReceivingFileCount int32
+	UnreadFileCount    int32
+	userGroups         []*TailscaleUserGroup
 }
 
 func (s *TailscaleEndpointStatus) UserGroups() TailscaleUserGroupIterator {
@@ -53,22 +59,23 @@ type TailscalePeerIterator interface {
 }
 
 type TailscalePeer struct {
-	StableID       string
-	HostName       string
-	DNSName        string
-	OS             string
-	tailscaleIPs   []string
-	sshHostKeys    []string
-	Online         bool
-	ExitNode       bool
-	ExitNodeOption bool
-	ShareeNode     bool
-	Expired        bool
-	Active         bool
-	RxBytes        int64
-	TxBytes        int64
-	KeyExpiry      int64
-	LastSeen       int64
+	StableID        string
+	HostName        string
+	DNSName         string
+	OS              string
+	tailscaleIPs    []string
+	sshHostKeys     []string
+	Online          bool
+	ExitNode        bool
+	ExitNodeOption  bool
+	ShareeNode      bool
+	Expired         bool
+	Active          bool
+	CanReceiveFiles bool
+	RxBytes         int64
+	TxBytes         int64
+	KeyExpiry       int64
+	LastSeen        int64
 }
 
 func (p *TailscalePeer) TailscaleIPs() StringIterator {
@@ -102,12 +109,18 @@ func tailscaleEndpointStatusFromGRPC(status *daemon.TailscaleEndpointStatus) *Ta
 		userGroups[i] = tailscaleUserGroupFromGRPC(group)
 	}
 	result := &TailscaleEndpointStatus{
-		EndpointTag:    status.EndpointTag,
-		BackendState:   status.BackendState,
-		AuthURL:        status.AuthURL,
-		NetworkName:    status.NetworkName,
-		MagicDNSSuffix: status.MagicDNSSuffix,
-		userGroups:     userGroups,
+		EndpointTag:        status.EndpointTag,
+		BackendState:       status.BackendState,
+		StateText:          status.StateText,
+		AuthURL:            status.AuthURL,
+		NetworkName:        status.NetworkName,
+		MagicDNSSuffix:     status.MagicDNSSuffix,
+		KeyAuth:            status.GetKeyAuth(),
+		CanShareFiles:      status.CanShareFiles,
+		WaitingFileCount:   status.WaitingFileCount,
+		ReceivingFileCount: status.ReceivingFileCount,
+		UnreadFileCount:    status.UnreadFileCount,
+		userGroups:         userGroups,
 	}
 	if status.Self != nil {
 		result.Self = tailscalePeerFromGRPC(status.Self)
@@ -134,21 +147,22 @@ func tailscaleUserGroupFromGRPC(group *daemon.TailscaleUserGroup) *TailscaleUser
 
 func tailscalePeerFromGRPC(peer *daemon.TailscalePeer) *TailscalePeer {
 	return &TailscalePeer{
-		StableID:       peer.StableID,
-		HostName:       peer.HostName,
-		DNSName:        peer.DnsName,
-		OS:             peer.Os,
-		tailscaleIPs:   peer.TailscaleIPs,
-		sshHostKeys:    peer.SshHostKeys,
-		Online:         peer.Online,
-		ExitNode:       peer.ExitNode,
-		ExitNodeOption: peer.ExitNodeOption,
-		ShareeNode:     peer.ShareeNode,
-		Expired:        peer.Expired,
-		Active:         peer.Active,
-		RxBytes:        peer.RxBytes,
-		TxBytes:        peer.TxBytes,
-		KeyExpiry:      peer.KeyExpiry,
-		LastSeen:       peer.LastSeen,
+		StableID:        peer.StableID,
+		HostName:        peer.HostName,
+		DNSName:         peer.DnsName,
+		OS:              peer.Os,
+		tailscaleIPs:    peer.TailscaleIPs,
+		sshHostKeys:     peer.SshHostKeys,
+		Online:          peer.Online,
+		ExitNode:        peer.ExitNode,
+		ExitNodeOption:  peer.ExitNodeOption,
+		ShareeNode:      peer.ShareeNode,
+		Expired:         peer.Expired,
+		Active:          peer.Active,
+		CanReceiveFiles: peer.CanReceiveFiles,
+		RxBytes:         peer.RxBytes,
+		TxBytes:         peer.TxBytes,
+		KeyExpiry:       peer.KeyExpiry,
+		LastSeen:        peer.LastSeen,
 	}
 }

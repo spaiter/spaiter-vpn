@@ -8,18 +8,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/common/badhttp"
+	"github.com/sagernet/sing-box/common/tls"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/sing/common/bufio"
 	"github.com/sagernet/sing/common/bufio/deadline"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
-	sHTTP "github.com/sagernet/sing/protocol/http"
 	"github.com/sagernet/ws"
-	"github.com/spaiter/spaiter-vpn/core/adapter"
-	"github.com/spaiter/spaiter-vpn/core/common/tls"
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 var _ adapter.V2RayClientTransport = (*Client)(nil)
@@ -48,7 +48,7 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 	}
 	requestURL.Host = serverAddr.String()
 	requestURL.Path = options.Path
-	err := sHTTP.URLSetPath(&requestURL, options.Path)
+	err := badhttp.URLSetPath(&requestURL, options.Path)
 	if err != nil {
 		return nil, E.Cause(err, "parse path")
 	}
@@ -73,11 +73,22 @@ func NewClient(ctx context.Context, dialer N.Dialer, serverAddr M.Socksaddr, opt
 	}, nil
 }
 
-func (c *Client) dialContext(ctx context.Context, requestURL *url.URL, headers http.Header) (*WebsocketConn, error) {
+func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
 	conn, err := c.dialer.DialContext(ctx, N.NetworkTCP, c.serverAddr)
 	if err != nil {
 		return nil, err
 	}
+	if c.maxEarlyData > 0 {
+		return &EarlyWebsocketConn{Client: c, rawConn: conn, create: make(chan struct{})}, nil
+	}
+	websocketConn, err := c.upgrade(conn, &c.requestURL, c.headers)
+	if err != nil {
+		return nil, err
+	}
+	return websocketConn, nil
+}
+
+func (c *Client) upgrade(conn net.Conn, requestURL *url.URL, headers http.Header) (*WebsocketConn, error) {
 	var deadlineConn net.Conn
 	if deadline.NeedAdditionalReadDeadline(conn) {
 		deadlineConn = deadline.NewConn(conn)
@@ -86,8 +97,10 @@ func (c *Client) dialContext(ctx context.Context, requestURL *url.URL, headers h
 	}
 	deadlineConn.SetDeadline(time.Now().Add(C.TCPTimeout))
 	var protocols []string
-	if protocolHeader := headers.Get("Sec-WebSocket-Protocol"); protocolHeader != "" {
+	protocolHeader := headers.Get("Sec-WebSocket-Protocol")
+	if protocolHeader != "" {
 		protocols = []string{protocolHeader}
+		headers = headers.Clone()
 		headers.Del("Sec-WebSocket-Protocol")
 	}
 	reader, _, err := ws.Dialer{Header: ws.HandshakeHeaderHTTP(headers), Protocols: protocols}.Upgrade(deadlineConn, requestURL)
@@ -98,7 +111,7 @@ func (c *Client) dialContext(ctx context.Context, requestURL *url.URL, headers h
 	}
 	if reader != nil {
 		buffer := buf.NewSize(reader.Buffered())
-		_, err = buffer.ReadFullFrom(reader, buffer.Len())
+		_, err = buffer.ReadFullFrom(reader, buffer.FreeLen())
 		if err != nil {
 			conn.Close()
 			return nil, err
@@ -106,18 +119,6 @@ func (c *Client) dialContext(ctx context.Context, requestURL *url.URL, headers h
 		conn = bufio.NewCachedConn(conn, buffer)
 	}
 	return NewConn(conn, nil, ws.StateClientSide), nil
-}
-
-func (c *Client) DialContext(ctx context.Context) (net.Conn, error) {
-	if c.maxEarlyData <= 0 {
-		conn, err := c.dialContext(ctx, &c.requestURL, c.headers)
-		if err != nil {
-			return nil, err
-		}
-		return conn, nil
-	} else {
-		return &EarlyWebsocketConn{Client: c, ctx: ctx, create: make(chan struct{})}, nil
-	}
 }
 
 func (c *Client) Close() error {

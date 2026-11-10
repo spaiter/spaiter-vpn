@@ -3,7 +3,7 @@ package sniff
 import (
 	"slices"
 
-	"github.com/spaiter/spaiter-vpn/core/common/ja3"
+	"github.com/sagernet/sing-box/common/ja3"
 )
 
 const (

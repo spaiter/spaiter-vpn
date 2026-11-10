@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	C "github.com/spaiter/spaiter-vpn/core/constant"
-	"github.com/spaiter/spaiter-vpn/core/option"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/option"
 )
 
 func TestV2RayHTTPUpgrade(t *testing.T) {

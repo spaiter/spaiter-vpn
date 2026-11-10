@@ -14,13 +14,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/sagernet/sing-box/common/schannel"
+	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing/common/buf"
 	"github.com/sagernet/sing/common/bufio"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	N "github.com/sagernet/sing/common/network"
-	"github.com/spaiter/spaiter-vpn/core/common/schannel"
-	"github.com/spaiter/spaiter-vpn/core/option"
 )
 
 const (
@@ -102,8 +102,8 @@ func (c *windowsClientConfig) ClientHandshake(ctx context.Context, conn net.Conn
 	if err != nil {
 		return nil, err
 	}
-	if len(c.certificatePublicKeySHA256) > 0 {
-		err = VerifyPublicKeySHA256(c.certificatePublicKeySHA256, rawCerts)
+	if len(c.certificateSHA256) > 0 || len(c.certificatePublicKeySHA256) > 0 {
+		err = VerifyPinnedCertificate(c.certificateSHA256, c.certificatePublicKeySHA256, rawCerts)
 		if err != nil {
 			return nil, err
 		}

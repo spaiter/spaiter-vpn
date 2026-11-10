@@ -52,12 +52,10 @@ to their nDPI originals.
   authoritative source (`echowei/DeepTraffic`) rather than assumed.
 
 LGPL-3.0 is weak copyleft and these files are inert test data consumed only by
-the test suite — they are not linked into, compiled with, or shipped inside the
-core binary or any image. The sniffer code itself is GPL-3.0-or-later like the
-rest of this repository (it originates from the MIT `spaiter/BitTorrentBlocker`,
-incorporated here under GPL-3.0). This notice exists so that nobody has to
-reconstruct that reasoning later, and so the upstream authors get the
-attribution their licenses require.
+the test suite — they are not linked into, compiled with, or distributed as part
+of `btblocker`. The MIT licensing of the detectors therefore stands. This notice
+exists so that nobody has to reconstruct that reasoning later, and so the
+upstream authors get the attribution their licenses require.
 
 ## Redundant duplicates — removed 2026-10-22
 
@@ -234,7 +232,7 @@ Before this batch, five of the thirteen detectors had no fixture of their own:
 (BEP 10), `CheckFASTExtension` (BEP 6) and `CheckSOCKSConnection` /
 `UnwrapSOCKS5`. Every DHT, uTP, signature and HTTP fixture was third-party.
 
-These are ours, GPL-3.0-or-later like the rest of this repository, produced by
+These are ours, MIT like the repository, produced by
 [`test/tools/gen-protocol-captures.sh`](../../tools/gen-protocol-captures.sh)
 in the same isolated lab as the MSE fixtures: namespaces with no default
 route, locally generated random content, nothing leaving the host.

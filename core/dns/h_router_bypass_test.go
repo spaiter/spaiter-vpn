@@ -1,0 +1,473 @@
+package dns
+
+import (
+	"context"
+	"github.com/sagernet/sing-box/adapter/htest"
+	"net/netip"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/sagernet/sing-box/adapter"
+	C "github.com/sagernet/sing-box/constant"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-box/option"
+	E "github.com/sagernet/sing/common/exceptions"
+	"github.com/sagernet/sing/common/json/badoption"
+	"github.com/sagernet/sing/contrab/freelru"
+	"github.com/sagernet/sing/contrab/maphash"
+	"github.com/sagernet/sing/service"
+
+	mDNS "github.com/miekg/dns"
+	"github.com/stretchr/testify/require"
+)
+
+type hTagRecorder struct {
+	access sync.Mutex
+	tags   []string
+}
+
+func (r *hTagRecorder) add(tag string) {
+	r.access.Lock()
+	r.tags = append(r.tags, tag)
+	r.access.Unlock()
+}
+
+func (r *hTagRecorder) get() []string {
+	r.access.Lock()
+	defer r.access.Unlock()
+	return append([]string(nil), r.tags...)
+}
+
+func hRouteRule(domain string, server string, bypass bool) option.DNSRule {
+	return option.DNSRule{
+		Type: C.RuleTypeDefault,
+		DefaultOptions: option.DefaultDNSRule{
+			RawDefaultDNSRule: option.RawDefaultDNSRule{
+				Domain: badoption.Listable[string]{domain},
+			},
+			DNSRuleAction: option.DNSRuleAction{
+				Action: C.RuleActionTypeRoute,
+				RouteOptions: option.DNSRouteActionOptions{
+					Server: server,
+					AbstractDNSRouteActionOptions: option.AbstractDNSRouteActionOptions{
+						BypassIfFailed: bypass,
+					},
+				},
+			},
+		},
+	}
+}
+
+// A rule with a non-default strategy forces legacy DNS mode, which is the
+// only code path that implements bypass_if_failed.
+func hLegacyModeRule() option.DNSRule {
+	return option.DNSRule{
+		Type: C.RuleTypeDefault,
+		DefaultOptions: option.DefaultDNSRule{
+			RawDefaultDNSRule: option.RawDefaultDNSRule{
+				Domain: badoption.Listable[string]{"legacy-mode.invalid"},
+			},
+			DNSRuleAction: option.DNSRuleAction{
+				Action: C.RuleActionTypeRoute,
+				RouteOptions: option.DNSRouteActionOptions{
+					Server: "default",
+					AbstractDNSRouteActionOptions: option.AbstractDNSRouteActionOptions{
+						Strategy: option.DomainStrategy(C.DomainStrategyIPv4Only),
+					},
+				},
+			},
+		},
+	}
+}
+
+func hTransportManager(tags ...string) *routerTestFakeDNSTransportManager {
+	manager := &routerTestFakeDNSTransportManager{transports: map[string]adapter.DNSTransport{}}
+	for _, tag := range tags {
+		transport := &routerTestFakeDNSTransport{tag: tag, transportType: C.DNSTypeUDP}
+		manager.transports[tag] = transport
+		if tag == "default" {
+			manager.defaultTransport = transport
+		}
+	}
+	return manager
+}
+
+func hQuery(domain string) *mDNS.Msg {
+	message := new(mDNS.Msg)
+	message.SetQuestion(mDNS.Fqdn(domain), mDNS.TypeA)
+	return message
+}
+
+func hExchangeClient(recorder *hTagRecorder, answers map[string]string) *fakeDNSClient {
+	return &fakeDNSClient{
+		exchange: func(transport adapter.DNSTransport, message *mDNS.Msg) (*mDNS.Msg, error) {
+			recorder.add(transport.Tag())
+			address, ok := answers[transport.Tag()]
+			if !ok {
+				return nil, E.New("upstream ", transport.Tag(), " failed")
+			}
+			return FixedResponse(message.Id, message.Question[0], []netip.Addr{netip.MustParseAddr(address)}, 60), nil
+		},
+	}
+}
+
+func TestH_ExchangeBypassIfFailedFallsToNextRule(t *testing.T) {
+	t.Parallel()
+	recorder := &hTagRecorder{}
+	router := newTestRouter(t, []option.DNSRule{
+		hRouteRule("example.com", "primary", true),
+		hRouteRule("example.com", "secondary", false),
+		hLegacyModeRule(),
+	}, hTransportManager("default", "primary", "secondary"), hExchangeClient(recorder, map[string]string{
+		"secondary": "1.2.3.4",
+		"default":   "9.9.9.9",
+	}))
+	require.True(t, router.legacyDNSMode)
+
+	response, err := router.Exchange(context.Background(), hQuery("example.com"), adapter.DNSQueryOptions{})
+	require.NoError(t, err)
+	require.Equal(t, []netip.Addr{netip.MustParseAddr("1.2.3.4")}, MessageToAddresses(response))
+	require.Equal(t, []string{"primary", "secondary"}, recorder.get())
+}
+
+func TestH_ExchangeBypassIfFailedChainFallsToDefault(t *testing.T) {
+	t.Parallel()
+	recorder := &hTagRecorder{}
+	router := newTestRouter(t, []option.DNSRule{
+		hRouteRule("example.com", "primary", true),
+		hRouteRule("example.com", "secondary", true),
+		hLegacyModeRule(),
+	}, hTransportManager("default", "primary", "secondary"), hExchangeClient(recorder, map[string]string{
+		"default": "9.9.9.9",
+	}))
+
+	response, err := router.Exchange(context.Background(), hQuery("example.com"), adapter.DNSQueryOptions{})
+	require.NoError(t, err)
+	require.Equal(t, []netip.Addr{netip.MustParseAddr("9.9.9.9")}, MessageToAddresses(response))
+	require.Equal(t, []string{"primary", "secondary", "default"}, recorder.get())
+}
+
+func TestH_ExchangeWithoutBypassReturnsError(t *testing.T) {
+	t.Parallel()
+	recorder := &hTagRecorder{}
+	router := newTestRouter(t, []option.DNSRule{
+		hRouteRule("example.com", "primary", false),
+		hRouteRule("example.com", "secondary", false),
+		hLegacyModeRule(),
+	}, hTransportManager("default", "primary", "secondary"), hExchangeClient(recorder, map[string]string{
+		"secondary": "1.2.3.4",
+	}))
+
+	_, err := router.Exchange(context.Background(), hQuery("example.com"), adapter.DNSQueryOptions{})
+	require.ErrorContains(t, err, "upstream primary failed")
+	require.Equal(t, []string{"primary"}, recorder.get())
+}
+
+func TestH_ExchangeBypassIfFailedSuccessDoesNotBypass(t *testing.T) {
+	t.Parallel()
+	recorder := &hTagRecorder{}
+	router := newTestRouter(t, []option.DNSRule{
+		hRouteRule("example.com", "primary", true),
+		hRouteRule("example.com", "secondary", false),
+		hLegacyModeRule(),
+	}, hTransportManager("default", "primary", "secondary"), hExchangeClient(recorder, map[string]string{
+		"primary":   "5.6.7.8",
+		"secondary": "1.2.3.4",
+	}))
+
+	response, err := router.Exchange(context.Background(), hQuery("example.com"), adapter.DNSQueryOptions{})
+	require.NoError(t, err)
+	require.Equal(t, []netip.Addr{netip.MustParseAddr("5.6.7.8")}, MessageToAddresses(response))
+	require.Equal(t, []string{"primary"}, recorder.get())
+}
+
+func TestH_ExchangeBypassIfFailedStopsOnCanceledContext(t *testing.T) {
+	t.Parallel()
+	recorder := &hTagRecorder{}
+	router := newTestRouter(t, []option.DNSRule{
+		hRouteRule("example.com", "primary", true),
+		hRouteRule("example.com", "secondary", false),
+		hLegacyModeRule(),
+	}, hTransportManager("default", "primary", "secondary"), hExchangeClient(recorder, map[string]string{
+		"secondary": "1.2.3.4",
+	}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := router.Exchange(ctx, hQuery("example.com"), adapter.DNSQueryOptions{})
+	require.Error(t, err)
+	require.Equal(t, []string{"primary"}, recorder.get())
+}
+
+func hLookupClient(recorder *hTagRecorder, answers map[string][]netip.Addr) *fakeDNSClient {
+	return &fakeDNSClient{
+		lookup: func(transport adapter.DNSTransport, domain string, options adapter.DNSQueryOptions) ([]netip.Addr, *mDNS.Msg, error) {
+			recorder.add(transport.Tag())
+			addresses, ok := answers[transport.Tag()]
+			if !ok {
+				return nil, nil, E.New("upstream ", transport.Tag(), " failed")
+			}
+			response := FixedResponse(0, fixedQuestion(domain, mDNS.TypeA), addresses, 60)
+			return addresses, response, nil
+		},
+	}
+}
+
+func TestH_LookupBypassIfFailedOnError(t *testing.T) {
+	t.Parallel()
+	recorder := &hTagRecorder{}
+	router := newTestRouter(t, []option.DNSRule{
+		hRouteRule("example.com", "primary", true),
+		hRouteRule("example.com", "secondary", false),
+		hLegacyModeRule(),
+	}, hTransportManager("default", "primary", "secondary"), hLookupClient(recorder, map[string][]netip.Addr{
+		"secondary": {netip.MustParseAddr("1.2.3.4")},
+	}))
+
+	addresses, err := router.Lookup(context.Background(), "example.com", adapter.DNSQueryOptions{})
+	require.NoError(t, err)
+	require.Equal(t, []netip.Addr{netip.MustParseAddr("1.2.3.4")}, addresses)
+	require.Equal(t, []string{"primary", "secondary"}, recorder.get())
+}
+
+func TestH_LookupBypassIfFailedOnEmptyResult(t *testing.T) {
+	t.Parallel()
+	recorder := &hTagRecorder{}
+	router := newTestRouter(t, []option.DNSRule{
+		hRouteRule("example.com", "primary", true),
+		hRouteRule("example.com", "secondary", false),
+		hLegacyModeRule(),
+	}, hTransportManager("default", "primary", "secondary"), hLookupClient(recorder, map[string][]netip.Addr{
+		"primary":   {},
+		"secondary": {netip.MustParseAddr("1.2.3.4")},
+	}))
+
+	addresses, err := router.Lookup(context.Background(), "example.com", adapter.DNSQueryOptions{})
+	require.NoError(t, err)
+	require.Equal(t, []netip.Addr{netip.MustParseAddr("1.2.3.4")}, addresses)
+	require.Equal(t, []string{"primary", "secondary"}, recorder.get())
+}
+
+func TestH_LookupWithoutBypassReturnsError(t *testing.T) {
+	t.Parallel()
+	recorder := &hTagRecorder{}
+	router := newTestRouter(t, []option.DNSRule{
+		hRouteRule("example.com", "primary", false),
+		hRouteRule("example.com", "secondary", false),
+		hLegacyModeRule(),
+	}, hTransportManager("default", "primary", "secondary"), hLookupClient(recorder, map[string][]netip.Addr{
+		"secondary": {netip.MustParseAddr("1.2.3.4")},
+	}))
+
+	_, err := router.Lookup(context.Background(), "example.com", adapter.DNSQueryOptions{})
+	require.ErrorContains(t, err, "upstream primary failed")
+	require.Equal(t, []string{"primary"}, recorder.get())
+}
+
+func TestH_LookupPredefinedFiltersBlockedAddresses(t *testing.T) {
+	t.Parallel()
+	predefinedRule := func(records ...string) option.DNSRule {
+		answers := make(badoption.Listable[option.DNSRecordOptions], 0, len(records))
+		for _, record := range records {
+			answers = append(answers, mustRecord(t, record))
+		}
+		return option.DNSRule{
+			Type: C.RuleTypeDefault,
+			DefaultOptions: option.DefaultDNSRule{
+				RawDefaultDNSRule: option.RawDefaultDNSRule{
+					Domain: badoption.Listable[string]{"example.com"},
+				},
+				DNSRuleAction: option.DNSRuleAction{
+					Action: C.RuleActionTypePredefined,
+					PredefinedOptions: option.DNSRouteActionPredefined{
+						Answer: answers,
+					},
+				},
+			},
+		}
+	}
+
+	router := newTestRouter(t, []option.DNSRule{
+		predefinedRule(
+			"example.com. IN A 10.10.34.36",
+			"example.com. IN A 1.1.1.1",
+			"example.com. IN AAAA 2001:4188:2:600::1",
+			"example.com. IN AAAA 2001:db8::1",
+		),
+		hLegacyModeRule(),
+	}, hTransportManager("default"), &fakeDNSClient{})
+	require.True(t, router.legacyDNSMode)
+
+	addresses, err := router.Lookup(context.Background(), "example.com", adapter.DNSQueryOptions{})
+	require.NoError(t, err)
+	require.Equal(t, []netip.Addr{netip.MustParseAddr("1.1.1.1"), netip.MustParseAddr("2001:db8::1")}, addresses)
+
+	blockedRouter := newTestRouter(t, []option.DNSRule{
+		predefinedRule("example.com. IN A 10.10.34.36"),
+		hLegacyModeRule(),
+	}, hTransportManager("default"), &fakeDNSClient{})
+	addresses, err = blockedRouter.Lookup(context.Background(), "example.com", adapter.DNSQueryOptions{})
+	require.ErrorContains(t, err, "empty result")
+	require.Empty(t, addresses)
+}
+
+func TestH_BypassIfFailedJSON(t *testing.T) {
+	t.Parallel()
+	var action option.DNSRuleAction
+	err := action.UnmarshalJSONContext(context.Background(), []byte(`{"action":"route","server":"primary","bypass_if_failed":true}`))
+	require.NoError(t, err)
+	require.Equal(t, C.RuleActionTypeRoute, action.Action)
+	require.Equal(t, "primary", action.RouteOptions.Server)
+	require.True(t, action.RouteOptions.BypassIfFailed)
+
+	var defaultAction option.DNSRuleAction
+	err = defaultAction.UnmarshalJSONContext(context.Background(), []byte(`{"server":"primary"}`))
+	require.NoError(t, err)
+	require.False(t, defaultAction.RouteOptions.BypassIfFailed)
+
+	encoded, err := action.MarshalJSON()
+	require.NoError(t, err)
+	var decoded option.DNSRuleAction
+	require.NoError(t, decoded.UnmarshalJSONContext(context.Background(), encoded))
+	require.True(t, decoded.RouteOptions.BypassIfFailed)
+	require.Equal(t, "primary", decoded.RouteOptions.Server)
+}
+
+type hOptionsCaptureClient struct {
+	fakeDNSClient
+	access  sync.Mutex
+	options []adapter.DNSQueryOptions
+}
+
+func (c *hOptionsCaptureClient) Exchange(ctx context.Context, transport adapter.DNSTransport, message *mDNS.Msg, options adapter.DNSQueryOptions, _ func(*mDNS.Msg) bool) (*mDNS.Msg, error) {
+	c.access.Lock()
+	c.options = append(c.options, options)
+	c.access.Unlock()
+	return FixedResponse(message.Id, message.Question[0], []netip.Addr{netip.MustParseAddr("1.2.3.4")}, 60), nil
+}
+
+func TestH_LegacyRouteActionTimeoutApplied(t *testing.T) {
+	t.Parallel()
+	rule := hRouteRule("example.com", "primary", false)
+	rule.DefaultOptions.RouteOptions.Timeout = badoption.Duration(3 * time.Second)
+	client := &hOptionsCaptureClient{}
+	router := &Router{
+		ctx:                   context.Background(),
+		logger:                log.NewNOPFactory().NewLogger("dns"),
+		transport:             hTransportManager("default", "primary"),
+		client:                client,
+		defaultDomainStrategy: C.DomainStrategyAsIS,
+	}
+	require.NoError(t, router.Initialize([]option.DNSRule{rule, hLegacyModeRule()}))
+	require.NoError(t, htest.Start(router, adapter.StartStateStart))
+	t.Cleanup(func() { htest.Close(router) })
+
+	_, err := router.Exchange(context.Background(), hQuery("example.com"), adapter.DNSQueryOptions{})
+	require.NoError(t, err)
+	require.Len(t, client.options, 1)
+	require.Equal(t, 3*time.Second, client.options[0].Timeout)
+}
+
+type hNetworkManager struct {
+	adapter.NetworkManager
+}
+
+func (hNetworkManager) FlushSystemDNSCache() {}
+
+func TestH_ClearCachePurgesReverseMapping(t *testing.T) {
+	t.Parallel()
+	router := newTestRouter(t, nil, hTransportManager("default"), &fakeDNSClient{})
+	cache, err := freelru.New[netip.Addr, string](16, maphash.NewHasher[netip.Addr]().Hash32, true)
+	require.NoError(t, err)
+	router.dnsReverseMapping = cache
+	router.ctx = service.ContextWith[adapter.NetworkManager](router.ctx, hNetworkManager{}) // ClearCache flushes the system cache
+	message := hQuery("example.com")
+	router.recordReverseMapping(message, FixedResponse(0, message.Question[0], []netip.Addr{netip.MustParseAddr("1.2.3.4")}, 60), nil)
+	domain, loaded := router.LookupReverseMapping(netip.MustParseAddr("1.2.3.4"))
+	require.True(t, loaded)
+	require.Equal(t, "example.com", domain)
+
+	router.ClearCache()
+	_, loaded = router.LookupReverseMapping(netip.MustParseAddr("1.2.3.4"))
+	require.False(t, loaded)
+}
+
+// hFamilyTransport answers an A question at once and an AAAA question after ipv6Delay, or never
+// when ipv6Delay is 0, like a filtered network.
+type hFamilyTransport struct {
+	fakeDNSTransport
+	ipv4, ipv6 []netip.Addr
+	ipv6Delay  time.Duration
+}
+
+func (t *hFamilyTransport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
+	question := message.Question[0]
+	if question.Qtype == mDNS.TypeA {
+		return FixedResponse(message.Id, question, t.ipv4, 60), nil
+	}
+	var answered <-chan time.Time
+	if t.ipv6Delay > 0 {
+		answered = time.After(t.ipv6Delay)
+	}
+	select {
+	case <-answered:
+		return FixedResponse(message.Id, question, t.ipv6, 60), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (t *hFamilyTransport) ExchangeAsync(ctx context.Context, message *mDNS.Msg, callback func(*mDNS.Msg, error)) {
+	go func() {
+		callback(t.Exchange(ctx, message))
+	}()
+}
+
+// Once IPv4 addresses arrive, a lookup returns them without waiting for the IPv6 answer. A name
+// without IPv4 and the prefer_ipv6 strategy still wait for it.
+func TestH_LookupDoesNotWaitForIPv6(t *testing.T) {
+	ipv4 := netip.MustParseAddr("1.2.3.4")
+	ipv6 := netip.MustParseAddr("2001:db8::1")
+	client := NewClient(ClientOptions{Context: context.Background(), Timeout: 3 * time.Second, DisableCache: true, Logger: log.NewNOPFactory().Logger()})
+	lookup := func(transport *hFamilyTransport, strategy C.DomainStrategy) ([]netip.Addr, time.Duration) {
+		start := time.Now()
+		addresses, err := client.Lookup(context.Background(), transport, "example.com", adapter.DNSQueryOptions{Strategy: strategy}, nil)
+		require.NoError(t, err)
+		return addresses, time.Since(start)
+	}
+
+	addresses, elapsed := lookup(&hFamilyTransport{ipv4: []netip.Addr{ipv4}}, C.DomainStrategyAsIS)
+	require.Equal(t, []netip.Addr{ipv4}, addresses)
+	require.Less(t, elapsed, 500*time.Millisecond, "the IPv6 question never gets an answer")
+
+	addresses, _ = lookup(&hFamilyTransport{ipv6: []netip.Addr{ipv6}, ipv6Delay: 50 * time.Millisecond}, C.DomainStrategyAsIS)
+	require.Equal(t, []netip.Addr{ipv6}, addresses)
+
+	addresses, _ = lookup(&hFamilyTransport{ipv4: []netip.Addr{ipv4}, ipv6: []netip.Addr{ipv6}, ipv6Delay: 50 * time.Millisecond}, C.DomainStrategyPreferIPv6)
+	require.Equal(t, []netip.Addr{ipv6, ipv4}, addresses)
+}
+
+// an address query answered with no address moves on, as in Lookup
+func TestH_ExchangeBypassIfFailedOnEmptyAnswer(t *testing.T) {
+	t.Parallel()
+	recorder := &hTagRecorder{}
+	client := &fakeDNSClient{
+		exchange: func(transport adapter.DNSTransport, message *mDNS.Msg) (*mDNS.Msg, error) {
+			recorder.add(transport.Tag())
+			if transport.Tag() == "primary" {
+				return FixedResponse(message.Id, message.Question[0], nil, 60), nil
+			}
+			return FixedResponse(message.Id, message.Question[0], []netip.Addr{netip.MustParseAddr("1.2.3.4")}, 60), nil
+		},
+	}
+	router := newTestRouter(t, []option.DNSRule{
+		hRouteRule("example.com", "primary", true),
+		hRouteRule("example.com", "secondary", false),
+		hLegacyModeRule(),
+	}, hTransportManager("default", "primary", "secondary"), client)
+	response, err := router.Exchange(context.Background(), hQuery("example.com"), adapter.DNSQueryOptions{})
+	require.NoError(t, err)
+	require.Equal(t, []netip.Addr{netip.MustParseAddr("1.2.3.4")}, MessageToAddresses(response))
+	require.Equal(t, []string{"primary", "secondary"}, recorder.get())
+}

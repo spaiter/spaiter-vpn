@@ -9,8 +9,8 @@ import (
 
 	mierumodel "github.com/enfein/mieru/v3/apis/model"
 	mieruserver "github.com/enfein/mieru/v3/apis/server"
-	"github.com/spaiter/spaiter-vpn/core/adapter/inbound"
-	"github.com/spaiter/spaiter-vpn/core/log"
+	"github.com/sagernet/sing-box/adapter/inbound"
+	"github.com/sagernet/sing-box/log"
 	"github.com/stretchr/testify/require"
 )
 
