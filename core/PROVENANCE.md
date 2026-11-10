@@ -434,3 +434,16 @@ not one: `dnstt`, `masterdns` and `soar` all consume `hiddify/hmrd_multi_resolve
 through `common/dnspool`, so `include/dnstt.go` registers all of them and
 `include/dnstt_stub.go` makes each report "not included in this build". `smart_dns_pool`
 as a service no longer exists upstream. None of them is in a published build.
+
+### Go 1.27's goroutineleak profile is not safe on this core
+
+`/debug/pprof/goroutineleak` marks what it reports as leaked for good (`_Gleaked`). The gVisor
+stack of the awg endpoint always looks leaked to it: sixteen `tcp.(*processor).start`
+goroutines park in `sleep.(*Sleeper).Fetch`, whose waker the GC cannot see. They are not
+leaked, but the next packet that wakes one is `fatal error: bad g->status in ready`. On
+2026-11-10 this took the production core down within minutes of the first query (the
+container restarted by itself). The constant 16 (before and after traffic) is that stack,
+not growth. `debug_http.go` now answers 409 to the route unless `?force=1`, and
+`test/acceptance/goroutineleak-probe.sh` forces it on its disposable VM and expects exactly
+those sixteen stacks. Earlier cores showed 0 because their awg stack was not seen this way;
+if the count ever differs from 16, or other stacks appear, that is a finding.
