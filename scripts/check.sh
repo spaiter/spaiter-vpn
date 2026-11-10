@@ -74,8 +74,9 @@ first_party_packages() {
 core_go() {
 	local sub=$1
 	shift
-	(cd core && go list ./... 2>/dev/null | grep -v '/replace/' |
-		xargs -r go "$sub" -tags "$(sed -n 's/^TAGS ?= //p' Makefile)" "$@")
+	(cd core && tags=$(sed -n 's/^TAGS ?= //p' Makefile) &&
+		go list -tags "$tags" -f '{{if or .GoFiles .TestGoFiles}}{{.ImportPath}}{{end}}' ./... 2>/dev/null |
+		grep -v '/replace/' | xargs -r go "$sub" -tags "$tags" "$@")
 }
 
 # Zones held unformatted on purpose, each for a reason recorded in the repo:
@@ -218,7 +219,7 @@ gate_vet() {
 		# paths printed inside core/ are made relative to the repository root
 		core_go vet 2>&1 | sed -E 's#^(vet: )?([A-Za-z0-9_./-]+\.go:)#\1core/\2#'
 		(cd relay && go vet ./... 2>&1)
-	} | grep -vE '^#' | sort -u)
+	} | grep -vE '^#|^go: (downloading|finding|found)' | sort -u)
 	if [[ ! -f $BASELINE ]]; then
 		echo "$found" > "$BASELINE"
 		echo "wrote new baseline to $BASELINE"
@@ -277,8 +278,10 @@ gate_test() {
 	output=$({
 		first_party_packages | xargs -r go test -short -count=1 -ldflags '-checklinkname=0' 2>&1
 		# netns needs privileges to fork a holder process
-		(cd core && go list ./... 2>/dev/null | grep -vE '/replace/|/common/netns$' |
-			xargs -r go test -short -count=1 -tags "$(sed -n 's/^TAGS ?= //p' Makefile)" -ldflags '-checklinkname=0' 2>&1)
+		(cd core && tags=$(sed -n 's/^TAGS ?= //p' Makefile) &&
+			go list -tags "$tags" -f '{{if or .GoFiles .TestGoFiles}}{{.ImportPath}}{{end}}' ./... 2>/dev/null |
+			grep -vE '/replace/|/common/netns$' |
+			xargs -r go test -short -count=1 -tags "$tags" -ldflags '-checklinkname=0' 2>&1)
 	})
 	status=$(printf '%s\n' "$output" | grep -qE '^(FAIL|--- FAIL|panic:)' && echo 1 || echo 0)
 	if [[ $status -ne 0 ]]; then
