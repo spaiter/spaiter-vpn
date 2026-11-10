@@ -281,7 +281,7 @@ gate_test() {
 		(cd core && tags=$(sed -n 's/^TAGS ?= //p' Makefile) &&
 			go list -tags "$tags" -f '{{if or .GoFiles .TestGoFiles}}{{.ImportPath}}{{end}}' ./... 2>/dev/null |
 			grep -vE '/replace/|/common/netns$' |
-			xargs -r go test -short -count=1 -tags "$tags" -ldflags '-checklinkname=0' 2>&1)
+			xargs -r go test -short -count=1 -tags "$tags" -ldflags '-checklinkname=0 -X github.com/sagernet/sing-box/constant.Version=test' 2>&1)
 	})
 	status=$(printf '%s\n' "$output" | grep -qE '^(FAIL|--- FAIL|panic:)' && echo 1 || echo 0)
 	if [[ $status -ne 0 ]]; then
