@@ -53,6 +53,18 @@ func startDebugHTTPServer(options option.DebugOptions) (*http.Server, error) {
 					pprof.Index(writer, request)
 				}
 			})
+			// The goroutineleak profile marks what it reports as leaked for good (Go's _Gleaked), and
+			// the gVisor stack of the awg endpoint always looks leaked to it: its processors park in a
+			// sleeper whose waker the GC cannot see. The next packet that wakes one is a fatal "bad
+			// g->status in ready", which took the core down within minutes of the first query. So the
+			// profile answers only to ?force=1, for a core without a gVisor stack. //H
+			r.Get("/goroutineleak", func(writer http.ResponseWriter, request *http.Request) { //H
+				if request.URL.Query().Get("force") != "1" { //H
+					http.Error(writer, "refused: this profile marks gVisor's parked goroutines as leaked and the next wake-up crashes the process; add ?force=1 only on a core without a gVisor stack", http.StatusConflict)
+					return
+				} //H
+				pprof.Index(writer, request) //H
+			}) //H
 			r.HandleFunc("/*", pprof.Index)
 			r.HandleFunc("/cmdline", pprof.Cmdline)
 			r.HandleFunc("/profile", pprof.Profile)

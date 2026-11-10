@@ -46,6 +46,12 @@ bootstrap() { "$BINARY" bootstrap "$@"; }
 profile() {
 	curl -sS -m 60 -o "$3" -w '%{http_code}' "http://$DEBUG_LISTEN/debug/pprof/$1?$2"
 }
+# The core refuses this profile without force=1: it marks what it reports as leaked for good,
+# and the awg endpoint's gVisor stack always looks leaked to it (its processors park in
+# pkg/sleep.(*Sleeper), whose waker the GC cannot see), so the next packet that wakes one is a
+# fatal "bad g->status in ready". Forced here because this host is disposable. Expect the stacks
+# through sleep.(*Sleeper).Fetch from tcp.(*processor).start -- 16 of them, constant -- and
+# treat anything else as a finding.
 total_of() { sed -n '1s/.*total \([0-9]*\).*/\1/p' "$1"; }
 
 printf '\n=== install with %s\n' "$CORE"
@@ -90,7 +96,7 @@ assert "the debug listener answers" test -s "$WORK/memory-0.json"
 docker exec "$(docker compose -f "$CONFIG_ROOT/deployment/docker-compose.yml" ps -q | head -1)" sing-box version 2>/dev/null | head -2 | sed 's/^/  /'
 
 printf '\n=== profiles before traffic\n'
-code=$(profile goroutineleak debug=1 "$WORK/goroutineleak-0.txt")
+code=$(profile goroutineleak 'debug=1&force=1' "$WORK/goroutineleak-0.txt")
 assert "goroutineleak profile is served (HTTP $code)" test "$code" = 200
 code=$(profile goroutine debug=1 "$WORK/goroutine-0.txt")
 assert "goroutine profile is served (HTTP $code)" test "$code" = 200
@@ -107,11 +113,11 @@ done
 sleep 5
 
 printf '\n=== profiles after traffic\n'
-code=$(profile goroutineleak debug=1 "$WORK/goroutineleak-1.txt")
+code=$(profile goroutineleak 'debug=1&force=1' "$WORK/goroutineleak-1.txt")
 assert "goroutineleak profile is served (HTTP $code)" test "$code" = 200
 code=$(profile goroutine debug=1 "$WORK/goroutine-1.txt")
 assert "goroutine profile is served (HTTP $code)" test "$code" = 200
-profile goroutineleak debug=0 "$WORK/goroutineleak-1.pb.gz" >/dev/null
+profile goroutineleak 'debug=0&force=1' "$WORK/goroutineleak-1.pb.gz" >/dev/null
 profile goroutine debug=0 "$WORK/goroutine-1.pb.gz" >/dev/null
 curl -sf -m 5 "http://$DEBUG_LISTEN/debug/memory" >"$WORK/memory-1.json" 2>/dev/null
 echo "  goroutines: $(total_of "$WORK/goroutine-1.txt"), leaked: $(total_of "$WORK/goroutineleak-1.txt")"
