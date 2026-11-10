@@ -18,14 +18,12 @@ FROM golang:1.27-alpine AS builder
 ARG VERSION=dev
 WORKDIR /src
 
-# go.mod and go.sum alone, so the dependency download is cached independently
-# of the source. There is no `COPY replace/` any more: nothing is replaced.
-COPY go.mod go.sum ./
+# The whole tree first: go.mod points its replace directives at core/ and
+# core/replace/*, so `go mod download` cannot run on go.mod alone.
+COPY . .
 RUN apk add --no-cache git build-base && \
     export GOTOOLCHAIN=local && \
     go mod download
-
-COPY . .
 # A direct `go build` rather than the core's Makefile: the Makefile derives
 # LDFLAGS from release/ and .git, both excluded by .dockerignore, which left
 # the version string empty and broke the badtls link step.
