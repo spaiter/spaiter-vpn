@@ -244,6 +244,13 @@ func dockerDidNotRun(output string) string {
 	if !isDockerFraming(output) {
 		return ""
 	}
+	// A first run on a cold image cache prints docker's pull progress
+	// ("Unable to find image ... locally", "Downloaded newer image") ahead of
+	// the container's own output. If sing-box then framed a failure of its own,
+	// the container ran and what follows is a real config rejection.
+	if strings.Contains(output, "FATAL[") && !strings.Contains(output, "Error response from daemon") {
+		return ""
+	}
 	lower := strings.ToLower(output)
 	// Ordered, because several of these co-occur: docker reports "Unable to
 	// find image" and then the underlying reason, and the specific reason is

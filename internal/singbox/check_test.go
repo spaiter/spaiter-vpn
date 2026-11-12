@@ -33,13 +33,14 @@ func TestDockerDidNotRunSeparatesRegistryFailuresFromRejections(t *testing.T) {
 	// exactly the words a naive classifier would key on, yet they are genuine
 	// config rejections that must reach the operator as such.
 	rejections := map[string]string{
-		"duplicate tag":           "FATAL[0000] decode config at /etc/sing-box/config.json: duplicate inbound tag: vless-reality-in",
-		"unknown field":           `FATAL[0000] decode config at /etc/sing-box/config.json: inbounds[0].nonsense_field: json: unknown field "nonsense_field"`,
-		"bad shadowsocks key":     "FATAL[0000] initialize inbound[1]: bad key",
-		"says connection refused": "FATAL[0000] initialize inbound[0]: reality handshake: dial tcp 1.2.3.4:443: connect: connection refused",
-		"says unauthorized":       "FATAL[0000] initialize inbound[3]: upstream returned unauthorized",
-		"says no such host":       "FATAL[0000] initialize inbound[0]: dial tcp: lookup example.invalid: no such host",
-		"empty":                   "",
+		"duplicate tag":                  "FATAL[0000] decode config at /etc/sing-box/config.json: duplicate inbound tag: vless-reality-in",
+		"unknown field":                  `FATAL[0000] decode config at /etc/sing-box/config.json: inbounds[0].nonsense_field: json: unknown field "nonsense_field"`,
+		"bad shadowsocks key":            "FATAL[0000] initialize inbound[1]: bad key",
+		"says connection refused":        "FATAL[0000] initialize inbound[0]: reality handshake: dial tcp 1.2.3.4:443: connect: connection refused",
+		"says unauthorized":              "FATAL[0000] initialize inbound[3]: upstream returned unauthorized",
+		"says no such host":              "FATAL[0000] initialize inbound[0]: dial tcp: lookup example.invalid: no such host",
+		"cold cache pull then rejection": "Unable to find image 'core:550c0c5' locally\n550c0c5: Pulling from spaiter/spaiter-vpn-core\nDigest: sha256:abc\nStatus: Downloaded newer image for core:550c0c5\nFATAL[0000] decode config at /etc/sing-box/config.json: duplicate inbound tag: vless-xhttp-in",
+		"empty":                          "",
 	}
 	for name, output := range rejections {
 		t.Run("rejection: "+name, func(t *testing.T) {
