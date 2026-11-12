@@ -10,8 +10,11 @@ import (
 	"github.com/spaiter/spaiter-vpn/internal/bootstrap/state"
 )
 
+// ObservationVersion is the schema identifier for the Observed payload.
 const ObservationVersion = "spaiter-vpn/observation/v1alpha1"
 
+// Observed is the read-only snapshot of the host that the planner compares
+// against the desired state.
 type Observed struct {
 	APIVersion       string                   `json:"apiVersion"`
 	Platform         Platform                 `json:"platform"`
@@ -39,6 +42,7 @@ type SystemUser struct {
 	Error  string `json:"error,omitempty"`
 }
 
+// Platform identifies the host OS and architecture for compatibility checks.
 type Platform struct {
 	OS        string `json:"os"`
 	Arch      string `json:"arch"`
@@ -47,6 +51,8 @@ type Platform struct {
 	Systemd   bool   `json:"systemd"`
 }
 
+// Supported reports whether the host matches the fixed set of platforms
+// bootstrap is allowed to install on.
 func (p Platform) Supported() bool {
 	if p.OS != "linux" || p.Arch != "amd64" || !p.Systemd {
 		return false
@@ -61,10 +67,13 @@ func (p Platform) Supported() bool {
 	}
 }
 
+// Privileges records the effective user ID of the bootstrap process.
 type Privileges struct {
 	EUID int `json:"euid"`
 }
 
+// Docker reports the availability and reachability of the Docker CLI and
+// daemon, and whether sudo is required to talk to it.
 type Docker struct {
 	CLIAvailable     bool   `json:"cliAvailable"`
 	DaemonReachable  bool   `json:"daemonReachable"`
@@ -77,17 +86,23 @@ type Docker struct {
 	Install *DockerInstall `json:"install,omitempty"`
 }
 
+// DockerInstall lists the preconditions that would block a Docker or Compose
+// installation.
 type DockerInstall struct {
 	Conflicts      []string `json:"conflicts"`
 	ForeignSources []string `json:"foreignSources"`
 	Error          string   `json:"error,omitempty"`
 }
 
+// Network identifies the default route interface, used to resolve "auto"
+// XDP interfaces.
 type Network struct {
 	DefaultInterface string `json:"defaultInterface"`
 	Error            string `json:"error"`
 }
 
+// Firewall reports the backend kind, whether it is active and readable, and
+// the status of each rule the deployment requires.
 type Firewall struct {
 	Kind     string            `json:"kind"`
 	Active   bool              `json:"active"`
@@ -97,6 +112,9 @@ type Firewall struct {
 	Detail   string            `json:"detail"`
 }
 
+// ExistingDesired reports the state of the on-disk desired.json file: whether
+// it is absent, a regular file, or invalid (unreadable, unsafe or failing to
+// parse), and its parsed content when it loaded.
 type ExistingDesired struct {
 	Status FileStatus   `json:"status"`
 	Digest string       `json:"digest"`
@@ -104,6 +122,8 @@ type ExistingDesired struct {
 	Error  string       `json:"error"`
 }
 
+// Runtime reports the state of the managed deployment files and whether a
+// recreate is pending.
 type Runtime struct {
 	Config          File `json:"config"`
 	Secrets         File `json:"secrets"`
@@ -112,14 +132,19 @@ type Runtime struct {
 	RecreatePending bool `json:"recreatePending,omitempty"`
 }
 
+// FileStatus classifies a filesystem path for the planner.
 type FileStatus string
 
 const (
-	FileAbsent  FileStatus = "absent"
+	// FileAbsent means the path does not exist.
+	FileAbsent FileStatus = "absent"
+	// FileRegular means the path is a regular file.
 	FileRegular FileStatus = "regular"
+	// FileInvalid means the path exists but is not a usable regular file.
 	FileInvalid FileStatus = "invalid"
 )
 
+// File is the observed state of a single filesystem path.
 type File struct {
 	Status FileStatus `json:"status"`
 	Mode   uint32     `json:"mode"`
@@ -128,6 +153,9 @@ type File struct {
 	Error  string     `json:"error"`
 }
 
+// MarshalCanonical returns a deterministic JSON encoding of the observation,
+// with the required firewall rules sorted and the existing desired state
+// canonicalised, so equal hosts always produce equal bytes.
 func (o Observed) MarshalCanonical() ([]byte, error) {
 	normalized := o
 	normalized.Firewall.Required = append([]string(nil), o.Firewall.Required...)
@@ -146,6 +174,9 @@ func (o Observed) MarshalCanonical() ([]byte, error) {
 	return data, nil
 }
 
+// Digest returns the SHA-256 hex digest of the canonical observation. A plan
+// records it so that apply can refuse a consent given against a host that has
+// since changed (ErrStaleConsent).
 func (o Observed) Digest() (string, error) {
 	data, err := o.MarshalCanonical()
 	if err != nil {
