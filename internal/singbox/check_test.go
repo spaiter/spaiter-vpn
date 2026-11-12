@@ -39,7 +39,7 @@ func TestDockerDidNotRunSeparatesRegistryFailuresFromRejections(t *testing.T) {
 		"says connection refused":        "FATAL[0000] initialize inbound[0]: reality handshake: dial tcp 1.2.3.4:443: connect: connection refused",
 		"says unauthorized":              "FATAL[0000] initialize inbound[3]: upstream returned unauthorized",
 		"says no such host":              "FATAL[0000] initialize inbound[0]: dial tcp: lookup example.invalid: no such host",
-		"cold cache pull then rejection": "Unable to find image 'core:550c0c5' locally\n550c0c5: Pulling from spaiter/spaiter-vpn-core\nDigest: sha256:abc\nStatus: Downloaded newer image for core:550c0c5\nFATAL[0000] decode config at /etc/sing-box/config.json: duplicate inbound tag: vless-xhttp-in",
+		"cold cache pull then rejection": "Unable to find image 'core:550c0c5' locally\n550c0c5: Pulling from spaiter/spaiter-vpn-core\nDigest: sha256:abc\nStatus: Downloaded newer image for core:550c0c5\n\x1b[31mFATAL\x1b[0m[0000] decode config at /etc/sing-box/config.json: duplicate inbound tag: vless-xhttp-in",
 		"empty":                          "",
 	}
 	for name, output := range rejections {

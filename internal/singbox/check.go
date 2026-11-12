@@ -14,8 +14,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
+
+// singBoxFatal matches the line sing-box prints for its own failure. The
+// container's stderr is a terminal-less pipe but sing-box still colours the
+// level, so the bracket can be preceded by a reset code: FATAL ESC[0m [0000].
+var singBoxFatal = regexp.MustCompile(`FATAL(\x1b\[[0-9;]*m)?\[\d+\]`)
 
 // ErrUnavailable means the checker itself could not be run — no sing-box
 // binary and no usable Docker. It is deliberately distinct from a failed
@@ -248,7 +254,7 @@ func dockerDidNotRun(output string) string {
 	// ("Unable to find image ... locally", "Downloaded newer image") ahead of
 	// the container's own output. If sing-box then framed a failure of its own,
 	// the container ran and what follows is a real config rejection.
-	if strings.Contains(output, "FATAL[") && !strings.Contains(output, "Error response from daemon") {
+	if singBoxFatal.MatchString(output) && !strings.Contains(output, "Error response from daemon") {
 		return ""
 	}
 	lower := strings.ToLower(output)
