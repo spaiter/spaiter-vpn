@@ -45,16 +45,10 @@ func NewProvider(o Options) (Provider, error) {
 	}
 	switch o.Name {
 	case Cloudflare:
-		base := o.BaseURL
-		if base == "" {
-			base = "https://api.cloudflare.com/client/v4"
-		}
+		base := orDefault(o.BaseURL, "https://api.cloudflare.com/client/v4")
 		return &cloudflare{base: base, token: o.Token, http: client, zones: map[string]string{}}, nil
 	case DuckDNS:
-		base := o.BaseURL
-		if base == "" {
-			base = "https://www.duckdns.org"
-		}
+		base := orDefault(o.BaseURL, "https://www.duckdns.org")
 		return &duckdns{base: base, token: o.Token, http: client}, nil
 	case DynDNS2:
 		if o.Server == "" || o.Username == "" {
@@ -167,7 +161,7 @@ func (c *cloudflare) call(ctx context.Context, method, path string, body, result
 		} `json:"errors"`
 		Result json.RawMessage `json:"result"`
 	}
-	data, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	data := readBody(response.Body, maxCloudflareBody)
 	_ = json.Unmarshal(data, &envelope)
 	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
 		return permanent("Cloudflare rejected the token (%d): it needs Zone:DNS:Edit on the zone", response.StatusCode)
@@ -220,7 +214,7 @@ func (d *duckdns) Update(ctx context.Context, host, kind string, ip netip.Addr) 
 		return false, fmt.Errorf("DuckDNS: %s", strings.ReplaceAll(err.Error(), d.token, "<token>"))
 	}
 	defer response.Body.Close()
-	data, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+	data := readBody(response.Body, maxAnswerBody)
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
 	switch {
 	case response.StatusCode != http.StatusOK:
@@ -261,7 +255,7 @@ func (d *dyndns2) Update(ctx context.Context, host, kind string, ip netip.Addr) 
 		return false, err
 	}
 	defer response.Body.Close()
-	data, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+	data := readBody(response.Body, maxAnswerBody)
 	answer := strings.Fields(strings.TrimSpace(string(data)))
 	if response.StatusCode == http.StatusUnauthorized {
 		return false, permanent("dyndns2: the username or password was rejected")
@@ -280,3 +274,22 @@ func (d *dyndns2) Update(ctx context.Context, host, kind string, ip netip.Addr) 
 		return false, fmt.Errorf("dyndns2: %s", strings.Join(answer, " "))
 	}
 }
+
+// orDefault returns fallback if value is empty.
+func orDefault(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+// readBody reads up to limit bytes from r, ignoring errors.
+func readBody(r io.Reader, limit int64) []byte {
+	data, _ := io.ReadAll(io.LimitReader(r, limit))
+	return data
+}
+
+const (
+	maxCloudflareBody = 1 << 20 // 1 MiB
+	maxAnswerBody     = 4096    // 4 KiB
+)
