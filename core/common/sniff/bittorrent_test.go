@@ -111,6 +111,32 @@ func TestSniffNotUTP(t *testing.T) {
 	}
 }
 
+// A real QUIC 1-RTT packet (iphone-guest to Apple, 2026-11-11) that the
+// detector took for a uTP SYN and banned the user for: type=4, version=1, no
+// extension, nonzero connection id, window just under the old 100 MB ceiling.
+// Only the first 20 bytes matter to UTP.
+func TestSniffUTPRejectsQUICShortHeader(t *testing.T) {
+	t.Parallel()
+
+	head, err := hex.DecodeString("41001b1cb9061f441f839cce05287211b1a892bc")
+	require.NoError(t, err)
+	pkt := make([]byte, 1200)
+	copy(pkt, head)
+
+	var metadata adapter.InboundContext
+	require.Error(t, sniff.UTP(context.TODO(), &metadata, pkt))
+	require.Empty(t, metadata.Protocol)
+
+	// Each rule must be enough on its own: the window alone (0x05287211 is
+	// 86 MB) and the ack_nr alone.
+	alone := append([]byte(nil), pkt...)
+	copy(alone[18:20], []byte{0, 0})
+	require.Error(t, sniff.UTP(context.TODO(), &metadata, alone), "window ceiling")
+	alone = append([]byte(nil), pkt...)
+	copy(alone[12:16], []byte{0, 0x04, 0, 0})
+	require.Error(t, sniff.UTP(context.TODO(), &metadata, alone), "SYN ack_nr")
+}
+
 // --- False positive rejection tests ---
 
 func TestSniffUTPRejectsSTUN(t *testing.T) {

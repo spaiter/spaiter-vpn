@@ -13,7 +13,10 @@ const (
 	minSizeScrape   = 36
 	minSizeAnnounce = 98
 
-	maxUTPWindowSize = 100 * 1024 * 1024 // 100MB — real BT uTP typically uses 1-10MB
+	// maxUTPWindowSize bounds the advertised receive window. Real clients stay
+	// at 1-10 MB; the old 100 MB ceiling still let 2.4% of random bytes through,
+	// which is how a QUIC short-header packet was taken for a uTP SYN.
+	maxUTPWindowSize = 10 * 1024 * 1024
 )
 
 // btSignatures contains BitTorrent byte patterns from nDPI, libtorrent, Suricata, and UDPGuard.

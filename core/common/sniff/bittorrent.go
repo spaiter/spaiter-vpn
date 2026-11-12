@@ -115,6 +115,13 @@ func UTP(_ context.Context, metadata *adapter.InboundContext, packet []byte) err
 		return os.ErrInvalid
 	}
 
+	// A SYN opens the connection, so there is nothing yet to acknowledge:
+	// libtorrent and libutp both send ack_nr = 0. A nonzero value is what
+	// random bytes (an encrypted QUIC short-header packet, say) look like.
+	if typ == 4 && binary.BigEndian.Uint16(packet[18:20]) != 0 {
+		return os.ErrInvalid
+	}
+
 	// Reject WireGuard handshake initiation: type=0 with 0x00 0x00 0x00 reserved
 	if typ == 0 && len(packet) >= 4 {
 		if packet[1] == 0x00 && packet[2] == 0x00 && packet[3] == 0x00 {
