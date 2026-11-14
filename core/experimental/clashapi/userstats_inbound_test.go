@@ -70,3 +70,32 @@ func TestInboundAccountingSeparatesBulkFromRequests(t *testing.T) {
 		}
 	}
 }
+
+// The per-user breakdown keeps each person's inbounds apart, busiest first,
+// which is what tells the transport someone rides from the ones their client
+// only probes.
+func TestUserInboundDailyKeepsUsersApart(t *testing.T) {
+	m := newTestStats(t)
+	m.ConnectionFinished("alice", "vless-reality-in", 2_000, 40<<20)
+	m.ConnectionFinished("alice", "tuic-in", 300, 500)
+	m.ConnectionFinished("alice", "tuic-in", 300, 500)
+	m.ConnectionFinished("bob", "wg-wdtt-in", 1_000, 2<<20)
+	m.flush()
+
+	rows, err := m.GetUserInboundDaily(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if rows[0].User != "alice" || rows[0].Inbound != "vless-reality-in" || rows[0].BulkConns != 1 {
+		t.Fatalf("busiest row first, got %+v", rows[0])
+	}
+	if rows[1].User != "bob" || rows[1].Inbound != "wg-wdtt-in" {
+		t.Fatalf("second row = %+v", rows[1])
+	}
+	if tuic := rows[2]; tuic.User != "alice" || tuic.ConnCount != 2 || tuic.Download != 1_000 || tuic.BulkConns != 0 {
+		t.Fatalf("probe-only inbound = %+v", tuic)
+	}
+}

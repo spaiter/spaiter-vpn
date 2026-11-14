@@ -14,8 +14,33 @@ func statsRouter(s *Server) http.Handler {
 	r.Get("/users/{name}", getUserStats(s))
 	r.Delete("/users/{name}", resetUserStats(s))
 	r.Get("/users/{name}/resources", getUserResources(s))
-	r.Get("/inbounds", getInboundStats(s)) //H
+	r.Get("/inbounds", getInboundStats(s))          //H
+	r.Get("/user-inbounds", getUserInboundStats(s)) //H
 	return r
+}
+
+// getUserInboundStats answers per user, inbound and day: who rides which
+// transport. Not under /users/{name}, where a user called "inbounds" would
+// shadow it. //H
+func getUserInboundStats(s *Server) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		days := 1
+		if d := r.URL.Query().Get("days"); d != "" {
+			if parsed, err := strconv.Atoi(d); err == nil && parsed > 0 {
+				days = parsed
+			}
+		}
+		stats, err := s.userStatsManager.GetUserInboundDaily(days)
+		if err != nil {
+			render.Status(r, http.StatusInternalServerError)
+			render.JSON(w, r, newError(err.Error()))
+			return
+		}
+		if stats == nil {
+			stats = []UserInboundDailyStats{}
+		}
+		render.JSON(w, r, stats)
+	}
 }
 
 // getInboundStats answers per inbound and day, summed over users: which

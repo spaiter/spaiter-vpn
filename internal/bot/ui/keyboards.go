@@ -20,6 +20,7 @@ const (
 	cbAPK        = "apk"
 	cbUsers      = "a:list"
 	cbAllStats   = "a:stats"
+	cbWho        = "a:who"
 	cbAccess     = "a:wl"
 
 	// cbPick and cbGen carry a kind and a tag: "pick:i:vless-reality-in".
@@ -127,7 +128,7 @@ func (u *UI) mainMenu(uid int64) *models.InlineKeyboardMarkup {
 		if waiting := len(u.access.Pending()); waiting > 0 {
 			access = fmt.Sprintf("%s (%d)", access, waiting)
 		}
-		rows = append(rows, row(button(access, cbAccess)))
+		rows = append(rows, row(button(access, cbAccess), button(u.label("a:who"), cbWho)))
 		rows = append(rows, u.serverRows()...)
 	}
 	return keyboard(rows...)

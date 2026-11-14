@@ -36,6 +36,8 @@ type API interface {
 	ResetUserStats(ctx context.Context, name string) error
 	Endpoints(ctx context.Context) ([]json.RawMessage, error)
 	UserStats(ctx context.Context) ([]manage.UserStat, error)
+	Connections(ctx context.Context) ([]manage.Connection, error)
+	UserInboundStats(ctx context.Context, days int) ([]manage.UserInboundStat, error)
 }
 
 // Batcher collapses the applies of one provisioning run into one.

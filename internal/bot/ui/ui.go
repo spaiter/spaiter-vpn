@@ -105,6 +105,7 @@ func (u *UI) Options() []bot.Option {
 		bot.WithMessageTextHandler("/pushcfg", bot.MatchTypePrefix, u.onPushConfig),
 		bot.WithMessageTextHandler("/notify", bot.MatchTypePrefix, u.onNotify),
 		bot.WithMessageTextHandler("/health", exact, u.onHealth),
+		bot.WithMessageTextHandler("/who", exact, u.adminOnly(u.onWho)),
 	}
 }
 
@@ -243,6 +244,9 @@ func (u *UI) onCallback(ctx context.Context, client *bot.Bot, update *models.Upd
 
 	case data == cbAllStats && u.access.IsAdmin(uid):
 		u.showAllStats(ctx, query)
+
+	case data == cbWho && u.access.IsAdmin(uid):
+		u.edit(ctx, query, u.whoText(ctx), u.whoKeyboard())
 
 	case data == cbAccess && u.access.IsAdmin(uid):
 		u.edit(ctx, query, u.label("access_title"), u.accessMenu())

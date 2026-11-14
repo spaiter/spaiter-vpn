@@ -104,6 +104,8 @@ type API struct {
 	noUsers   map[string]bool // inbounds whose protocol has no users on this core
 	endpoints map[string]map[string]any
 	stats     []manage.UserStat
+	conns     []manage.Connection
+	perUser   []manage.UserInboundStat
 
 	adds    int
 	puts    int
@@ -223,6 +225,33 @@ func (f *API) UserStats(context.Context) ([]manage.UserStat, error) {
 		return nil, err
 	}
 	return f.stats, nil
+}
+
+// Connections is the live connection list SetActivity seeded.
+func (f *API) Connections(context.Context) ([]manage.Connection, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.failures["Connections"]; err != nil {
+		return nil, err
+	}
+	return f.conns, nil
+}
+
+// UserInboundStats is the per-user inbound accounting SetActivity seeded.
+func (f *API) UserInboundStats(context.Context, int) ([]manage.UserInboundStat, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.failures["UserInboundStats"]; err != nil {
+		return nil, err
+	}
+	return f.perUser, nil
+}
+
+// SetActivity seeds what Connections and UserInboundStats answer.
+func (f *API) SetActivity(conns []manage.Connection, perUser []manage.UserInboundStat) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.conns, f.perUser = conns, perUser
 }
 
 // Batcher records how many applies a run cost, which is the whole

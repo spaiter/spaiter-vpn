@@ -116,7 +116,7 @@ var userCommands = []string{"start", "menu", "help"}
 var adminCommands = []string{
 	"start", "menu", "help", "whitelist", "allow", "deny",
 	"add", "del", "reset", "rotate", "port", "image", "pushcfg",
-	"vkhash", "vkcode", "weblogin", "notify", "health",
+	"vkhash", "vkcode", "weblogin", "notify", "health", "who",
 }
 
 // Announce publishes the command menu and the bot's description, once at

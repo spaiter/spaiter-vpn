@@ -82,6 +82,7 @@ func (t TrackerMetadata) MarshalJSON() ([]byte, error) {
 			"host":            domain,
 			"dnsMode":         "normal",
 			"processPath":     processPath,
+			"user":            t.Metadata.User, //H: who the connection belongs to, for per-user views
 		},
 		"upload":      t.Upload.Load(),
 		"download":    t.Download.Load(),

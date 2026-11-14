@@ -262,3 +262,23 @@ func TestH_TrafficSnapshotTimestamps(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, string(data), tr.metadata.ID.String())
 }
+
+// The per-user views in the bot group live connections by who they belong
+// to, so the JSON has to carry the inbound user next to the inbound tag.
+func TestH_TrafficMetadataJSONCarriesUser(t *testing.T) {
+	tracker := newFakeTracker(C.TypeDirect)
+	tracker.metadata.Metadata = adapter.InboundContext{
+		Inbound: "wg-wdtt-in", InboundType: C.TypeAwg, User: "80071",
+	}
+	raw, err := json.Marshal(tracker.metadata)
+	require.NoError(t, err)
+	var decoded struct {
+		Metadata struct {
+			Type string `json:"type"`
+			User string `json:"user"`
+		} `json:"metadata"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	require.Equal(t, "awg/wg-wdtt-in", decoded.Metadata.Type)
+	require.Equal(t, "80071", decoded.Metadata.User)
+}

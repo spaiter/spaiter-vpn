@@ -225,7 +225,7 @@ func TestEverySelfServiceButtonIsGated(t *testing.T) {
 
 	// Navigation and admin actions. The admin ones are not in this gate because
 	// they have their own, stricter check at the point of use.
-	ungated := []string{cbMenu, cbUsers, cbAllStats, cbAccess, cbWL + "add:42"}
+	ungated := []string{cbMenu, cbUsers, cbAllStats, cbWho, cbAccess, cbWL + "add:42"}
 	for _, data := range ungated {
 		if needsApproval(data) {
 			t.Errorf("%q is gated by approval, which is the wrong check for it", data)
@@ -245,14 +245,14 @@ func TestTheMainMenuHidesAdminRows(t *testing.T) {
 	u := New(cfg, nil, NewAccess(store, quiet()), store, quiet())
 
 	ordinary := flatten(u.mainMenu(42))
-	for _, data := range []string{cbUsers, cbAllStats, cbAccess} {
+	for _, data := range []string{cbUsers, cbAllStats, cbWho, cbAccess} {
 		if slices.Contains(ordinary, data) {
 			t.Errorf("an ordinary user was shown %q", data)
 		}
 	}
 
 	admin := flatten(u.mainMenu(1))
-	for _, data := range []string{cbUsers, cbAllStats, cbAccess} {
+	for _, data := range []string{cbUsers, cbAllStats, cbWho, cbAccess} {
 		if !slices.Contains(admin, data) {
 			t.Errorf("the admin was not shown %q", data)
 		}

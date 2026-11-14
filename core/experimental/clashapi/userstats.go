@@ -555,6 +555,43 @@ type InboundDailyStats struct {
 	MaxDownload int64  `json:"max_download"`
 }
 
+// UserInboundDailyStats is one user's traffic on one inbound for one day:
+// which transport a person actually rides, as opposed to every inbound their
+// client keeps probing. //H
+type UserInboundDailyStats struct {
+	Date        string `json:"date"`
+	User        string `json:"user"`
+	Inbound     string `json:"inbound"`
+	Upload      int64  `json:"upload"`
+	Download    int64  `json:"download"`
+	ConnCount   int64  `json:"conn_count"`
+	BulkConns   int64  `json:"bulk_conns"`
+	MaxDownload int64  `json:"max_download"`
+}
+
+// GetUserInboundDaily reads the flushed per-user, per-inbound days, newest
+// first and busiest first within a day. Like GetInboundDaily it holds closed
+// connections only: a stream still open is in /connections, not here. //H
+func (m *UserStatsManager) GetUserInboundDaily(days int) ([]UserInboundDailyStats, error) {
+	rows, err := m.db.Query(`SELECT date, user, inbound, upload, download, conn_count, bulk_conns, max_download
+		FROM user_inbounds_daily
+		WHERE date >= date('now', '-' || ? || ' days')
+		ORDER BY date DESC, upload + download DESC, user, inbound`, days)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []UserInboundDailyStats
+	for rows.Next() {
+		var d UserInboundDailyStats
+		if err := rows.Scan(&d.Date, &d.User, &d.Inbound, &d.Upload, &d.Download, &d.ConnCount, &d.BulkConns, &d.MaxDownload); err != nil {
+			return nil, err
+		}
+		result = append(result, d)
+	}
+	return result, rows.Err()
+}
+
 // GetInboundDaily reads the flushed per-inbound days, newest first.
 // Connections still open, or closed since the last flush, are not in it.
 func (m *UserStatsManager) GetInboundDaily(days int) ([]InboundDailyStats, error) {

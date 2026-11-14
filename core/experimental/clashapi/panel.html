@@ -143,8 +143,8 @@ dialog .actions{display:flex;gap:.5rem;justify-content:flex-end;margin-top:1rem}
   </div>
   <div class="card" style="padding:0;overflow:auto">
     <table>
-      <thead><tr><th>Network</th><th>Inbound</th><th>Source</th><th>Destination</th><th>Host</th><th>Chains</th><th>Upload</th><th>Download</th><th>Time</th><th></th></tr></thead>
-      <tbody id="connsBody"><tr><td colspan="10" class="empty">No active connections</td></tr></tbody>
+      <thead><tr><th>Network</th><th>Inbound</th><th>User</th><th>Source</th><th>Destination</th><th>Host</th><th>Chains</th><th>Upload</th><th>Download</th><th>Time</th><th></th></tr></thead>
+      <tbody id="connsBody"><tr><td colspan="11" class="empty">No active connections</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -731,7 +731,7 @@ async function loadConnections() {
     }
     const body = $('#connsBody');
     if (conns.length === 0) {
-      body.innerHTML = '<tr><td colspan="10" class="empty">No active connections</td></tr>';
+      body.innerHTML = '<tr><td colspan="11" class="empty">No active connections</td></tr>';
       return;
     }
     body.innerHTML = conns.map(c => {
@@ -739,6 +739,7 @@ async function loadConnections() {
       return `<tr>
         <td>${escapeHtml(m.network||'-')}</td>
         <td>${escapeHtml(m.type||'-')}</td>
+        <td>${escapeHtml(m.user||'-')}</td>
         <td>${escapeHtml((m.sourceIP||'?')+':'+( m.sourcePort||''))}</td>
         <td>${escapeHtml((m.destinationIP||'?')+':'+(m.destinationPort||''))}</td>
         <td>${escapeHtml(m.host||'-')}</td>
