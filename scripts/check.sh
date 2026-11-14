@@ -139,7 +139,7 @@ gate_fmt() {
 # that reports success for checks which never ran is worse than a red one.
 readonly CACHE=.cache
 readonly SERVER_TAGS="with_gvisor,with_quic,with_wireguard,with_utls,with_clash_api,with_masque,with_awg,badlinkname,tfogo_checklinkname0"
-readonly CLIENT_TAGS="with_quic,with_utls,with_clash_api,with_wireguard,with_awg,badlinkname,tfogo_checklinkname0"
+readonly CLIENT_TAGS="with_quic,with_utls,with_clash_api,with_wireguard,with_awg,badlinkname,tfogo_checklinkname0,http2legacy"
 
 # build_core <output> <tags> <module-dir> <main-package>
 # The output path is made absolute before the subshell changes directory, and
