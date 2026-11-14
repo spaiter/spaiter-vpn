@@ -307,6 +307,13 @@ the control daemon, admins also rotate credentials, move ports and change the
 core image from Telegram. Tier, domain, certificates and firewall remain
 `bootstrap` operations.
 
+`/sub/<token>` serves the node list the Android app builds its own config
+around. `/sub/<token>?format=full&platform=ios` renders the same cache as a
+complete config (TUN, DNS, routing, chains expanded, TUIC kept out of the
+url-test group) for a client that imports a config as it is, such as
+sing-box-for-apple; it uses no option the core accepts only behind an
+`ENABLE_DEPRECATED_*` switch.
+
 - **A refresh never provisions.** The background loop cannot create what is
   missing, so a timer cannot grow the configuration of someone who pressed
   nothing.

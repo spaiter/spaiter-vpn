@@ -223,3 +223,40 @@ func TestRunReportsAnUnusableAddress(t *testing.T) {
 		t.Fatal("Run did not return after failing to listen; it is waiting on something")
 	}
 }
+
+func TestFullFormatRendersFromTheSameCache(t *testing.T) {
+	bundle := []byte(`{"outbounds":[{"type":"vless","tag":"VLESS Reality"}]}`)
+	store := &fakeStore{bundles: map[string][]byte{"tok-1": bundle}}
+	resp := get(t, newServer(store).Handler(), "/sub/tok-1?format=full&platform=ios")
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	for _, want := range []string{`"type": "tun"`, `"VLESS Reality"`, `"default_domain_resolver"`} {
+		if !strings.Contains(string(body), want) {
+			t.Errorf("full config lacks %s:\n%s", want, body)
+		}
+	}
+	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q", got)
+	}
+}
+
+func TestFullFormatRefusesWhatItCannotServe(t *testing.T) {
+	good := []byte(`{"outbounds":[{"type":"vless","tag":"A"}]}`)
+	broken := []byte(`{"outbounds":[]}`)
+	store := &fakeStore{bundles: map[string][]byte{"tok-1": good, "tok-2": broken}}
+	h := newServer(store).Handler()
+	for path, want := range map[string]int{
+		"/sub/tok-1?format=full":                  http.StatusBadRequest,
+		"/sub/tok-1?format=full&platform=android": http.StatusBadRequest,
+		"/sub/tok-1?format=yaml":                  http.StatusBadRequest,
+		"/sub/tok-2?format=full&platform=ios":     http.StatusInternalServerError,
+		"/sub/missing?format=full&platform=ios":   http.StatusNotFound,
+	} {
+		if got := get(t, h, path).StatusCode; got != want {
+			t.Errorf("%s: status = %d, want %d", path, got, want)
+		}
+	}
+}

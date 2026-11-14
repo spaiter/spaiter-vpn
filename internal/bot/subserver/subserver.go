@@ -18,6 +18,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/spaiter/spaiter-vpn/internal/bot/clientcfg"
 )
 
 // Store is the slice of the bot's state this server reads.
@@ -142,6 +144,29 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request) {
 	}
 	if !found {
 		http.NotFound(w, r)
+		return
+	}
+
+	// ?format=full&platform=ios asks for a complete config for a client that
+	// imports it as it is, rendered from the same cache so the two formats
+	// never disagree. Without format the cache goes out verbatim.
+	switch format := r.URL.Query().Get("format"); format {
+	case "":
+	case "full":
+		platform := r.URL.Query().Get("platform")
+		if !clientcfg.FullPlatformKnown(platform) {
+			http.Error(w, "unknown platform", http.StatusBadRequest)
+			return
+		}
+		full, err := clientcfg.Full(bundle, platform)
+		if err != nil {
+			s.log.Error("rendering a full config failed", "platform", platform, "error", err)
+			http.Error(w, "cannot render", http.StatusInternalServerError)
+			return
+		}
+		bundle = full
+	default:
+		http.Error(w, "unknown format", http.StatusBadRequest)
 		return
 	}
 

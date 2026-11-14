@@ -410,6 +410,14 @@ func TestContractTheWholeBundleIsAcceptedByTheClientCore(t *testing.T) {
 	// the url-test group is kept: a group naming a tag that expansion removed
 	// is precisely the kind of breakage this catches.
 	check(t, cores.client, "the whole bundle", expandChains(t, served))
+
+	// The iOS client imports the full config as it is, with no
+	// ENABLE_DEPRECATED_* switch set: check runs without one either.
+	full, err := Full(served, PlatformIOS)
+	if err != nil {
+		t.Fatalf("Full: %v", err)
+	}
+	check(t, cores.client, "the full iOS config", full)
 }
 
 // TestContractTheWarpRegistrationConfigIsAcceptedByTheServerCore is the one
