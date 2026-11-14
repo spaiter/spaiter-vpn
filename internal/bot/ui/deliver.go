@@ -167,13 +167,7 @@ func (u *UI) deliverSubscription(ctx context.Context, query *models.CallbackQuer
 // a third party, and the direct one depends on a port forward through a DS-Lite
 // line that moves.
 func (u *UI) SubscriptionURLs(token string) (cf, direct string) {
-	if host := u.cfg.Subscription.HostCF; host != "" {
-		cf = "https://" + host + "/sub/" + token
-	}
-	if host := u.cfg.Subscription.HostDirect; host != "" {
-		direct = "http://" + host + "/sub/" + token
-	}
-	return cf, direct
+	return u.cfg.Subscription.URLs(token)
 }
 
 // showMyStats reports a user's own traffic.

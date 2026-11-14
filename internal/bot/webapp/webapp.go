@@ -508,12 +508,7 @@ func (s *Server) subscription(w http.ResponseWriter, r *http.Request, user User)
 		})
 	}
 	out := subscriptionResponse{Nodes: countNodes(bundle)}
-	if host := s.cfg.Subscription.HostCF; host != "" {
-		out.CF = "https://" + host + "/sub/" + token
-	}
-	if host := s.cfg.Subscription.HostDirect; host != "" {
-		out.Direct = "http://" + host + "/sub/" + token
-	}
+	out.CF, out.Direct = s.cfg.Subscription.URLs(token)
 	writeJSON(w, out)
 }
 

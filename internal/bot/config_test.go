@@ -311,3 +311,26 @@ func write(t *testing.T, path, content string) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+// TestSubscriptionURLs pins the direct link's scheme: a bare host:port is the
+// bot's own plain-HTTP listener, and a TLS proxy in front says so with a scheme.
+func TestSubscriptionURLs(t *testing.T) {
+	for _, tc := range []struct {
+		name, cfHost, direct, wantCF, wantDirect string
+	}{
+		{"bare host:port is plain http", "sub.example.com", "subd.example.com:10866",
+			"https://sub.example.com/sub/tok", "http://subd.example.com:10866/sub/tok"},
+		{"explicit https is kept", "", "https://subd.example.com:10866",
+			"", "https://subd.example.com:10866/sub/tok"},
+		{"trailing slash does not double", "", "https://subd.example.com:10866/",
+			"", "https://subd.example.com:10866/sub/tok"},
+		{"neither set", "", "", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cf, direct := Subscription{HostCF: tc.cfHost, HostDirect: tc.direct}.URLs("tok")
+			if cf != tc.wantCF || direct != tc.wantDirect {
+				t.Fatalf("URLs = %q, %q; want %q, %q", cf, direct, tc.wantCF, tc.wantDirect)
+			}
+		})
+	}
+}

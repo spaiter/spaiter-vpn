@@ -86,11 +86,11 @@ func Build(ctx context.Context, src Source, subs Subscriptions, user string, now
 		if err := subs.SetBundleCache(token, bundle); err != nil {
 			return Guide{}, err
 		}
-		if host := cfg.Subscription.HostCF; host != "" {
-			guide.Subscriptions = append(guide.Subscriptions, "https://"+host+"/sub/"+token)
-		}
-		if host := cfg.Subscription.HostDirect; host != "" {
-			guide.Subscriptions = append(guide.Subscriptions, "http://"+host+"/sub/"+token)
+		cf, direct := cfg.Subscription.URLs(token)
+		for _, link := range []string{cf, direct} {
+			if link != "" {
+				guide.Subscriptions = append(guide.Subscriptions, link)
+			}
 		}
 		if len(guide.Subscriptions) > 0 {
 			guide.SubscriptionQ = qr(guide.Subscriptions[0])

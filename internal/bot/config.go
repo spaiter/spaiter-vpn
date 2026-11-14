@@ -14,6 +14,7 @@ import (
 	"maps"
 	"net"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -193,9 +194,26 @@ type CDNFront struct {
 type Subscription struct {
 	Port uint16 `json:"port"`
 	// HostCF goes through a tunnel; HostDirect is reached directly and carries
-	// a port because a DS-Lite line has no inbound :443 to offer.
+	// a port because a DS-Lite line has no inbound :443 to offer. A bare
+	// host:port is the bot's own plain-HTTP listener; when a TLS proxy fronts
+	// that port instead, HostDirect carries the scheme too
+	// ("https://subd.example.com:10866").
 	HostCF     string `json:"host_cf"`
 	HostDirect string `json:"host_direct"`
+}
+
+// URLs are the two links to one subscription, empty where the host is unset.
+func (s Subscription) URLs(token string) (cf, direct string) {
+	if s.HostCF != "" {
+		cf = "https://" + s.HostCF + "/sub/" + token
+	}
+	if host := s.HostDirect; host != "" {
+		if !strings.Contains(host, "://") {
+			host = "http://" + host
+		}
+		direct = strings.TrimSuffix(host, "/") + "/sub/" + token
+	}
+	return cf, direct
 }
 
 // WARP is the Cloudflare-MASQUE entry leg.
