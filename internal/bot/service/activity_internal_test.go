@@ -1,6 +1,9 @@
 package service
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -65,5 +68,26 @@ func TestBuildActivityOnAnOldCore(t *testing.T) {
 	got := buildActivity([]manage.Connection{conn("", "vless/vless-reality-in", 1<<20, time.Minute, now)}, nil, false, now)
 	if got.LiveUsers || got.PerUserInbounds || len(got.Users) != 0 {
 		t.Errorf("old core = %+v", got)
+	}
+}
+
+func TestActivityToleratesACoreWithoutPerUserInbounds(t *testing.T) {
+	s, api, _, _, _ := newService(t)
+	now := time.Now()
+	api.conns = []manage.Connection{conn("80071", "vless/vless-reality-in", 1<<20, time.Minute, now)}
+	api.perUserErr = fmt.Errorf("GET /stats/user-inbounds: %w: 404", manage.ErrNotFound)
+
+	got, err := s.Activity(context.Background(), now)
+	if err != nil {
+		t.Fatalf("a core without the route failed the view: %v", err)
+	}
+	if got.PerUserInbounds || !got.LiveUsers || len(got.Users) != 1 || len(got.Users[0].Live) != 1 {
+		t.Errorf("activity = %+v", got)
+	}
+
+	// Any other failure is a broken API and is reported.
+	api.perUserErr = errors.New("HTTP 500")
+	if _, err := s.Activity(context.Background(), now); err == nil {
+		t.Error("a 500 was swallowed")
 	}
 }

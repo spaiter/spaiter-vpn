@@ -25,13 +25,16 @@ func quiet() *slog.Logger { return slog.New(slog.DiscardHandler) }
 // fakeAPI is the core's management interface, holding the config the way the
 // core does and counting the calls that change it.
 type fakeAPI struct {
-	mu        sync.Mutex
-	inbounds  map[string]map[string]any
-	order     []string
-	users     map[string][]json.RawMessage
-	noUsers   map[string]bool // inbounds whose protocol has no users on this core
-	endpoints map[string]map[string]any
-	stats     []manage.UserStat
+	mu         sync.Mutex
+	inbounds   map[string]map[string]any
+	order      []string
+	users      map[string][]json.RawMessage
+	noUsers    map[string]bool // inbounds whose protocol has no users on this core
+	endpoints  map[string]map[string]any
+	stats      []manage.UserStat
+	conns      []manage.Connection
+	perUser    []manage.UserInboundStat
+	perUserErr error
 
 	adds    int
 	puts    int
@@ -125,6 +128,18 @@ func (f *fakeAPI) UserStats(context.Context) ([]manage.UserStat, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.stats, nil
+}
+
+func (f *fakeAPI) Connections(context.Context) ([]manage.Connection, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.conns, nil
+}
+
+func (f *fakeAPI) UserInboundStats(context.Context, int) ([]manage.UserInboundStat, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.perUser, f.perUserErr
 }
 
 func (f *fakeAPI) mutations() (int, int) {
