@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -276,5 +277,40 @@ func TestStatsViewsForUserAndAdmin(t *testing.T) {
 	}
 	if !strings.Contains(list, "🟢") || !strings.Contains(list, "⚪️") {
 		t.Errorf("active/idle markers:\n%s", list)
+	}
+}
+
+func TestIPhoneButtonIsForAdminsUntilSwitchedOn(t *testing.T) {
+	u, telegram, fx := svcUI(t)
+	markupOf := func(uid int64) string {
+		press(u, uid, cbAllMethods)
+		markup, _ := json.Marshal(telegram.last(t)["reply_markup"])
+		return string(markup)
+	}
+
+	if markup := markupOf(5); strings.Contains(markup, "/ios/") {
+		t.Errorf("a user got the iPhone button before the app is out: %s", markup)
+	}
+	adminToken, err := fx.Store.SubscriptionToken("1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markup := markupOf(1); !strings.Contains(markup, "https://cf.example.org/ios/"+adminToken) {
+		t.Errorf("the admin did not get the iPhone button: %s", markup)
+	}
+
+	u.cfg.Subscription.IOS = true
+	token, err := fx.Store.SubscriptionToken("5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markup := markupOf(5); !strings.Contains(markup, "https://cf.example.org/ios/"+token) {
+		t.Errorf("with the switch on the user got no iPhone button: %s", markup)
+	}
+
+	// Without an https host there is nothing the app would accept.
+	u.cfg.Subscription.HostCF = ""
+	if markup := markupOf(5); strings.Contains(markup, "/ios/") {
+		t.Errorf("an iPhone button without an https host: %s", markup)
 	}
 }

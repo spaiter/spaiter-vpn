@@ -286,7 +286,7 @@ func runBotServices(ctx context.Context, out io.Writer, cfg botcfg.Config,
 	// The Mini App rides on the subscription port. It needs the bot token to
 	// check Telegram's signature, so without Telegram there is nothing it
 	// could authenticate and it is not mounted.
-	subs := subserver.New(parts.store, log)
+	subs := subserver.New(parts.store, log).IOS(cfg.Subscription.IOSBase())
 	if token != "" && webapp.URL(cfg) != "" {
 		app := webapp.New(cfg, parts.svc, parts.access, parts.store, token, log)
 		app.OnAccessRequest = parts.face.NotifyAccessRequest

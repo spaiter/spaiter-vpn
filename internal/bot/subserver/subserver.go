@@ -33,6 +33,10 @@ type Server struct {
 	log   *slog.Logger
 
 	mounts map[string]http.Handler
+
+	// iosBase is the https origin the iOS page points the app at; empty
+	// leaves the page unserved. See IOS.
+	iosBase string
 }
 
 // Mount serves another handler under a path prefix on the same port. The
@@ -60,6 +64,9 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.health)
 	mux.HandleFunc("/sub/", s.subscription)
+	if s.iosBase != "" {
+		mux.HandleFunc("/ios/", s.iosPage)
+	}
 	for prefix, h := range s.mounts {
 		mux.Handle(prefix, h)
 	}

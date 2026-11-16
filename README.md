@@ -314,6 +314,14 @@ url-test group) for a client that imports a config as it is, such as
 sing-box-for-apple; it uses no option the core accepts only behind an
 `ENABLE_DEPRECATED_*` switch.
 
+`/ios/<token>` is the page behind the bot's "📱 Открыть на iPhone" button.
+Telegram opens only http(s) links from a button, so this page carries the
+`spaiter://import` link that opens the iOS app with that full config, plus a
+copy button for pasting the link by hand. It is served only when the
+subscription has a tunnelled (https) host, because the app accepts nothing
+else. Admins see the button at once; everyone else sees it once
+`subscription.ios` is set.
+
 - **A refresh never provisions.** The background loop cannot create what is
   missing, so a timer cannot grow the configuration of someone who pressed
   nothing.

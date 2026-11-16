@@ -154,11 +154,28 @@ func (u *UI) deliverSubscription(ctx context.Context, query *models.CallbackQuer
 	}
 
 	cf, direct := u.SubscriptionURLs(token)
+	markup := u.backKeyboard()
+	if ios := u.iosURL(uid, token); ios != "" {
+		// First, above the menu: on an iPhone it is the one button to press.
+		markup.InlineKeyboard = append([][]models.InlineKeyboardButton{
+			row(styled(urlButton(u.label("ios"), ios), stylePrimary)),
+		}, markup.InlineKeyboard...)
+	}
 	u.replyProtected(ctx, chat, u.text("subscription", countNodes(bundle), cf, direct),
-		withRows(u.backKeyboard(), copyRow(
+		withRows(markup, copyRow(
 			copyEntry{u.label("copy_cf"), cf},
 			copyEntry{u.label("copy_direct"), direct},
 		)))
+}
+
+// iosURL is the iPhone button's link for this user, empty when it is not
+// offered: everyone once the subscription's ios switch is on, admins before
+// that so the app can be tried before it is announced.
+func (u *UI) iosURL(uid int64, token string) string {
+	if !u.cfg.Subscription.IOS && !u.access.IsAdmin(uid) {
+		return ""
+	}
+	return u.cfg.Subscription.IOSURL(token)
 }
 
 // SubscriptionURLs are the two ways to the same subscription.

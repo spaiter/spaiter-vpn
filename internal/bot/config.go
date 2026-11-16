@@ -200,6 +200,29 @@ type Subscription struct {
 	// ("https://subd.example.com:10866").
 	HostCF     string `json:"host_cf"`
 	HostDirect string `json:"host_direct"`
+	// IOS offers every user the iPhone button next to the subscription.
+	// Off until the iOS app can be installed; admins see it regardless, to
+	// test it.
+	IOS bool `json:"ios"`
+}
+
+// IOSBase is the https origin the iOS app polls, empty without the tunnelled
+// host: the app accepts https only, and the direct host may be plain http.
+func (s Subscription) IOSBase() string {
+	if s.HostCF == "" {
+		return ""
+	}
+	return "https://" + s.HostCF
+}
+
+// IOSURL is the page that opens the iOS app with the subscription, empty when
+// there is no https host to give it.
+func (s Subscription) IOSURL(token string) string {
+	base := s.IOSBase()
+	if base == "" {
+		return ""
+	}
+	return base + "/ios/" + token
 }
 
 // URLs are the two links to one subscription, empty where the host is unset.
@@ -468,6 +491,7 @@ func defaultUI() UI {
 		Buttons: map[string]string{
 			"getcfg":          "🔑 Мой конфиг",
 			"allsub":          "🔗 Все методы (авто-обновление)",
+			"ios":             "📱 Открыть на iPhone",
 			"mystats":         "📊 Мой трафик",
 			"apk":             "📱 Android: Spaiter VPN",
 			"a:list":          "👥 Все юзеры",
